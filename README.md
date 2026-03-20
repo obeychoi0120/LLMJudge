@@ -44,7 +44,7 @@ LLMJudge/
    ```
 
 2. **GCP (Google Cloud Platform) 인증**
-   GCS 버킷(`insight-youtubevideodataset`) 접근 및 Vertex AI API 사용을 위해 GCP 인증이 필요합니다.
+   GCS 버킷 접근 및 Vertex AI API 사용을 위해 GCP 인증이 필요합니다.
    ```bash
    gcloud auth application-default login
    ```
@@ -52,7 +52,7 @@ LLMJudge/
 ## 🎯 실행 방법
 
 ### 1. 사용자 질문 자동 생성 (`generate_query.py`)
-평가 파이프라인 시작 전, 영상을 기반으로 다수의 평가용 질문(Queries)을 자동으로 생성할 수 있습니다. 
+평가 파이프라인 시작 전, 영상 및 GT 메타데이터 기반으로 다수의 평가용 질문(Queries)을 자동으로 생성할 수 있습니다. 
 
 ```bash
 python generate_query.py --input_file user_query_list_sample.json --output_file generated_query_list.json --gcp_project_id <YOUR_GCP_PROJECT_ID> --gs_bucket <YOUR_GS_BUCKET>
@@ -66,12 +66,7 @@ python generate_query.py --input_file user_query_list_sample.json --output_file 
 python main.py --json_file user_query_list.json --gcp_project_id <YOUR_GCP_PROJECT_ID> --gs_bucket <YOUR_GS_BUCKET>
 ```
 
-### Argument 설명
-- `--json_file`: 실행할 질문 목록이 담긴 JSON 파일의 경로입니다. 기본값은 `user_query_list.json`입니다.
-- `--gcp_project_id`: 구글 클라우드 프로젝트 ID입니다. 이 인자를 생략할 경우 환경 변수 `GCP_PROJECT_ID`가 설정되어 있어야 합니다.
-- `--gs_bucket`: GCS 버킷 이름입니다. 이 인자를 생략할 경우 환경 변수 `GS_BUCKET_NAME`이 설정되어 있어야 합니다.
-
-### 입력 데이터 포맷 (`user_query_list.json`)
+### Query 데이터 포맷 (`user_query_list.json`)
 아래와 같이 `content_id`와 해당 콘텐츠에 수행할 `queries` 목록을 포함한 JSON 배열 형태로 작성해야 합니다.
 
 ```json
