@@ -52,7 +52,7 @@ def main():
             parts = {
                 "video": process_gcs_file(GS_BUCKET_NAME, content_id, mode="video"),
                 "full": process_gcs_file(GS_BUCKET_NAME, content_id, mode="full"),
-                "nodesc": process_gcs_file(GS_BUCKET_NAME, content_id, mode="nodesc"),
+                "part": process_gcs_file(GS_BUCKET_NAME, content_id, mode="part"),
                 "gt": process_gcs_file(GS_BUCKET_NAME, content_id, mode="gt")
             }
 
@@ -60,7 +60,7 @@ def main():
             vertexai.init(project=project_id, location="asia-northeast3")
             
             gen_chats = {}
-            for mode in ["video", "full", "nodesc"]:
+            for mode in ["full", "part", "video"]:
                 gen_model = init_generation_model(mode=mode, model_name='gemini-2.5-flash')
                 gen_chats[mode] = start_chat_session(gen_model)
 
@@ -71,7 +71,7 @@ def main():
             
             # --- Judge 모델도 모드별로 각각의 Chat Session을 열어 속도 향상 달성 ---
             judge_chats = {}
-            for mode in ["video", "full", "nodesc"]:
+            for mode in ["full", "part", "video"]:
                 judge_chats[mode] = start_chat_session(judge_model)
             
             is_first_turn = True
@@ -82,7 +82,7 @@ def main():
                 answers = {}
                 
                 # 1. Generation Step
-                for mode in ["video", "full", "nodesc"]:
+                for mode in ["full", "part", "video"]:
                     print(f"Generating answer for [{mode}] mode...")
                     file_part = parts[mode] if is_first_turn else None
                     
@@ -97,7 +97,7 @@ def main():
                 
                 # 2. Evaluation Step
                 print("\nJudge 모델을 통해 각 답변을 평가합니다...")
-                for mode in ["video", "full", "nodesc"]:
+                for mode in ["full", "part", "video"]:
                     print(f"Scoring [{mode}] answer...")
                     time.sleep(1) # 평가 루프 과부하 방지 딜레이
                     

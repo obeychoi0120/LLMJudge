@@ -24,9 +24,10 @@ def configure_system_prompt(mode="full"):
         **정보 교정**: 제공된 정보가 부정확하거나 불완전할 수 있으므로, 당신이 판단하여 적절히 교정하여야 합니다.
         **입체적 추론**: 제공한 <audio_cls, speech, ocr_text, description> 정보를 교차 검증하여, 등장인물이 언제 어떤 표정으로 어떤 말을 하며 어떤 행동을 했는지 분석한 후 자연스럽게 재구성하세요.
         **맥락의 연결 (Stitching)**: 개별 세그먼트를 분절해서 보지 말고, 시간에 따른 대화의 주제 변화와 인물들의 행동 흐름을 하나의 스토리로 연결하여 이해하세요.
+        **자연스러운 영상 시청자 관점 유지 (메타데이터 언급 금지)**: 답변을 작성할 때 'JSON', 'timestamp', 'description', '데이터' 등의 메타데이터 용어를 절대 직접적으로 언급하지 마십시오. 당신은 제공된 텍스트 데이터를 읽는 것이 아니라, 마치 실제 비디오 영상을 직접 시청하고 그 내용을 설명하는 것처럼 자연스럽게 답변해야 합니다.
         **외부 자료 검색 금지**: 외부 자료 검색을 금지하며, 오직 제공된 정보만 사용하여 답변하세요.
         """
-    elif mode == "nodesc":
+    elif mode == "part":
         return """
         첨부한 파일은 긴 비디오 영상을 15초 단위의 세그먼트로 나누어 데이터를 추출한 JSONL (JSON Lines) 파일입니다. 이 영상 데이터를 전체적으로 이해한 후, 마지막에 주어지는 **사용자 질문**에 대해 가장 정확하고 종합적인 답변을 한국어로 작성해 주세요.
 
@@ -41,6 +42,7 @@ def configure_system_prompt(mode="full"):
         **정보 교정**: 제공된 정보가 부정확하거나 불완전할 수 있으므로, 당신이 판단하여 적절히 교정하여야 합니다.
         **입체적 추론**: 제공한 <audio_cls, speech, ocr_text> 정보를 교차 검증하여, 등장인물이 언제 어떤 표정으로 어떤 말을 하며 어떤 행동을 했는지 분석한 후 자연스럽게 재구성하세요.
         **맥락의 연결 (Stitching)**: 개별 세그먼트를 분절해서 보지 말고, 시간에 따른 대화의 주제 변화와 인물들의 행동 흐름을 하나의 스토리로 연결하여 이해하세요.
+        **자연스러운 영상 시청자 관점 유지 (메타데이터 언급 금지)**: 답변을 작성할 때 'JSON', 'timestamp', 'audio_cls', '데이터' 등의 메타데이터 용어를 절대 직접적으로 언급하지 마십시오. 당신은 제공된 텍스트 데이터를 읽는 것이 아니라, 마치 실제 비디오 영상을 직접 시청하고 그 내용을 설명하는 것처럼 자연스럽게 답변해야 합니다.
         **외부 자료 검색 금지**: 외부 자료 검색을 금지하며, 오직 제공된 정보만 사용하여 답변하세요.
         """
     elif mode == "video":
@@ -55,7 +57,7 @@ def configure_system_prompt(mode="full"):
         
         [데이터 목록]
         - 원본 영상
-        - 사운드/대사/텍스트 정보가 포함된 JSONL 파일 (디테일 확인 및 교차검증용)
+        - 보다 정확한 사운드/대사/텍스트 정보가 포함된 GT JSONL 파일 (디테일 확인 및 교차검증용. 화면 묘사(description) 정보는 미포함)
         - 사용자 질문
         - 평가 대상 답변
 
@@ -68,9 +70,9 @@ def configure_system_prompt(mode="full"):
       
         [평가 기준]
         아래 세 가지 항목에 대해 1점부터 5점까지 점수를 매겨주세요. (1점: 매우 나쁨, 3점: 보통/수용 가능함, 5점: 완벽함)
-        1. 정확성 (Accuracy): 답변이 영상 정보와 사실적으로 일치하는가? 영상에 없는 내용을 지어내거나(Hallucination) 외부 지식을 무리하게 섞지 않았는가?
+        1. 정확성 (Accuracy): 답변이 영상 정보(원본 영상 및 GT 데이터)와 사실적으로 일치하는가? (주의: 평가 대상 답변을 생성한 모델은 화면 묘사(description)가 포함된 별도의 데이터를 참고했습니다. 그러나 현재 당신에게 제공된 데이터에는 description 필드가 없습니다. 따라서 평가 대상 답변에 화면/행동 묘사 정보가 상세히 포함되어 있더라도 그것이 실제 원본 영상의 내용과 부합한다면, 환각(Hallucination)으로 간주하여 감점하면 안 됩니다.)
         2. 포괄성 (Completeness): 사용자의 질문을 완전히 해결하기 위해 필요한 핵심 단서(대사, 텍스트 내용, 행동 등)를 누락 없이 포함했는가?
-        3. 가독성 (Helpfulness): 정보가 장황하게 나열되지 않고, 시간의 흐름이나 인과관계에 맞게 자연스럽고 이해하기 쉽게 작성되었는가?
+        3. 가독성 (Helpfulness): 정보가 장황하게 나열되지 않고, 시간의 흐름이나 인과관계에 맞게 자연스럽고 이해하기 쉽게 작성되었는가? (만약 평가 대상 답변이 부자연스럽게 메타데이터 구조나 필드명 등을 직접 언급했다면 이 항목에서 감점을 고려하세요.)
 
         [출력 형식]
         반드시 아래의 JSON 형식으로만 출력하세요. 다른 설명은 덧붙이지 마십시오.
@@ -93,14 +95,14 @@ def process_gcs_file(gs_bucket_name, content_id, mode="video"):
     elif mode == "full":
         file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s.jsonl"
         mime_type = "text/plain" 
-    elif mode == "nodesc":
+    elif mode == "part":
         file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s_NoDesc.jsonl"
         mime_type = "text/plain" 
     elif mode == "gt":
         file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s_GT.jsonl"
         mime_type = "text/plain" 
     else:
-        raise ValueError("mode should be 'video', 'full', 'nodesc', or 'gt'.")
+        raise ValueError("mode should be 'video', 'full', 'part', or 'gt'.")
         
     return Part.from_uri(uri=file_uri, mime_type=mime_type)
 
