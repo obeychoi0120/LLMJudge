@@ -33,17 +33,22 @@ def generate_queries_for_content(model, video_part, gt_part, content_id):
     return response.text
 
 def main():
-    os.environ["GCP_PROJECT_ID"] = "insight-dev-490002"
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
     parser.add_argument("--input_file", default="user_query_list.json", help="입력 JSON 파일 경로 (content_id 참조용)")
     parser.add_argument("--output_file", default="generated_query_list.json", help="생성된 질문 목록을 저장할 파일 경로")
-    parser.add_argument("--project_id", help="GCP 프로젝트 ID")
+    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID")
+    parser.add_argument("--gs_bucket", help="GCS 버킷 이름")
     
     args = parser.parse_args()
     
-    project_id = args.project_id or os.environ.get("GCP_PROJECT_ID")
+    project_id = args.gcp_project_id
     if not project_id:
         print("Error: GCP Project ID가 설정되지 않았습니다.")
+        return
+
+    gs_bucket = args.gs_bucket
+    if not gs_bucket:
+        print("Error: GCS 버킷 이름이 설정되지 않았습니다.")
         return
 
     print(f"Initializing Gemini client for project: {project_id}...")
@@ -72,8 +77,8 @@ def main():
             
             # Use the video and gt files
             print(f"Preparing GCS files (mode: video, gt) for {content_id}...")
-            video_part = process_gcs_file(GS_BUCKET_NAME, content_id, mode="video")
-            gt_part = process_gcs_file(GS_BUCKET_NAME, content_id, mode="gt")
+            video_part = process_gcs_file(gs_bucket, content_id, mode="video")
+            gt_part = process_gcs_file(gs_bucket, content_id, mode="gt")
             
             print("Generating queries...")
             try:
@@ -105,8 +110,7 @@ def main():
                 output_list.append(output_entry)
             
             # Intermediate saving
-            # with open("generated_queries/" + args.output_file, "w", encoding="utf-8") as f:
-            with open(args.output_file, "w", encoding="utf-8") as f:
+            with open("generated_queries/" + args.output_file, "w", encoding="utf-8") as f:
                 json.dump(output_list, f, indent=4, ensure_ascii=False)
                 
     except KeyboardInterrupt:

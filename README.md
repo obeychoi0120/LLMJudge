@@ -55,7 +55,7 @@ LLMJudge/
 평가 파이프라인 시작 전, 영상을 기반으로 다수의 평가용 질문(Queries)을 자동으로 생성할 수 있습니다. 
 
 ```bash
-python generate_query.py --input_file user_query_list_sample.json --output_file generated_query_list.json --project_id <YOUR_GCP_PROJECT_ID>
+python generate_query.py --input_file user_query_list_sample.json --output_file generated_query_list.json --gcp_project_id <YOUR_GCP_PROJECT_ID> --gs_bucket <YOUR_GS_BUCKET>
 ```
 명령어를 실행하면 `input_file`에 명시된 `content_id`를 불러오고, `gemini-3.1-pro-preview` 판정 모델이 각 영상(video)과 정답 메타데이터(GT)를 분석하여 질문 5~10개를 생성 및 터미널에 로깅합니다. 생성된 모든 결과는 `output_file`로 지정된 경로에 JSON 형식으로 저장됩니다.
 
@@ -63,12 +63,13 @@ python generate_query.py --input_file user_query_list_sample.json --output_file 
 질문 세트가 준비되면 `main.py`를 실행하여 3가지 모드에 대한 답변 추론과 G-Eval 방식의 자동 평가 파이프라인을 시작합니다. 
 
 ```bash
-python main.py --json_file user_query_list.json --project_id <YOUR_GCP_PROJECT_ID>
+python main.py --json_file user_query_list.json --gcp_project_id <YOUR_GCP_PROJECT_ID> --gs_bucket <YOUR_GS_BUCKET>
 ```
 
 ### Argument 설명
 - `--json_file`: 실행할 질문 목록이 담긴 JSON 파일의 경로입니다. 기본값은 `user_query_list.json`입니다.
-- `--project_id`: 구글 클라우드 프로젝트 ID입니다. 이 인자를 생략할 경우 환경 변수 `GCP_PROJECT_ID`가 설정되어 있어야 합니다.
+- `--gcp_project_id`: 구글 클라우드 프로젝트 ID입니다. 이 인자를 생략할 경우 환경 변수 `GCP_PROJECT_ID`가 설정되어 있어야 합니다.
+- `--gs_bucket`: GCS 버킷 이름입니다. 이 인자를 생략할 경우 환경 변수 `GS_BUCKET_NAME`이 설정되어 있어야 합니다.
 
 ### 입력 데이터 포맷 (`user_query_list.json`)
 아래와 같이 `content_id`와 해당 콘텐츠에 수행할 `queries` 목록을 포함한 JSON 배열 형태로 작성해야 합니다.

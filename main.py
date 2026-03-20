@@ -8,19 +8,22 @@ from run_gemini_cli import (
     evaluate_answer_session, init_generation_model, init_judge_model
 )
 
-GS_BUCKET_NAME = "insight-youtubevideodataset"
-
 def main():
-    os.environ["GCP_PROJECT_ID"] = "insight-dev-490002"
     parser = argparse.ArgumentParser(description="Gemini Multi-turn Chat CLI with Session-based Evaluation")
     parser.add_argument("--json_file", default="user_query_list.json", help="질문 목록 JSON 파일 경로")
-    parser.add_argument("--project_id", help="GCP 프로젝트 ID (환경 변수 GCP_PROJECT_ID가 없을 경우 필수)")
+    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (환경 변수 GCP_PROJECT_ID가 없을 경우 필수)")
+    parser.add_argument("--gs_bucket", help="GCS 버킷 이름")
     
     args = parser.parse_args()
 
-    project_id = args.project_id or os.environ.get("GCP_PROJECT_ID")
+    project_id = args.gcp_project_id
     if not project_id:
         print("Error: GCP Project ID가 설정되지 않았습니다. --project_id 인자를 사용하거나 GCP_PROJECT_ID 환경 변수를 설정하세요.")
+        return
+
+    gs_bucket = args.gs_bucket
+    if not gs_bucket:
+        print("Error: GCS 버킷 이름이 설정되지 않았습니다. --gs_bucket 인자를 사용하거나 GS_BUCKET_NAME 환경 변수를 설정하세요.")
         return
 
     print(f"Initializing Gemini client for project: {project_id}...")
