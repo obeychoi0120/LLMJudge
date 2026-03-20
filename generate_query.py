@@ -6,7 +6,7 @@ from run_gemini_cli import init_gemini_client, process_gcs_file
 
 GS_BUCKET_NAME = "insight-youtubevideodataset"
 
-def init_query_generator_model(model_name="gemini-3.1-pro-preview"):
+def init_query_generator_model(model_name):
     system_prompt = """
     당신은 영상 콘텐츠와 정답 메타데이터(GT JSONL)를 분석하여 해당 영상을 시청한 일반 사용자가 궁금해할 만한 핵심적이고 흥미로운 질문들을 생성하는 전문가입니다.
     첨부된 파일은 원본 비디오 영상과 영상의 핵심 정답(GT) 내용이 포함된 JSONL 파일입니다.
@@ -54,8 +54,8 @@ def main():
     print(f"Initializing Gemini client for project: {project_id}...")
     init_gemini_client(project_id)
     
-    print("Initializing Query Generator Model (gemini-3.1-pro-preview)...")
-    generator_model = init_query_generator_model()
+    print("Initializing Query Generator Model (gemini-2.5-pro)...")
+    generator_model = init_query_generator_model(model_name="gemini-2.5-pro")
     
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")

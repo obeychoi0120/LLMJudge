@@ -21,8 +21,8 @@ def main():
         print("Error: GCP Project ID가 설정되지 않았습니다. --project_id 인자를 사용하거나 GCP_PROJECT_ID 환경 변수를 설정하세요.")
         return
 
-    gs_bucket = args.gs_bucket
-    if not gs_bucket:
+    gs_bucket_name = args.gs_bucket
+    if not gs_bucket_name:
         print("Error: GCS 버킷 이름이 설정되지 않았습니다. --gs_bucket 인자를 사용하거나 GS_BUCKET_NAME 환경 변수를 설정하세요.")
         return
 
@@ -50,17 +50,17 @@ def main():
             queries = item["queries"]
             
             print(f"\nProcessing Content: '{content_id}'")
-            print(f"Preparing GCS files from bucket: {GS_BUCKET_NAME}...")
+            print(f"Preparing GCS files from bucket: {gs_bucket_name}")
             
             parts = {
-                "video": process_gcs_file(GS_BUCKET_NAME, content_id, mode="video"),
-                "full": process_gcs_file(GS_BUCKET_NAME, content_id, mode="full"),
-                "part": process_gcs_file(GS_BUCKET_NAME, content_id, mode="part"),
-                "gt": process_gcs_file(GS_BUCKET_NAME, content_id, mode="gt")
+                "video": process_gcs_file(gs_bucket_name, content_id, mode="video"),
+                "full": process_gcs_file(gs_bucket_name, content_id, mode="full"),
+                "part": process_gcs_file(gs_bucket_name, content_id, mode="part"),
+                "gt": process_gcs_file(gs_bucket_name, content_id, mode="gt")
             }
 
-            print(f"Initializing Generation models (asia-northeast3)...")
-            vertexai.init(project=project_id, location="asia-northeast3")
+            print(f"Initializing Generation models (us-central1)...")
+            vertexai.init(project=project_id, location="us-central1")
             
             gen_chats = {}
             for mode in ["full", "part", "video"]:
@@ -70,7 +70,7 @@ def main():
             print("Initializing Judge model (global)...")
             # 3.1 Pro Preview가 원활하게 지원되는 글로벌 리전 사용
             vertexai.init(project=project_id, location="global")
-            judge_model = init_judge_model(model_name="gemini-3.1-pro-preview")
+            judge_model = init_judge_model(model_name="gemini-2.5-pro")
             
             # --- Judge 모델도 모드별로 각각의 Chat Session을 열어 속도 향상 달성 ---
             judge_chats = {}
@@ -130,8 +130,8 @@ def main():
                         score_entry = {
                             "query": user_prompt,
                             "mode": mode,
-                            "judge": score_dict
-                        }
+                            "judge": score_dict 
+                        }   
                         
                         all_scores.append(score_entry)
                         print(f"--- [{mode}] Evaluation Result ---")

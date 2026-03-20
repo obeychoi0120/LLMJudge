@@ -3,8 +3,8 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 
 def init_gemini_client(gcp_project_id):
-    # 기본적으로 빠른 응답을 위해 서울 리전을 우선 초기화합니다.
-    vertexai.init(project=gcp_project_id, location="asia-northeast3") 
+    # 안정성을 우선하여 미국 아이오와 리전을 초기화합니다.
+    vertexai.init(project=gcp_project_id, location="us-central1")
     return None
 
 def configure_system_prompt(mode="full"):
@@ -15,7 +15,7 @@ def configure_system_prompt(mode="full"):
         [JSONL 구조 안내]
         각 줄의 데이터는 15초 단위의 구간에 대한 정보를 나타냅니다.
         - timestamp: 해당 구간의 시작 시간 (초)
-        - audio_cls: 오디오 분류 모델이 분석한 해당 구간 속 오디오 분류 결과
+        - audio_cls: 오디오 분류 모델이 분석    한 해당 구간 속 오디오 분류 결과
         - speech: 음성 인식 모델이 인식한 해당 구간의 음성 대화
         - ocr_text: 해당 화면에 등장한 자막 텍스트 (발화자 식별 및 핵심 키워드 파악용)
         - description: 시각적 관찰 모델이 영어로 작성한 해당 구간의 화면/행동 묘사
@@ -122,7 +122,7 @@ def send_chat_message(chat, user_prompt, file_part=None):
     return chat.send_message(contents)
 
 # --- Judge Models ---
-def init_judge_model(model_name="gemini-3.1-pro-preview"):
+def init_judge_model(model_name="gemini-2.5-pro"):
     judge_model = GenerativeModel(
         model_name=model_name,
         system_instruction=[configure_system_prompt("judge")]
