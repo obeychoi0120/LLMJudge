@@ -9,6 +9,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ## ✨ 주요 기능
 
+- **시청자 질문 자동 생성**: `gemini-3.1-pro-preview` 모델이 원본 비디오와 정답(GT) 메타데이터를 분석하여 해당 콘텐츠를 시청한 사용자가 실제 궁금해할 만한 핵심 문항(5~10개)을 자동으로 생성합니다.
 - **다중 모드(Multi-mode) 추론**: 영상 정보를 제공하는 방식에 따라 3가지 모드로 추론을 진행합니다.
   - `video`: 원본 비디오 파일(.mp4)만을 제공하여 답변을 생성.
   - `full`: 오디오 분류, 음성 인식, 자막(OCR), 시각적 행동 묘사(Description)가 모두 포함된 15초 단위 JSONL 제공.
@@ -24,8 +25,10 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 LLMJudge/
 ├── main.py                    # 전체 추론 및 평가 파이프라인을 실행하는 메인 스크립트
 ├── run_gemini_cli.py          # Gemini API 초기화, GCS 파일 로드, 프롬프트 구성 및 채팅/평가 함수 모음
+├── generate_query.py          # Pro 모델을 사용하여 시청자 질문을 자동 생성하는 스크립트
 ├── user_query_list.json       # (실제 실행용) 평가를 진행할 콘텐츠 ID와 사용자 질문 리스트
 ├── user_query_list_sample.json# (참고용) 질문 리스트 샘플 포맷
+├── generated_query_list.json  # 자동 생성된 사용자 질문 목록이 저장되는 JSON 파일
 ├── response/                  # 생성된 LLM 답변 텍스트 파일이 저장되는 폴더
 └── scores/                    # Judge 모델의 평가 점수 및 사유 메타데이터(JSON)가 저장되는 폴더
 ```
@@ -46,7 +49,16 @@ LLMJudge/
 
 ## 🎯 실행 방법
 
-`main.py`를 실행하여 추론과 평가 파이프라인을 시작합니다. 
+### 1. 사용자 질문 자동 생성 (`generate_query.py`)
+평가 파이프라인 시작 전, 영상을 기반으로 다수의 평가용 질문(Queries)을 자동으로 생성할 수 있습니다. 
+
+```bash
+python generate_query.py --input_file user_query_list_sample.json --output_file generated_query_list.json --project_id <YOUR_GCP_PROJECT_ID>
+```
+명령어를 실행하면 `input_file`에 명시된 `content_id`를 불러오고, `gemini-3.1-pro-preview` 판정 모델이 각 영상(video)과 정답 메타데이터(GT)를 분석하여 질문 5~10개를 생성 및 터미널에 로깅합니다. 생성된 모든 결과는 `output_file`로 지정된 경로에 JSON 형식으로 저장됩니다.
+
+### 2. 추론 및 모델 답변 평가 (`main.py`)
+질문 세트가 준비되면 `main.py`를 실행하여 3가지 모드에 대한 답변 추론과 G-Eval 방식의 자동 평가 파이프라인을 시작합니다. 
 
 ```bash
 python main.py --json_file user_query_list.json --project_id <YOUR_GCP_PROJECT_ID>
