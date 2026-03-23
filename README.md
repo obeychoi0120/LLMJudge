@@ -52,7 +52,15 @@ LLMJudge/
    ```bash
    gcloud auth application-default login
    ```
-3. **GCS 버킷에 데이터 업로드**
+3. **GCP 프로젝트 및 버킷 설정 (`config.json`)**
+   이 프로젝트는 프로젝트 ID 및 버킷 이름을 `config.json`에서 읽어옵니다. 루트 디렉토리에 있는 `sample_config.json`을 복사하여 `config.json`을 생성하고 본인의 정보를 입력해 주세요.
+   ```bash
+   cp sample_config.json config.json
+   # 이후 config.json의 내용을 본인의 GCP Project ID 및 Bucket Name으로 수정합니다.
+   ```
+   *(참고: `config.json`은 `.gitignore`에 등록되어 있어 외부 저장소에 유출되지 않습니다.)*
+
+4. **GCS 버킷에 데이터 업로드**
 
     기본적으로 `gs://insight-youtubevideodataset-us` 버킷에 데이터를 업로드합니다. (us-central1 리전)
 
