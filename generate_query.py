@@ -24,7 +24,7 @@ def init_query_generator_model(model_name):
         "마지막에 상황이 어떻게 마무리되는지 요약 좀 해줄래?",
         "영상 중간에 주인공이 입고 있는 저 자켓 디자인 특이한데 어디 거야?",
         "배경으로 나오는 저 야경 예쁜 곳 관광지 이름이 뭐야?"
-    ]
+    ]   
     """
     return GenerativeModel(model_name=model_name, system_instruction=[system_prompt])
 

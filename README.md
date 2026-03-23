@@ -13,29 +13,31 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 - **다중 모드(Multi-mode) 추론**: 영상 정보를 제공하는 방식에 따라 3가지 모드로 추론을 진행합니다.
   - `video`: 원본 비디오 파일(.mp4)만을 제공하여 답변을 생성.
   - `full`: 오디오 분류, 음성 인식, 자막(OCR), 시각적 행동 묘사(Description)가 모두 포함된 15초 단위 JSONL 제공.
-  - `nodesc`: 시각적 행동 묘사를 제외한 나머지 메타데이터 JSONL 제공.
+  - `part`: 시각적 행동 묘사를 제외한 나머지 메타데이터 JSONL 제공.
 - **최적화된 Session-based 추론 및 평가**: 대용량 파라미터(Video, JSONL)를 매번 재업로드하는 병목을 제거하기 위해 Chat Session을 활용하여 최초 1회만 업로드합니다. 특히 평가(Judge) 파이프라인에도 세션을 도입하되 인과관계 오염을 막는 독립화 프롬프트를 주입하여, 객관성을 유지하면서도 압도적으로 빠른 평가 속도를 보장합니다.
 - **안정적인 기본 리전 및 모델 설정**: 안정적인 멀티모달 처리를 위해 기본 리전은 `us-central1`로 설정되어 있으며, 고성능 추론 및 평가를 위해 `gemini-2.5-pro` 모델을 기본으로 사용합니다. 필요 시 최신 `gemini-3-pro-preview` 모델과 `global` 엔드포인트를 조합하여 사용할 수 있습니다.
 - **LLM-as-a-Judge 자동 평가 파이프라인**: `gemini-2.5-pro` 판정 모델을 활용해 앞서 생성된 3가지 모드의 답변을 평가합니다. 각 1~5점 척도로 세분화된 점수와 논리적인 평가 사유(`rationale`)를 반환합니다.
-- **자동화된 결과 저장**:
-  - `response/` 디렉토리에 각 모드별 모델의 텍스트 답변(.txt)이 저장됩니다.
-  - `scores/` 디렉토리에 Judge 모델이 채점한 최종 평가 결과가 통합된 JSON 파일로 저장됩니다.
+  - Judge 모델은 원본 video와 GT JSONL을 기준으로 평가를 진행합니다.
+  - GT JSONL 파일은  `YoutubeDataCollection` 에서 추출한 메타데이터 중 하나입니다.
+
+- **결과 저장**:
+  - `output/` 디렉토리에 모든 결과물이 저장됩니다.
 
 ## 🗂 파일 구조
 
 ```text
 LLMJudge/
-├── main.py                    # 전체 파이프라인 분기점을 관리하는 오케스트레이터
-├── generate_query.py          # 질문 생성 모듈 (`--generate-query` 옵션 시 동작)
-├── generate_response.py       # 모드별 답변 생성(Inference) 모듈 
-├── judge_response.py          # 프롬프트 기반 평가(Judge) 모듈
-├── run_gemini_cli.py          # Gemini SDK 초기화, GCS 데이터 검증 및 프롬프트 등 공통 헬퍼 
-├── sample_config.json         # 설정 파일 샘플 (복사하여 config.json으로 사용)
-├── sample_user_query_list.json# 기본 입력 파일: 평가를 진행할 콘텐츠 ID (및 선별적 질문) 명시
-└── output/                    # 파이프라인의 결과물이 통합 저장되는 디렉토리
-    ├── query_generated.json   # 1️⃣ 자동 생성된 질문 목록 (생략 가능)
-    ├── responses.json         # 2️⃣ 각 모드(full, part, video)별 모델 추론 답변
-    └── scores.json            # 3️⃣ 최종 평가 점수(1~5점 척도) 및 Rationale
+├── main.py                     # 전체 파이프라인 분기점을 관리하는 오케스트레이터
+├── generate_query.py           # 질문 생성 모듈 (`--generate-query` 옵션 시 동작)
+├── generate_response.py        # 모드별 답변 생성(Inference) 모듈 
+├── judge_response.py           # 프롬프트 기반 평가(Judge) 모듈
+├── run_gemini_cli.py           # Gemini SDK 초기화, GCS 데이터 검증 및 프롬프트 등 공통 헬퍼 
+├── sample_config.json          # 설정 파일 샘플 (복사하여 config.json으로 사용)
+├── sample_user_query_list.json # 기본 입력 파일: 평가를 진행할 콘텐츠 ID (및 선별적 질문) 명시
+└── output/                     # 파이프라인의 결과물이 통합 저장되는 디렉토리
+    ├── query_generated.json    # 1️⃣ 자동 생성된 질문 목록 (생략 가능)
+    ├── responses.json          # 2️⃣ 각 모드(full, part, video)별 모델 추론 답변
+    └── scores.json             # 3️⃣ 최종 평가 점수(1~5점 척도) 및 Rationale
 ```
 
 ## 🚀 설치 및 사전 준비
