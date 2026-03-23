@@ -59,17 +59,14 @@ def main():
                 "gt": process_gcs_file(gs_bucket_name, content_id, mode="gt")
             }
 
-            print(f"Initializing Generation models (us-central1)...")
-            vertexai.init(project=project_id, location="us-central1")
+            print(f"Initializing Generation models...")
             
             gen_chats = {}
             for mode in ["full", "part", "video"]:
                 gen_model = init_generation_model(mode=mode, model_name='gemini-2.5-flash')
                 gen_chats[mode] = start_chat_session(gen_model)
 
-            print("Initializing Judge model (global)...")
-            # 3.1 Pro Preview가 원활하게 지원되는 글로벌 리전 사용
-            vertexai.init(project=project_id, location="global")
+            print("Initializing Judge model...")
             judge_model = init_judge_model(model_name="gemini-2.5-pro")
             
             # --- Judge 모델도 모드별로 각각의 Chat Session을 열어 속도 향상 달성 ---

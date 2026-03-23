@@ -28,7 +28,7 @@ def init_query_generator_model(model_name):
     return GenerativeModel(model_name=model_name, system_instruction=[system_prompt])
 
 def generate_queries_for_content(model, video_part, gt_part, content_id):
-    prompt = f"콘텐츠 ID '{content_id}'에 대한 흥미로운 시청자 질문 5-10개를 생성해 주세요."
+    prompt = f"제공된 컨텐츠에 대한 시청자 질문 5-10개를 실제 사용자가 쓸 법한 캐주얼하고 격식 없는 어투로 생성해 주세요. "
     response = model.generate_content([video_part, gt_part, prompt])
     return response.text
 

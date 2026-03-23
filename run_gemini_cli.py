@@ -3,8 +3,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 
 def init_gemini_client(gcp_project_id):
-    # 안정성을 우선하여 미국 아이오와 리전을 초기화합니다.
-    vertexai.init(project=gcp_project_id, location="us-central1")
+    vertexai.init(project=gcp_project_id, location="asia-northeast3")
     return None
 
 def configure_system_prompt(mode="full"):
