@@ -71,10 +71,10 @@ def main():
             "part": process_gcs_file(args.gs_bucket, content_id, mode="part"),
         }
 
-        print(f"Initializing Generation models ({args.gen_model})...")
+        print(f"Initializing Generation models ({args.response_gen_model})...")
         gen_chats = {}
         for mode in ["full", "part", "video"]:
-            gen_model = init_generation_model(mode=mode, model_name=args.gen_model)
+            gen_model = init_generation_model(mode=mode, model_name=args.response_gen_model)
             gen_chats[mode] = start_chat_session(gen_model)
 
         is_first_turn = True

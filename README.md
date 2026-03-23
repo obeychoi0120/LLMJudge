@@ -15,7 +15,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
   - `full`: 오디오 분류, 음성 인식, 자막(OCR), 시각적 행동 묘사(Description)가 모두 포함된 15초 단위 JSONL 제공.
   - `nodesc`: 시각적 행동 묘사를 제외한 나머지 메타데이터 JSONL 제공.
 - **최적화된 Session-based 추론 및 평가**: 대용량 파라미터(Video, JSONL)를 매번 재업로드하는 병목을 제거하기 위해 Chat Session을 활용하여 최초 1회만 업로드합니다. 특히 평가(Judge) 파이프라인에도 세션을 도입하되 인과관계 오염을 막는 독립화 프롬프트를 주입하여, 객관성을 유지하면서도 압도적으로 빠른 평가 속도를 보장합니다.
-- **단일 리전(Single-region) 아키텍처**: 네트워크 지연 속도를 최소화하고 일관성을 유지하기 위해 답변 생성(Generation) 및 평가(Judge) 등 모든 과정을 서울 리전(`asia-northeast3`)에서 수행합니다.
+- **안정적인 기본 리전 및 모델 설정**: 안정적인 멀티모달 처리를 위해 기본 리전은 `us-central1`로 설정되어 있으며, 고성능 추론 및 평가를 위해 `gemini-2.5-pro` 모델을 기본으로 사용합니다. 필요 시 최신 `gemini-3-pro-preview` 모델과 `global` 엔드포인트를 조합하여 사용할 수 있습니다.
 - **LLM-as-a-Judge 자동 평가 파이프라인**: `gemini-2.5-pro` 판정 모델을 활용해 앞서 생성된 3가지 모드의 답변을 평가합니다. 각 1~5점 척도로 세분화된 점수와 논리적인 평가 사유(`rationale`)를 반환합니다.
 - **자동화된 결과 저장**:
   - `response/` 디렉토리에 각 모드별 모델의 텍스트 답변(.txt)이 저장됩니다.
@@ -25,14 +25,16 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ```text
 LLMJudge/
-├── main.py                    # 전체 추론 및 평가 파이프라인을 실행하는 메인 스크립트
-├── run_gemini_cli.py          # Gemini API 초기화, GCS 파일 로드, 프롬프트 구성 및 채팅/평가 함수 모음
-├── generate_query.py          # Pro 모델을 사용하여 시청자 질문을 자동 생성하는 스크립트
-├── user_query_list.json       # (실제 실행용) 평가를 진행할 콘텐츠 ID와 사용자 질문 리스트
-├── user_query_list_sample.json# (참고용) 질문 리스트 샘플 포맷
-├── generated_query_list.json  # 자동 생성된 사용자 질문 목록이 저장되는 JSON 파일
-├── response/                  # 생성된 LLM 답변 텍스트 파일이 저장되는 폴더
-└── scores/                    # Judge 모델의 평가 점수 및 사유 메타데이터(JSON)가 저장되는 폴더
+├── main.py                    # 전체 파이프라인 분기점을 관리하는 오케스트레이터
+├── generate_query.py          # 질문 생성 모듈 (`--generate-query` 옵션 시 동작)
+├── generate_response.py       # 모드별 답변 생성(Inference) 모듈 
+├── judge_response.py          # 프롬프트 기반 평가(Judge) 모듈
+├── run_gemini_cli.py          # Gemini SDK 초기화, GCS 데이터 검증 및 프롬프트 등 공통 헬퍼 
+├── user_query_list_sample.json# 기본 입력 파일: 평가를 진행할 콘텐츠 ID (및 선별적 질문) 명시
+└── output/                    # 파이프라인의 결과물이 통합 저장되는 디렉토리
+    ├── query_generated.json   # 1️⃣ 자동 생성된 질문 목록 (생략 가능)
+    ├── responses.json         # 2️⃣ 각 모드(full, part, video)별 모델 추론 답변
+    └── scores.json            # 3️⃣ 최종 평가 점수(1~5점 척도) 및 Rationale
 ```
 
 ## 🚀 설치 및 사전 준비
@@ -40,7 +42,7 @@ LLMJudge/
 1. **Python 환경 설정 및 패키지 설치**
    이 프로젝트는 `vertexai`, `google-cloud-aiplatform` 등의 Google Cloud 모듈을 사용합니다.
    ```bash
-   pip install google-cloud-aiplatform vertexai
+   pip install google-cloud-aiplatform google-cloud-storage vertexai
    ```
 
 2. **GCP (Google Cloud Platform) 인증**
@@ -51,53 +53,72 @@ LLMJudge/
 
 ## 🎯 실행 방법
 
-### 1. 사용자 질문 자동 생성 (`generate_query.py`)
-평가 파이프라인 시작 전, 영상 및 GT 메타데이터 기반으로 다수의 평가용 질문(Queries)을 자동으로 생성할 수 있습니다. 
+`main.py`는 오케스트레이터 역할을 하며, 옵션에 따라 필요한 파이프라인을 유연하게 제어할 수 있습니다. 스크립트는 실행 중 네트워크 중단 등으로 종료되더라도 `output/` 폴더 내 기존 결과물을 인식하여 누락된 `content_id`부터 작업을 재개(Resume)합니다.
+
+### 1. 기본 사용법 (Response 생성 및 Judge 평가)
+이미 `user_query_list_sample.json`에 모델이 답해야 할 질문(queries)이 채워져 있는 경우 사용하는 기본 흐름입니다. 답변 생성(`generate_response.py`)을 거친 후 자동으로 평가(`judge_response.py`) 단계가 이어집니다.
 
 ```bash
-python generate_query.py --input_file user_query_list_sample.json --output_file generated_query_list.json --gcp_project_id <YOUR_GCP_PROJECT_ID> --gs_bucket <YOUR_GS_BUCKET>
+python main.py \
+  --input_file user_query_list_sample.json \
+  --gcp_project_id <YOUR_GCP_PROJECT_ID> \
+  --gs_bucket <YOUR_GS_BUCKET>
 ```
-명령어를 실행하면 `input_file`에 명시된 `content_id`를 불러오고, `gemini-2.5-pro` 판정 모델이 각 영상(video)과 정답 메타데이터(GT)를 분석하여 질문 5~10개를 생성 및 터미널에 로깅합니다. 생성된 모든 결과는 `output_file`로 지정된 경로에 JSON 형식으로 저장됩니다.
 
-### 2. 추론 및 모델 답변 평가 (`main.py`)
-질문 세트가 준비되면 `main.py`를 실행하여 3가지 모드에 대한 답변 추론과 G-Eval 방식의 자동 평가 파이프라인을 시작합니다. 
+### 2. E2E 사용법 (Query 생성 -> Response 생성 -> Judge 평가)
+만약 입력 JSON 파일에 `content_id`만 있고 질문(`queries`)이 비어 있다면, `--generate-query` 플래그를 추가하여 질문 생성부터 파이프라인을 시작합니다. 
 
 ```bash
-python main.py --json_file user_query_list.json --gcp_project_id <YOUR_GCP_PROJECT_ID> --gs_bucket <YOUR_GS_BUCKET>
+python main.py \
+  --generate-query \
+  --input_file user_query_list_sample.json \
+  --gcp_project_id <YOUR_GCP_PROJECT_ID> \
+  --gs_bucket <YOUR_GS_BUCKET>
+```
+*과정: 1) 질문 생성 (`output/query_generated.json`) -> 2) 답변 생성 (`output/responses.json`) -> 3) 최종 평가 (`output/scores.json`)*
+
+### 3. 모델 커스텀 및 최신 3 Pro 적용법
+특정 단계에서 구동되는 모델을 변경하거나, 리전(Location)을 설정해야 될 때 다음과 같은 파라미터를 추가 조절할 수 있습니다:
+- `--query_gen_model`: 질문 자동 생성 모델 (기본: `gemini-2.5-pro`)
+- `--response_gen_model`: 답변 생성(Inference) 모델 (기본: `gemini-2.5-flash`)
+- `--judge_model`: 평가 모델 (기본: `gemini-2.5-pro`)
+- `--location`: GCP 리전 설정 (기본: `us-central1`)
+
+**예시: Gemini 3.0 Pro 미리보기 모델을 사용해 E2E 파이프라인 가동하기**
+```bash
+python main.py \
+  --generate-query \
+  --query_gen_model gemini-3-pro-preview \
+  --judge_model gemini-3-pro-preview \
+  --location global \
+  --gcp_project_id <YOUR_GCP_PROJECT_ID> \
+  --gs_bucket <YOUR_GS_BUCKET>
 ```
 
-### Query 데이터 포맷 (`user_query_list.json`)
-아래와 같이 `content_id`와 해당 콘텐츠에 수행할 `queries` 목록을 포함한 JSON 배열 형태로 작성해야 합니다.
+## 📊 평가 결과 (`output/scores.json`)
 
-```json
-[
-    {
-        "content_id": "001_NatGeoKR_Narwhal_6m",
-        "queries": [
-            "이 영상에서 일어나는 일들을 설명해 줘.",
-            "이 영상에서 일각돌고래가 먹잇감을 어떻게 사냥하는지 묘사해 줘."
-        ]
-    }
-]
-```
-
-## 📊 평가 결과 (`scores/`)
-
-스크립트 실행이 완료되면 `scores` 폴더에 `{content_id}_all_scores.json` 형태의 파일이 생성됩니다. 이 파일에는 각 쿼리 당 `video`, `full`, `nodesc` 모드의 모델 평가가 담겨 있습니다.
+파이프라인이 모두 순회되면 `output/scores.json`에 아래 형태와 같이 종합 평가 파일이 생성됩니다.
 
 **결과 예시:**
 ```json
-{
-  "query": "이 영상에서 일어나는 일들을 설명해 줘.",
-  "mode": "full",
-  "judge": {
-    "rationale": "답변이 제공된 메타데이터에 충실하게 작성되었으며, 맥락에 맞게 자연스럽게 연결되었습니다...",
-    "scores": {
-      "accuracy": 5,
-      "completeness": 5,
-      "helpfulness": 4
-    },
-    "total_score": 14
+[
+  {
+    "content_id": "001_NatGeoKR_Narwhal_6m",
+    "scores": [
+      {
+        "query": "이 영상에서 일각돌고래가 사냥하는 모습을 묘사해 줘.",
+        "mode": "full",
+        "judge": {
+          "rationale": "답변이 제공된 메타데이터에 충실하게 작성되었으며...",
+          "scores": {
+            "accuracy": 5,
+            "completeness": 5,
+            "helpfulness": 4
+          },
+          "total_score": 14
+        }
+      }
+    ]
   }
-}
+]
 ```
