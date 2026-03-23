@@ -34,22 +34,15 @@ def main():
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
     parser.add_argument("--input_file", default="user_query_list.json", help="입력 JSON 파일 경로 (content_id 참조용)")
     parser.add_argument("--output_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
-    parser.add_argument("--gcp_project_id", default="insight-dev-490002", help="GCP 프로젝트 ID")
-    parser.add_argument("--gs_bucket_name", default="insight-youtubevideodataset-us", help="GCS 버킷 이름")
+    parser.add_argument("--gcp_project_id", required=True, help="GCP 프로젝트 ID (필수)")
+    parser.add_argument("--gs_bucket_name", required=True, help="GCS 버킷 이름 (필수)")
     parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="질문 생성에 사용할 모델명")
     parser.add_argument("--location", default="us-central1", help="GCP Location")
     
     args = parser.parse_args()
     
     project_id = args.gcp_project_id
-    if not project_id:
-        print("Error: GCP Project ID가 설정되지 않았습니다.")
-        return
-
     gs_bucket_name = args.gs_bucket_name
-    if not gs_bucket_name:
-        print("Error: GCS 버킷 이름이 설정되지 않았습니다.")
-        return
 
     print(f"Initializing Gemini client for project: {project_id}, location: {args.location}...")
     init_gemini_client(project_id, location=args.location)

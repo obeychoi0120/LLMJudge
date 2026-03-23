@@ -1,1 +1,16 @@
 __pycache__/
+
+# Output Directories
+output/
+response/
+scores/
+generated_queries/
+
+# JSON Files (Data Privacy)
+*.json
+!user_query_list_sample.json
+
+# Environment & Credentials
+.env
+*.pem
+*.key

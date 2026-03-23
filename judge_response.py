@@ -12,18 +12,14 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate Responses using Judge model")
     parser.add_argument("--answers_file", default="output/responses.json", help="답변 목록 JSON 파일 경로")
     parser.add_argument("--output_file", default="output/scores.json", help="최종 평가 결과 저장 경로")
-    parser.add_argument("--gcp_project_id", default="insight-dev-490002", help="GCP 프로젝트 ID")
-    parser.add_argument("--gs_bucket_name", default="insight-youtubevideodataset-us", help="GCS 버킷 이름")
+    parser.add_argument("--gcp_project_id", required=True, help="GCP 프로젝트 ID (필수)")
+    parser.add_argument("--gs_bucket_name", required=True, help="GCS 버킷 이름 (필수)")
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
     parser.add_argument("--location", default="asia-northeast3", help="GCP Location")
 
     args = parser.parse_args()
 
-    if not args.gcp_project_id or not args.gs_bucket_name:
-        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
-        return
-
-    print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
+    args = parser.parse_args()
     init_gemini_client(args.gcp_project_id, location=args.location)
     
     if not os.path.exists(args.answers_file):
