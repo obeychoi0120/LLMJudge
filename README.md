@@ -30,7 +30,8 @@ LLMJudge/
 ├── generate_response.py       # 모드별 답변 생성(Inference) 모듈 
 ├── judge_response.py          # 프롬프트 기반 평가(Judge) 모듈
 ├── run_gemini_cli.py          # Gemini SDK 초기화, GCS 데이터 검증 및 프롬프트 등 공통 헬퍼 
-├── user_query_list_sample.json# 기본 입력 파일: 평가를 진행할 콘텐츠 ID (및 선별적 질문) 명시
+├── sample_config.json         # 설정 파일 샘플 (복사하여 config.json으로 사용)
+├── sample_user_query_list.json# 기본 입력 파일: 평가를 진행할 콘텐츠 ID (및 선별적 질문) 명시
 └── output/                    # 파이프라인의 결과물이 통합 저장되는 디렉토리
     ├── query_generated.json   # 1️⃣ 자동 생성된 질문 목록 (생략 가능)
     ├── responses.json         # 2️⃣ 각 모드(full, part, video)별 모델 추론 답변
@@ -85,11 +86,11 @@ LLMJudge/
 `main.py`는 오케스트레이터 역할을 하며, 옵션에 따라 필요한 파이프라인을 유연하게 제어할 수 있습니다. 스크립트는 실행 중 네트워크 중단 등으로 종료되더라도 `output/` 폴더 내 기존 결과물을 인식하여 누락된 `content_id`부터 작업을 재개(Resume)합니다.
 
 ### 1. 기본 사용법 (Response 생성 및 Judge 평가)
-이미 `user_query_list_sample.json`에 모델이 답해야 할 질문(queries)이 채워져 있는 경우 사용하는 기본 흐름입니다. 답변 생성(`generate_response.py`)을 거친 후 자동으로 평가(`judge_response.py`) 단계가 이어집니다.
+이미 `sample_user_query_list.json`에 모델이 답해야 할 질문(queries)이 채워져 있는 경우 사용하는 기본 흐름입니다. 답변 생성(`generate_response.py`)을 거친 후 자동으로 평가(`judge_response.py`) 단계가 이어집니다.
 
 ```bash
 python main.py \
-  --input_file user_query_list_sample.json \
+  --input_file sample_user_query_list.json \
   --gcp_project_id <YOUR_GCP_PROJECT_ID> \
   --gs_bucket_name <YOUR_GS_BUCKET_NAME>
 ```
@@ -100,7 +101,7 @@ python main.py \
 ```bash
 python main.py \
   --generate-query \
-  --input_file user_query_list_sample.json \
+  --input_file sample_user_query_list.json \
   --gcp_project_id <YOUR_GCP_PROJECT_ID> \
   --gs_bucket_name <YOUR_GS_BUCKET_NAME>
 ```

@@ -4,12 +4,12 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(description="End-to-End LLM Judge Pipeline Orchestrator")
-    parser.add_argument("--input_file", default="user_query_list_sample.json", help="최초 컨텐츠/질문 목록 JSON 파일 경로")
+    parser.add_argument("--input_file", default="sample_user_query_list.json", help="최초 컨텐츠/질문 목록 JSON 파일 경로")
     parser.add_argument("--generated_queries_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
     parser.add_argument("--responses_file", default="output/responses.json", help="생성/통합된 답변 목록을 저장할 파일 경로")
     parser.add_argument("--scores_file", default="output/scores.json", help="최종 평가 결과를 저장할 파일 경로")
-    parser.add_argument("--gcp_project_id", required=True, help="GCP 프로젝트 ID (필수)")
-    parser.add_argument("--gs_bucket_name", required=True, help="GCS 버킷 이름 (필수)")
+    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
+    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="us-central1", help="GCP Location (Set to 'global' for gemini-3-pro-preview)")
     parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="사용할 질문 생성 모델명")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 답변 생성 모델명")
@@ -20,6 +20,19 @@ def main():
     
     args = parser.parse_args()
     
+    if os.path.exists("config.json"):
+        with open("config.json", "r", encoding="utf-8") as f:
+            try:
+                config = json.load(f)
+                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
+                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
+            except json.JSONDecodeError:
+                pass
+
+    if not args.gcp_project_id or not args.gs_bucket_name:
+        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (--gcp_project_id 인자를 주입하거나 config.json을 생성하세요)")
+        return
+        
     common_project_args = [
         "--gcp_project_id", args.gcp_project_id,
         "--location", args.location

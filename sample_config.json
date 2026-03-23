@@ -1,0 +1,4 @@
+{
+    "gcp_project_id": "YOUR_GCP_PROJECT_ID",
+    "gs_bucket_name": "YOUR_GS_BUCKET_NAME"
+}

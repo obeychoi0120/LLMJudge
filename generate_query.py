@@ -32,17 +32,30 @@ def generate_queries_for_content(model, video_part, gt_part):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
-    parser.add_argument("--input_file", default="user_query_list.json", help="입력 JSON 파일 경로 (content_id 참조용)")
+    parser.add_argument("--input_file", default="sample_user_query_list.json", help="입력 JSON 파일 경로 (content_id 참조용)")
     parser.add_argument("--output_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
-    parser.add_argument("--gcp_project_id", required=True, help="GCP 프로젝트 ID (필수)")
-    parser.add_argument("--gs_bucket_name", required=True, help="GCS 버킷 이름 (필수)")
+    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
+    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="질문 생성에 사용할 모델명")
     parser.add_argument("--location", default="us-central1", help="GCP Location")
     
     args = parser.parse_args()
     
+    if os.path.exists("config.json"):
+        with open("config.json", "r", encoding="utf-8") as f:
+            try:
+                config = json.load(f)
+                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
+                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
+            except json.JSONDecodeError:
+                pass
+
     project_id = args.gcp_project_id
     gs_bucket_name = args.gs_bucket_name
+    
+    if not project_id or not gs_bucket_name:
+        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (config.json을 생성하세요)")
+        return
 
     print(f"Initializing Gemini client for project: {project_id}, location: {args.location}...")
     init_gemini_client(project_id, location=args.location)

@@ -12,14 +12,26 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate Responses using Judge model")
     parser.add_argument("--answers_file", default="output/responses.json", help="답변 목록 JSON 파일 경로")
     parser.add_argument("--output_file", default="output/scores.json", help="최종 평가 결과 저장 경로")
-    parser.add_argument("--gcp_project_id", required=True, help="GCP 프로젝트 ID (필수)")
-    parser.add_argument("--gs_bucket_name", required=True, help="GCS 버킷 이름 (필수)")
+    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
+    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
     parser.add_argument("--location", default="asia-northeast3", help="GCP Location")
 
     args = parser.parse_args()
 
-    args = parser.parse_args()
+    if os.path.exists("config.json"):
+        with open("config.json", "r", encoding="utf-8") as f:
+            try:
+                config = json.load(f)
+                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
+                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
+            except json.JSONDecodeError:
+                pass
+                
+    if not args.gcp_project_id or not args.gs_bucket_name:
+        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
+        return
+
     init_gemini_client(args.gcp_project_id, location=args.location)
     
     if not os.path.exists(args.answers_file):

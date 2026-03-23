@@ -11,12 +11,21 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
     parser.add_argument("--json_file", default="user_query_list.json", help="질문 목록 JSON 파일 경로")
     parser.add_argument("--output_file", default="output/responses.json", help="통합 답변 목록을 저장할 파일 경로")
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름")
+    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
+    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
     parser.add_argument("--location", default="asia-northeast3", help="GCP Location")
 
     args = parser.parse_args()
+
+    if os.path.exists("config.json"):
+        with open("config.json", "r", encoding="utf-8") as f:
+            try:
+                config = json.load(f)
+                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
+                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
+            except json.JSONDecodeError:
+                pass
 
     if not args.gcp_project_id or not args.gs_bucket_name:
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")

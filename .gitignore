@@ -8,7 +8,8 @@ generated_queries/
 
 # JSON Files (Data Privacy)
 *.json
-!user_query_list_sample.json
+!sample_user_query_list.json
+!sample_config.json
 
 # Environment & Credentials
 .env
