@@ -1,10 +1,38 @@
 import os
 import vertexai
+from google.cloud import storage
 from vertexai.generative_models import GenerativeModel, Part
 
-def init_gemini_client(gcp_project_id):
-    vertexai.init(project=gcp_project_id, location="asia-northeast3")
+def init_gemini_client(gcp_project_id, location="us-central1"):
+    vertexai.init(project=gcp_project_id, location=location)
     return None
+
+def check_gcs_files_exist(gs_bucket_name, content_id):
+    """
+    Check if the 4 required files (1 video + 3 metadata jsonl) exist in the GCS bucket.
+    """
+    client = storage.Client()
+    bucket = client.bucket(gs_bucket_name)
+    
+    required_files = [
+        f"video_540p/{content_id}_540p.mp4",
+        f"jsonl/{content_id}_15s.jsonl",
+        f"jsonl/{content_id}_15s_NoDesc.jsonl",
+        f"jsonl/{content_id}_15s_GT.jsonl"
+    ]
+    
+    missing_files = []
+    for file_path in required_files:
+        if not bucket.blob(file_path).exists():
+            missing_files.append(file_path)
+            
+    if not missing_files:
+        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 4종이 모두 GCS에 온전히 존재합니다. 작업을 수행합니다.")
+        return True
+    else:
+        print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing_files}")
+        return False
+
 
 def configure_system_prompt(mode="full"):
     if mode == "full":

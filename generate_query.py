@@ -2,9 +2,7 @@ import os
 import argparse
 import json
 from vertexai.generative_models import GenerativeModel
-from run_gemini_cli import init_gemini_client, process_gcs_file
-
-GS_BUCKET_NAME = "insight-youtubevideodataset"
+from run_gemini_cli import init_gemini_client, process_gcs_file, check_gcs_files_exist
 
 def init_query_generator_model(model_name):
     system_prompt = """
@@ -27,17 +25,19 @@ def init_query_generator_model(model_name):
     """
     return GenerativeModel(model_name=model_name, system_instruction=[system_prompt])
 
-def generate_queries_for_content(model, video_part, gt_part, content_id):
-    prompt = f"제공된 컨텐츠에 대한 시청자 질문 5-10개를 실제 사용자가 쓸 법한 캐주얼하고 격식 없는 어투로 생성해 주세요. "
+def generate_queries_for_content(model, video_part, gt_part):
+    prompt = f"제공된 컨텐츠에 대한 시청자 질문 5-10개를 실제 사용자가 쓸 법한 캐주얼하고 격식 없는 어투로 생성해 주세요."
     response = model.generate_content([video_part, gt_part, prompt])
     return response.text
 
 def main():
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
     parser.add_argument("--input_file", default="user_query_list.json", help="입력 JSON 파일 경로 (content_id 참조용)")
-    parser.add_argument("--output_file", default="generated_query_list.json", help="생성된 질문 목록을 저장할 파일 경로")
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID")
-    parser.add_argument("--gs_bucket", help="GCS 버킷 이름")
+    parser.add_argument("--output_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
+    parser.add_argument("--gcp_project_id", default="insight-dev-490002", help="GCP 프로젝트 ID")
+    parser.add_argument("--gs_bucket_name", default="insight-youtubevideodataset-us", help="GCS 버킷 이름")
+    parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="질문 생성에 사용할 모델명")
+    parser.add_argument("--location", default="us-central1", help="GCP Location")
     
     args = parser.parse_args()
     
@@ -46,16 +46,16 @@ def main():
         print("Error: GCP Project ID가 설정되지 않았습니다.")
         return
 
-    gs_bucket = args.gs_bucket
-    if not gs_bucket:
+    gs_bucket_name = args.gs_bucket_name
+    if not gs_bucket_name:
         print("Error: GCS 버킷 이름이 설정되지 않았습니다.")
         return
 
-    print(f"Initializing Gemini client for project: {project_id}...")
-    init_gemini_client(project_id)
+    print(f"Initializing Gemini client for project: {project_id}, location: {args.location}...")
+    init_gemini_client(project_id, location=args.location)
     
-    print("Initializing Query Generator Model (gemini-2.5-pro)...")
-    generator_model = init_query_generator_model(model_name="gemini-2.5-pro")
+    print(f"Initializing Query Generator Model ({args.query_gen_model})...")
+    generator_model = init_query_generator_model(model_name=args.query_gen_model)
     
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
@@ -65,6 +65,20 @@ def main():
         input_list = json.load(f)
         
     output_list = []
+    processed_ids = set()
+    if os.path.exists(args.output_file):
+        with open(args.output_file, "r", encoding="utf-8") as f:
+            try:
+                output_list = json.load(f)
+                processed_ids = {item["content_id"] for item in output_list}
+                print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 {args.output_file}에 존재하여 건너뜁니다.")
+            except json.JSONDecodeError:
+                print(f"Warning: {args.output_file} 파일을 읽는 중 오류가 발생했습니다. 새로 시작합니다.")
+        
+    # 출력 폴더 생성
+    output_dir = os.path.dirname(args.output_file)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     
     print("\n" + "="*50)
     print("사용자 질문 자동 생성 프로세스를 시작합니다.")
@@ -73,34 +87,33 @@ def main():
     try:
         for item in input_list:
             content_id = item["content_id"]
+            if content_id in processed_ids:
+                continue
+                
             print(f"\nProcessing Content: '{content_id}'")
             
+            if not check_gcs_files_exist(gs_bucket_name, content_id):
+                continue
+                
             # Use the video and gt files
             print(f"Preparing GCS files (mode: video, gt) for {content_id}...")
-            video_part = process_gcs_file(gs_bucket, content_id, mode="video")
-            gt_part = process_gcs_file(gs_bucket, content_id, mode="gt")
+            video_part = process_gcs_file(gs_bucket_name, content_id, mode="video")
+            gt_part = process_gcs_file(gs_bucket_name, content_id, mode="gt")
             
             print("Generating queries...")
-            try:
-                response_text = generate_queries_for_content(generator_model, video_part, gt_part, content_id)
+            response_text = generate_queries_for_content(generator_model, video_part, gt_part)
+            
+            # JSON parsing
+            clean_text = response_text.strip()
+            if clean_text.startswith("```json"):
+                clean_text = clean_text[7:]
+            if clean_text.endswith("```"):
+                clean_text = clean_text[:-3]
                 
-                # JSON parsing
-                clean_text = response_text.strip()
-                if clean_text.startswith("```json"):
-                    clean_text = clean_text[7:]
-                if clean_text.endswith("```"):
-                    clean_text = clean_text[:-3]
-                    
-                generated_queries = json.loads(clean_text)
-                print(f"Successfully generated {len(generated_queries)} queries for '{content_id}':")
-                for i, q in enumerate(generated_queries, 1):
-                    print(f"  {i}. {q}")
-            except json.JSONDecodeError:
-                print(f"[Warning] Failed to parse JSON from response. Using raw text fallback for '{content_id}'.")
-                generated_queries = [line.strip('- "*,') for line in clean_text.split('\n') if line.strip() and not line.strip() in ['[', ']']]
-            except Exception as e:
-                print(f"[Error] Failed to generate queries for '{content_id}': {e}")
-                generated_queries = []
+            generated_queries = json.loads(clean_text)
+            print(f"Successfully generated {len(generated_queries)} queries for '{content_id}':")
+            for i, q in enumerate(generated_queries, 1):
+                print(f"  {i}. {q}")
             
             if generated_queries:
                 output_entry = {
@@ -108,9 +121,10 @@ def main():
                     "queries": generated_queries
                 }   
                 output_list.append(output_entry)
+                processed_ids.add(content_id)
             
             # Intermediate saving
-            with open("generated_queries/" + args.output_file, "w", encoding="utf-8") as f:
+            with open(args.output_file, "w", encoding="utf-8") as f:
                 json.dump(output_list, f, indent=4, ensure_ascii=False)
                 
     except KeyboardInterrupt:
