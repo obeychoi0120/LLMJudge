@@ -32,7 +32,7 @@ def generate_queries_for_content(model, video_part, gt_part):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
-    parser.add_argument("--input_file", default="sample_user_query_list.json", help="입력 JSON 파일 경로 (content_id 참조용)")
+    parser.add_argument("--input_file", default="content_list.json", help="입력 JSON 파일 경로 (content_id 리스트)")
     parser.add_argument("--output_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
@@ -92,7 +92,10 @@ def main():
 
     try:
         for item in input_list:
-            content_id = item["content_id"]
+            # Handle both simple string list and list of objects
+            content_id = item if isinstance(item, str) else item.get("content_id")
+            if not content_id:
+                continue
             if content_id in processed_ids:
                 continue
                 

@@ -1,10 +1,12 @@
 import argparse
 import subprocess
 import sys
+import os
+import json
 
 def main():
     parser = argparse.ArgumentParser(description="End-to-End LLM Judge Pipeline Orchestrator")
-    parser.add_argument("--input_file", default="sample_user_query_list.json", help="최초 컨텐츠/질문 목록 JSON 파일 경로")
+    parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
     parser.add_argument("--generated_queries_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
     parser.add_argument("--responses_file", default="output/responses.json", help="생성/통합된 답변 목록을 저장할 파일 경로")
     parser.add_argument("--scores_file", default="output/scores.json", help="최종 평가 결과를 저장할 파일 경로")
@@ -40,7 +42,27 @@ def main():
     
     current_input_file = args.input_file
     
-    if args.generate_query:
+    # 입력 파일 형식 감지 (단순 리스트 vs 쿼리 포함 객체 리스트)
+    has_queries = False
+    if os.path.exists(current_input_file):
+        with open(current_input_file, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    first_item = data[0]
+                    # 문자열 리스트거나 queries 키가 없으면 'content-only'로 간주
+                    if isinstance(first_item, dict) and "queries" in first_item:
+                        has_queries = True
+            except json.JSONDecodeError:
+                pass
+
+    # 쿼리가 없는데 --generate-query도 설정되지 않은 경우, 자동으로 쿼리 생성을 시도하거나 경고
+    should_run_query_gen = args.generate_query
+    if not has_queries and not args.generate_query:
+        print(f"\n[Notice] '{current_input_file}'에 쿼리 정보가 없어 질문 생성을 자동으로 시작합니다.")
+        should_run_query_gen = True
+
+    if should_run_query_gen:
         print("\n" + "="*60)
         print(">>> 0. Generating Queries")
         print("="*60)
@@ -52,9 +74,11 @@ def main():
             "--query_gen_model", args.query_gen_model
         ] + common_project_args
         subprocess.run(cmd, check=True)
-        # 생성된 쿼리 파일 경로를 다음 파이프라인(Generation)의 입력으로 덮어씀
+        # 생성된 쿼리 파일 경로를 다음 파이프라인(Generation)의 입력으로 전환
         current_input_file = args.generated_queries_file
         print(f"-> Updated JSON input to {current_input_file} for subsequent steps.")
+    else:
+        print(f"\n[Info] '{current_input_file}'의 기존 쿼리 정보를 사용하여 프로세스를 진행합니다.")
         
     if not args.skip_response:
         print("\n" + "="*60)
@@ -77,7 +101,7 @@ def main():
             sys.executable, "judge_response.py", 
             "--answers_file", args.responses_file,
             "--output_file", args.scores_file,
-            "--gs_bucket", args.gs_bucket,
+            "--gs_bucket_name", args.gs_bucket_name,
             "--judge_model", args.judge_model
         ] + common_project_args
         subprocess.run(cmd, check=True)

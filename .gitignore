@@ -8,6 +8,7 @@ generated_queries/
 
 # JSON Files (Data Privacy)
 *.json
+!sample_content_list.json
 !sample_user_query_list.json
 !sample_config.json
 
