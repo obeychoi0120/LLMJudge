@@ -46,10 +46,34 @@ LLMJudge/
    ```
 
 2. **GCP (Google Cloud Platform) 인증**
+
    GCS 버킷 접근 및 Vertex AI API 사용을 위해 GCP 인증이 필요합니다.
    ```bash
    gcloud auth application-default login
    ```
+3. **GCS 버킷에 데이터 업로드**
+
+    기본적으로 `gs://insight-youtubevideodataset-us` 버킷에 데이터를 업로드합니다. (us-central1 리전)
+
+    필요 시 개인이 버킷 생성하여 사용 가능합니다.
+
+    컨텐츠 하나 당 4개의 데이터가 필요하며 다음과 같이 구성하여야 합니다.
+
+    ```bash
+    {BUCKET_ROOT}/video_540p/{content_id}.mp4 # 원본 540p 영상
+    {BUCKET_ROOT}/jsonl/{content_id}_15s.jsonl  # Description이 포함된 JSONL
+    {BUCKET_ROOT}/jsonl/{content_id}_15s_NoDesc.jsonl # Description이 제외된 JSONL
+    {BUCKET_ROOT}/jsonl/{content_id}_15s_GT.jsonl # Judge model 용 GT JSONL
+    ```
+    예시:
+    ```bash
+    gs://insight-youtubevideodataset-us/video_540p/001_NatGeoKR_Narwhal_6m.mp4
+    gs://insight-youtubevideodataset-us/jsonl/001_NatGeoKR_Narwhal_6m_15s.jsonl
+    gs://insight-youtubevideodataset-us/jsonl/001_NatGeoKR_Narwhal_6m_15s_NoDesc.jsonl
+    gs://insight-youtubevideodataset-us/jsonl/001_NatGeoKR_Narwhal_6m_15s_GT.jsonl
+    ```
+
+
 
 ## 🎯 실행 방법
 
