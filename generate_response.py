@@ -12,13 +12,13 @@ def main():
     parser.add_argument("--json_file", default="user_query_list.json", help="질문 목록 JSON 파일 경로")
     parser.add_argument("--output_file", default="output/responses.json", help="통합 답변 목록을 저장할 파일 경로")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID")
-    parser.add_argument("--gs_bucket", help="GCS 버킷 이름")
+    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
     parser.add_argument("--location", default="asia-northeast3", help="GCP Location")
 
     args = parser.parse_args()
 
-    if not args.gcp_project_id or not args.gs_bucket:
+    if not args.gcp_project_id or not args.gs_bucket_name:
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
         return
 
@@ -62,13 +62,13 @@ def main():
         
         print(f"\nProcessing Content: '{content_id}'")
         
-        if not check_gcs_files_exist(args.gs_bucket, content_id):
+        if not check_gcs_files_exist(args.gs_bucket_name, content_id):
             continue
             
         parts = {
-            "video": process_gcs_file(args.gs_bucket, content_id, mode="video"),
-            "full": process_gcs_file(args.gs_bucket, content_id, mode="full"),
-            "part": process_gcs_file(args.gs_bucket, content_id, mode="part"),
+            "video": process_gcs_file(args.gs_bucket_name, content_id, mode="video"),
+            "full": process_gcs_file(args.gs_bucket_name, content_id, mode="full"),
+            "part": process_gcs_file(args.gs_bucket_name, content_id, mode="part"),
         }
 
         print(f"Initializing Generation models ({args.response_gen_model})...")

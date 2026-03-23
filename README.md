@@ -60,10 +60,10 @@ LLMJudge/
     컨텐츠 하나 당 4개의 데이터가 필요하며 다음과 같이 구성하여야 합니다.
 
     ```bash
-    {BUCKET_ROOT}/video_540p/{content_id}.mp4 # 원본 540p 영상
-    {BUCKET_ROOT}/jsonl/{content_id}_15s.jsonl  # Description이 포함된 JSONL
-    {BUCKET_ROOT}/jsonl/{content_id}_15s_NoDesc.jsonl # Description이 제외된 JSONL
-    {BUCKET_ROOT}/jsonl/{content_id}_15s_GT.jsonl # Judge model 용 GT JSONL
+    {BUCKET_NAME}/video_540p/{content_id}.mp4 # 원본 540p 영상
+    {BUCKET_NAME}/jsonl/{content_id}_15s.jsonl  # Description이 포함된 JSONL
+    {BUCKET_NAME}/jsonl/{content_id}_15s_NoDesc.jsonl # Description이 제외된 JSONL
+    {BUCKET_NAME}/jsonl/{content_id}_15s_GT.jsonl # Judge model 용 GT JSONL
     ```
     예시:
     ```bash
@@ -71,6 +71,11 @@ LLMJudge/
     gs://insight-youtubevideodataset-us/jsonl/001_NatGeoKR_Narwhal_6m_15s.jsonl
     gs://insight-youtubevideodataset-us/jsonl/001_NatGeoKR_Narwhal_6m_15s_NoDesc.jsonl
     gs://insight-youtubevideodataset-us/jsonl/001_NatGeoKR_Narwhal_6m_15s_GT.jsonl
+    ```
+    로컬 터미널에서 다음과 같이 업로드:
+    ```bash
+    gcloud storage buckets create gs://{BUCKET_NAME}
+    gcloud storage cp -r {LOCAL_DATA_PATH} gs://{BUCKET_NAME}/
     ```
 
 
@@ -86,7 +91,7 @@ LLMJudge/
 python main.py \
   --input_file user_query_list_sample.json \
   --gcp_project_id <YOUR_GCP_PROJECT_ID> \
-  --gs_bucket <YOUR_GS_BUCKET>
+  --gs_bucket_name <YOUR_GS_BUCKET_NAME>
 ```
 
 ### 2. E2E 사용법 (Query 생성 -> Response 생성 -> Judge 평가)
@@ -97,7 +102,7 @@ python main.py \
   --generate-query \
   --input_file user_query_list_sample.json \
   --gcp_project_id <YOUR_GCP_PROJECT_ID> \
-  --gs_bucket <YOUR_GS_BUCKET>
+  --gs_bucket_name <YOUR_GS_BUCKET_NAME>
 ```
 *과정: 1) 질문 생성 (`output/query_generated.json`) -> 2) 답변 생성 (`output/responses.json`) -> 3) 최종 평가 (`output/scores.json`)*
 
@@ -116,7 +121,7 @@ python main.py \
   --judge_model gemini-3-pro-preview \
   --location global \
   --gcp_project_id <YOUR_GCP_PROJECT_ID> \
-  --gs_bucket <YOUR_GS_BUCKET>
+  --gs_bucket_name <YOUR_GS_BUCKET_NAME>
 ```
 
 ## 📊 평가 결과 (`output/scores.json`)

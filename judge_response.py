@@ -13,13 +13,13 @@ def main():
     parser.add_argument("--answers_file", default="output/responses.json", help="답변 목록 JSON 파일 경로")
     parser.add_argument("--output_file", default="output/scores.json", help="최종 평가 결과 저장 경로")
     parser.add_argument("--gcp_project_id", default="insight-dev-490002", help="GCP 프로젝트 ID")
-    parser.add_argument("--gs_bucket", default="insight-youtubevideodataset-us", help="GCS 버킷 이름")
+    parser.add_argument("--gs_bucket_name", default="insight-youtubevideodataset-us", help="GCS 버킷 이름")
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
     parser.add_argument("--location", default="asia-northeast3", help="GCP Location")
 
     args = parser.parse_args()
 
-    if not args.gcp_project_id or not args.gs_bucket:
+    if not args.gcp_project_id or not args.gs_bucket_name:
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
         return
 
@@ -61,11 +61,11 @@ def main():
             
         print(f"\nEvaluating Content: '{content_id}'")
         
-        if not check_gcs_files_exist(args.gs_bucket, content_id):
+        if not check_gcs_files_exist(args.gs_bucket_name, content_id):
             continue
             
-        video_part = process_gcs_file(args.gs_bucket, content_id, mode="video")
-        gt_part = process_gcs_file(args.gs_bucket, content_id, mode="gt")
+        video_part = process_gcs_file(args.gs_bucket_name, content_id, mode="video")
+        gt_part = process_gcs_file(args.gs_bucket_name, content_id, mode="gt")
 
         print(f"Initializing Judge model ({args.judge_model})...")
         judge_model = init_judge_model(model_name=args.judge_model)
