@@ -1,9 +1,10 @@
 import os
+import time
 import argparse
 import json
 import vertexai
 from vertexai.generative_models import GenerativeModel
-from gemini_api_utils import process_gcs_file, check_gcs_files_exist
+from gemini_api_utils import process_gcs_file, check_gcs_files_exist, SAFETY_SETTINGS
 
 def init_query_generator_model(model_name):
     system_prompt = """
@@ -27,17 +28,33 @@ def init_query_generator_model(model_name):
         "배경으로 나오는 저 야경 예쁜 곳 관광지 이름이 뭐야?"
     ]   
     """
-    return GenerativeModel(model_name=model_name, system_instruction=[system_prompt])
+    return GenerativeModel(
+        model_name=model_name, 
+        system_instruction=[system_prompt],
+        safety_settings=SAFETY_SETTINGS
+    )
 
-def generate_queries_for_content(model, video_part, gt_part):
+def generate_queries_for_content(model, video_part, gt_part, max_retries=4, base_delay=3):
     prompt = f"제공된 영상 콘텐츠에 대해, 포괄적인 흐름을 묻는 질문과 구체적인 핵심을 묻는 질문을 섞어, 실제 시청자가 할 법한 질문 5-10개를 캐주얼한 어투로 생성해 주세요."
-    response = model.generate_content([video_part, gt_part, prompt])
-    return response.text
+    contents = [video_part, gt_part, prompt]
+    
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(contents)
+            return response.text
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"      [Query Generation 마지막 시도 실패] {e}")
+                raise e
+            sleep_time = base_delay * (2 ** attempt)
+            print(f"      [Query Generation 오류] {e}")
+            print(f"      -> {sleep_time}초 후 재시도합니다... ({attempt+1}/{max_retries})")
+            time.sleep(sleep_time)
 
 def main():
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
     parser.add_argument("--input_file", default="content_list.json", help="입력 JSON 파일 경로 (content_id 리스트)")
-    parser.add_argument("--output_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
+    parser.add_argument("--output_file", default="output/query_generated.jsonl", help="생성된 질문 목록을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="질문 생성에 사용할 모델명")
@@ -78,12 +95,14 @@ def main():
     processed_ids = set()
     if os.path.exists(args.output_file):
         with open(args.output_file, "r", encoding="utf-8") as f:
-            try:
-                output_list = json.load(f)
-                processed_ids = {item["content_id"] for item in output_list}
-                print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 {args.output_file}에 존재하여 건너뜁니다.")
-            except json.JSONDecodeError:
-                print(f"Warning: {args.output_file} 파일을 읽는 중 오류가 발생했습니다. 새로 시작합니다.")
+            for line in f:
+                if line.strip():
+                    try:
+                        item = json.loads(line)
+                        processed_ids.add(item["content_id"])
+                    except json.JSONDecodeError:
+                        pass
+        print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 {args.output_file}에 존재하여 건너뜁니다.")
         
     # 출력 폴더 생성
     output_dir = os.path.dirname(args.output_file)
@@ -114,31 +133,34 @@ def main():
             gt_part = process_gcs_file(gs_bucket_name, content_id, mode="gt")
             
             print("Generating queries...")
-            response_text = generate_queries_for_content(generator_model, video_part, gt_part)
-            
-            # JSON parsing
-            clean_text = response_text.strip()
-            if clean_text.startswith("```json"):
-                clean_text = clean_text[7:]
-            if clean_text.endswith("```"):
-                clean_text = clean_text[:-3]
+            try:
+                time.sleep(2) # API Rate Limit 방지
+                response_text = generate_queries_for_content(generator_model, video_part, gt_part)
                 
-            generated_queries = json.loads(clean_text)
-            print(f"Successfully generated {len(generated_queries)} queries for '{content_id}':")
-            for i, q in enumerate(generated_queries, 1):
-                print(f"  {i}. {q}")
-            
-            if generated_queries:
-                output_entry = {
-                    "content_id": content_id,
-                    "queries": generated_queries
-                }   
-                output_list.append(output_entry)
-                processed_ids.add(content_id)
-            
-            # Intermediate saving
-            with open(args.output_file, "w", encoding="utf-8") as f:
-                json.dump(output_list, f, indent=4, ensure_ascii=False)
+                # JSON parsing
+                clean_text = response_text.strip()
+                if clean_text.startswith("```json"):
+                    clean_text = clean_text[7:]
+                if clean_text.endswith("```"):
+                    clean_text = clean_text[:-3]
+                    
+                generated_queries = json.loads(clean_text)
+                print(f"Successfully generated {len(generated_queries)} queries for '{content_id}':")
+                for i, q in enumerate(generated_queries, 1):
+                    print(f"  {i}. {q}")
+                
+                if generated_queries:
+                    output_entry = {
+                        "content_id": content_id,
+                        "queries": generated_queries
+                    }
+                    processed_ids.add(content_id)
+                    # JSONL Append
+                    with open(args.output_file, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(output_entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                print(f"  [{content_id}] 질문 생성 최종 실패로 건너뜁니다: {e}")
+                continue
                 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

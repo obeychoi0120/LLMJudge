@@ -1,8 +1,30 @@
 import os
+import time
 import vertexai
 from google.cloud import storage
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai.generative_models import (
+    GenerativeModel, Part, 
+    SafetySetting, HarmCategory, HarmBlockThreshold
+)
+
+SAFETY_SETTINGS = [
+    SafetySetting(
+        category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    ),
+    SafetySetting(
+        category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    ),
+    SafetySetting(
+        category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    ),
+    SafetySetting(
+        category=HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    ),
+]
 
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
@@ -135,22 +157,35 @@ def process_gcs_file(gs_bucket_name, content_id, mode="video"):
 def init_generation_model(mode="full", model_name='gemini-2.5-flash'):
     gen_model = GenerativeModel(
         model_name=model_name,
-        system_instruction=[configure_system_prompt(mode)]
+        system_instruction=[configure_system_prompt(mode)],
+        safety_settings=SAFETY_SETTINGS
     )
     return gen_model
 
 def start_chat_session(gen_model):
     return gen_model.start_chat()
 
-def send_chat_message(chat, user_prompt, file_part=None):   
+def send_chat_message(chat, user_prompt, file_part=None, max_retries=4, base_delay=3):   
     contents = [file_part, user_prompt] if file_part else [user_prompt]
-    return chat.send_message(contents)
+    
+    for attempt in range(max_retries):
+        try:
+            return chat.send_message(contents)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"      [Generation API 마지막 시도 실패] {e}")
+                raise e
+            sleep_time = base_delay * (2 ** attempt)
+            print(f"      [Generation API 오류] {e}")
+            print(f"      -> {sleep_time}초 후 재시도합니다... ({attempt+1}/{max_retries})")
+            time.sleep(sleep_time)
 
 # --- Judge Models ---
 def init_judge_model(model_name="gemini-2.5-pro"):
     judge_model = GenerativeModel(
         model_name=model_name,
-        system_instruction=[configure_system_prompt("judge")]
+        system_instruction=[configure_system_prompt("judge")],
+        safety_settings=SAFETY_SETTINGS
     )
     return judge_model
 
@@ -173,5 +208,17 @@ def evaluate_answer_session(judge_chat, user_prompt, generated_answer, is_first_
     else:
         contents = [user_content]
     
-    response = judge_chat.send_message(contents)
-    return response.text
+    max_retries = 4
+    base_delay = 3
+    for attempt in range(max_retries):
+        try:
+            response = judge_chat.send_message(contents)
+            return response.text
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"      [Judge API 마지막 시도 실패] {e}")
+                raise e
+            sleep_time = base_delay * (2 ** attempt)
+            print(f"      [Judge API 오류] {e}")
+            print(f"      -> {sleep_time}초 후 재시도합니다... ({attempt+1}/{max_retries})")
+            time.sleep(sleep_time)

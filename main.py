@@ -7,9 +7,9 @@ import json
 def main():
     parser = argparse.ArgumentParser(description="End-to-End LLM Judge Pipeline Orchestrator")
     parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
-    parser.add_argument("--generated_queries_file", default="output/query_generated.json", help="생성된 질문 목록을 저장할 파일 경로")
-    parser.add_argument("--responses_file", default="output/responses.json", help="생성/통합된 답변 목록을 저장할 파일 경로")
-    parser.add_argument("--scores_file", default="output/scores.json", help="최종 평가 결과를 저장할 파일 경로")
+    parser.add_argument("--generated_queries_file", default="output/query_generated.jsonl", help="생성된 질문 목록을 저장할 파일 경로")
+    parser.add_argument("--responses_file", default="output/responses.jsonl", help="생성/통합된 답변 목록을 저장할 파일 경로")
+    parser.add_argument("--scores_file", default="output/scores.jsonl", help="최종 평가 결과를 저장할 파일 경로")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="us-central1", help="GCP Location (Set to 'global' for gemini-3-pro-preview)")
@@ -42,19 +42,30 @@ def main():
     
     current_input_file = args.input_file
     
-    # 입력 파일 형식 감지 (단순 리스트 vs 쿼리 포함 객체 리스트)
+    # 입력 파일 형식 감지 (단순 리스트 vs 쿼리 포함 객체 리스트 vs JSONL)
     has_queries = False
     if os.path.exists(current_input_file):
-        with open(current_input_file, "r", encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
-                    first_item = data[0]
-                    # 문자열 리스트거나 queries 키가 없으면 'content-only'로 간주
-                    if isinstance(first_item, dict) and "queries" in first_item:
-                        has_queries = True
-            except json.JSONDecodeError:
-                pass
+        if current_input_file.endswith(".jsonl"):
+            with open(current_input_file, "r", encoding="utf-8") as f:
+                first_line = f.readline()
+                if first_line.strip():
+                    try:
+                        first_item = json.loads(first_line)
+                        if isinstance(first_item, dict) and "queries" in first_item:
+                            has_queries = True
+                    except json.JSONDecodeError:
+                        pass
+        else:
+            with open(current_input_file, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        first_item = data[0]
+                        # 문자열 리스트거나 queries 키가 없으면 'content-only'로 간주
+                        if isinstance(first_item, dict) and "queries" in first_item:
+                            has_queries = True
+                except json.JSONDecodeError:
+                    pass
 
     # 쿼리가 없는데 --generate-query도 설정되지 않은 경우, 자동으로 쿼리 생성을 시도하거나 경고
     should_run_query_gen = args.generate_query
