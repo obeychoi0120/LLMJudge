@@ -1,8 +1,9 @@
 import os
 import argparse
 import json
+import vertexai
 from vertexai.generative_models import GenerativeModel
-from run_gemini_cli import init_gemini_client, process_gcs_file, check_gcs_files_exist
+from gemini_api_utils import process_gcs_file, check_gcs_files_exist
 
 def init_query_generator_model(model_name):
     system_prompt = """
@@ -61,7 +62,7 @@ def main():
         return
 
     print(f"Initializing Gemini client for project: {project_id}, location: {args.location}...")
-    init_gemini_client(project_id, location=args.location)
+    vertexai.init(project=project_id, location=args.location)
     
     print(f"Initializing Query Generator Model ({args.query_gen_model})...")
     generator_model = init_query_generator_model(model_name=args.query_gen_model)

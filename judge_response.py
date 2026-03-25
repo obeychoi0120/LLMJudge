@@ -3,8 +3,8 @@ import argparse
 import json
 import time
 import vertexai
-from run_gemini_cli import (
-    init_gemini_client, process_gcs_file, start_chat_session, 
+from gemini_api_utils import (
+    process_gcs_file, start_chat_session, 
     evaluate_answer_session, init_judge_model, check_gcs_files_exist
 )
 
@@ -32,7 +32,7 @@ def main():
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
         return
 
-    init_gemini_client(args.gcp_project_id, location=args.location)
+    vertexai.init(project=args.gcp_project_id, location=args.location)
     
     if not os.path.exists(args.answers_file):
         print(f"Error: {args.answers_file} 파일이 존재하지 않습니다. 먼저 generate_response.py를 실행하세요.")
@@ -44,12 +44,45 @@ def main():
     # Resume logic
     all_scores = []
     processed_ids = set()
+    existing_scores_dict = {}
     if os.path.exists(args.output_file):
         with open(args.output_file, "r", encoding="utf-8") as f:
             try:
-                all_scores = json.load(f)
-                processed_ids = {item["content_id"] for item in all_scores}
-                print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 {args.output_file}에 존재하여 건너뜁니다.")
+                loaded_scores = json.load(f)
+                
+                # count how many queries we need per content_id
+                query_len_dict = {item["content_id"]: len(item["queries"]) for item in content_answers_list}
+                
+                for sc in loaded_scores:
+                    c_id = sc["content_id"]
+                    all_scores.append(sc)
+                    existing_scores_dict[c_id] = sc
+                    
+                    is_complete = True
+                    target_query_count = query_len_dict.get(c_id, 0)
+                    scores_list = sc.get("scores", [])
+                    
+                    # We expect 3 valid scores (one for each mode) per query
+                    valid_counts = {}
+                    for entry in scores_list:
+                        q_text = entry.get("query")
+                        mode = entry.get("mode")
+                        judge_data = entry.get("judge", {})
+                        if "raw_response" not in judge_data and "scores" in judge_data:
+                            valid_counts.setdefault(q_text, set()).add(mode)
+                            
+                    if len(valid_counts) < target_query_count:
+                        is_complete = False
+                    else:
+                        for q_text, modes in valid_counts.items():
+                            if len(modes) < 3: # video, full, part
+                                is_complete = False
+                                break
+                    
+                    if is_complete:
+                        processed_ids.add(c_id)
+                        
+                print(f"[{len(processed_ids)}] 개의 콘텐츠가 완전히 처리되어 건너뜁니다.")
             except json.JSONDecodeError:
                 print(f"Warning: {args.output_file} 파일을 읽는 중 오류가 발생했습니다. 새로 시작합니다.")
 
@@ -79,11 +112,27 @@ def main():
         judge_model = init_judge_model(model_name=args.judge_model)
         
         judge_chats = {}
-        for mode in ["full", "part", "video"]:
+        for mode in ["video", "full", "part"]:
             judge_chats[mode] = start_chat_session(judge_model)
         
-        is_first_turn = True
+        is_first_turn_for_mode = {"video": True, "full": True, "part": True}
+        
+        # Load existing scores
+        existing_sc_data = existing_scores_dict.get(content_id, {})
+        old_content_scores = existing_sc_data.get("scores", [])
+        
+        # Keep only valid scores and build lookup map
         content_scores = []
+        existing_score_map = {}
+        for entry in old_content_scores:
+            q_text = entry.get("query")
+            m = entry.get("mode")
+            judge_data = entry.get("judge", {})
+            if "raw_response" not in judge_data and "scores" in judge_data:
+                content_scores.append(entry)
+                existing_score_map.setdefault(q_text, {})[m] = entry
+
+        scores_dict = {"content_id": content_id, "scores": content_scores}
 
         for query_item in content_answers["queries"]:
             user_prompt = query_item["query"]
@@ -91,12 +140,16 @@ def main():
             
             print(f"Scoring Query: '{user_prompt}'")
             
-            for mode in ["full", "part", "video"]:
+            for mode in ["video", "full", "part"]:
                 generated_answer = answers.get(mode)
-                if not generated_answer or generated_answer.startswith("Error"):
+                if not generated_answer or str(generated_answer).startswith("Error"):
                     print(f"  [{mode}] 유효한 답변이 없습니다 (건너뜀).")
                     continue
-                    
+                
+                if mode in existing_score_map.get(user_prompt, {}):
+                    print(f"  [{mode}] mode 평가 이미 완료됨 (건너뜀).")
+                    continue
+                
                 time.sleep(1) # 평가 루프 과부하 방지
                 
                 try:
@@ -104,7 +157,7 @@ def main():
                         judge_chat=judge_chats[mode], 
                         user_prompt=user_prompt, 
                         generated_answer=generated_answer,
-                        is_first_turn=is_first_turn,
+                        is_first_turn=is_first_turn_for_mode[mode],
                         video_part=video_part,
                         gt_json_part=gt_part
                     )
@@ -130,22 +183,25 @@ def main():
                     
                     content_scores.append(score_entry)
                     print(f"  [{mode}] Evaluation completed.")
+                    is_first_turn_for_mode[mode] = False
                     
                 except Exception as e:
                     print(f"  [{mode}] Evaluation error: {e}")
             
-            is_first_turn = False
             print("-" * 50)
             
-        all_scores.append({
-            "content_id": content_id,
-            "scores": content_scores
-        })
-        processed_ids.add(content_id)
+            # Save partial progress per query
+            existing_idx = next((i for i, sc in enumerate(all_scores) if sc["content_id"] == content_id), None)
+            if existing_idx is not None:
+                all_scores[existing_idx] = scores_dict
+            else:
+                all_scores.append(scores_dict)
 
-        with open(args.output_file, "w", encoding="utf-8") as f:
-            json.dump(all_scores, f, indent=4, ensure_ascii=False)
-        print(f"평가 결과가 업데이트 되었습니다: {args.output_file}")
+            with open(args.output_file, "w", encoding="utf-8") as f:
+                json.dump(all_scores, f, indent=4, ensure_ascii=False)
+            print(f"  -> 평가 쿼리 단위 임시 저장 완료: {args.output_file}")
+            
+        processed_ids.add(content_id)
         
     print("\n모든 평가 처리가 완료되었습니다.\n" + "=" * 50)
 

@@ -2,8 +2,8 @@ import os
 import argparse
 import json
 import vertexai
-from run_gemini_cli import (
-    init_gemini_client, process_gcs_file, start_chat_session, send_chat_message, 
+from gemini_api_utils import (
+    process_gcs_file, start_chat_session, send_chat_message, 
     init_generation_model, check_gcs_files_exist
 )
 
@@ -32,7 +32,7 @@ def main():
         return
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
-    init_gemini_client(args.gcp_project_id, location=args.location)
+    vertexai.init(project=args.gcp_project_id, location=args.location)
     
     if not os.path.exists(args.json_file):
         print(f"Error: {args.json_file} 파일이 존재하지 않습니다.")
@@ -44,12 +44,35 @@ def main():
     # Resume logic
     all_answers = []
     processed_ids = set()
+    existing_answers_dict = {}
     if os.path.exists(args.output_file):
         with open(args.output_file, "r", encoding="utf-8") as f:
             try:
-                all_answers = json.load(f)
-                processed_ids = {item["content_id"] for item in all_answers}
-                print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 {args.output_file}에 존재하여 건너뜁니다.")
+                loaded_answers = json.load(f)
+                query_len_dict = {item["content_id"]: len(item["queries"]) for item in query_list}
+                
+                for ans in loaded_answers:
+                    c_id = ans["content_id"]
+                    all_answers.append(ans)
+                    existing_answers_dict[c_id] = ans
+                    
+                    is_complete = True
+                    if c_id not in query_len_dict or len(ans.get("queries", [])) < query_len_dict[c_id]:
+                        is_complete = False
+                    else:
+                        for q in ans.get("queries", []):
+                            answers = q.get("answers", {})
+                            for mode in ["video", "full", "part"]:
+                                mode_ans = answers.get(mode, "")
+                                if not mode_ans or str(mode_ans).startswith("Error"):
+                                    is_complete = False
+                                    break
+                            if not is_complete:
+                                break
+                    if is_complete:
+                        processed_ids.add(c_id)
+                        
+                print(f"[{len(processed_ids)}] 개의 콘텐츠가 완전히 처리되어 건너뜁니다.")
             except json.JSONDecodeError:
                 print(f"Warning: {args.output_file} 파일을 읽는 중 오류가 발생했습니다. 새로 시작합니다.")
 
@@ -82,24 +105,36 @@ def main():
 
         print(f"Initializing Generation models ({args.response_gen_model})...")
         gen_chats = {}
-        for mode in ["full", "part", "video"]:
+        for mode in ["video", "full", "part"]:
             gen_model = init_generation_model(mode=mode, model_name=args.response_gen_model)
             gen_chats[mode] = start_chat_session(gen_model)
 
-        is_first_turn = True
+        is_first_turn_for_mode = {"video": True, "full": True, "part": True}
         answers_dict = {"content_id": content_id, "queries": []}
+        
+        existing_ans_data = existing_answers_dict.get(content_id, {})
+        existing_queries = existing_ans_data.get("queries", [])
+        existing_query_map = {q["query"]: q.get("answers", {}) for q in existing_queries}
 
         for user_prompt in queries:
             print(f"Processing Query: '{user_prompt}'")
             answers_for_query = {}
+            existing_answers = existing_query_map.get(user_prompt, {})
             
-            for mode in ["full", "part", "video"]:
+            for mode in ["video", "full", "part"]:
+                prev_ans = existing_answers.get(mode, "")
+                if prev_ans and not str(prev_ans).startswith("Error"):
+                    print(f"  [{mode}] mode 이미 완료됨 (건너뜀)")
+                    answers_for_query[mode] = prev_ans
+                    continue
+                
                 print(f"  [{mode}] mode 생성 중...")
-                file_part = parts[mode] if is_first_turn else None
+                file_part = parts[mode] if is_first_turn_for_mode[mode] else None
                 
                 try:
                     response = send_chat_message(gen_chats[mode], user_prompt, file_part=file_part)
                     answers_for_query[mode] = response.text
+                    is_first_turn_for_mode[mode] = False
                 except Exception as e:
                     print(f"  [{mode}] mode 오류 발생: {e}")
                     answers_for_query[mode] = f"Error: {str(e)}"
@@ -108,16 +143,20 @@ def main():
                 "query": user_prompt,
                 "answers": answers_for_query
             })
+            
+            # Save partial progress per query
+            existing_idx = next((i for i, ans in enumerate(all_answers) if ans["content_id"] == content_id), None)
+            if existing_idx is not None:
+                all_answers[existing_idx] = answers_dict
+            else:
+                all_answers.append(answers_dict)
 
-            is_first_turn = False
+            with open(args.output_file, "w", encoding="utf-8") as f:
+                json.dump(all_answers, f, indent=4, ensure_ascii=False)
+            print(f"  -> 쿼리 단위 임시 저장 완료: {args.output_file}")
             print("-" * 50)
             
-        all_answers.append(answers_dict)
         processed_ids.add(content_id)
-
-        with open(args.output_file, "w", encoding="utf-8") as f:
-            json.dump(all_answers, f, indent=4, ensure_ascii=False)
-        print(f"답변이 업데이트 되었습니다: {args.output_file}")
 
     print("\n모든 생성 처리가 완료되었습니다.\n" + "=" * 50)
 

@@ -1,11 +1,9 @@
 import os
 import vertexai
 from google.cloud import storage
+import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 
-def init_gemini_client(gcp_project_id, location="us-central1"):
-    vertexai.init(project=gcp_project_id, location=location)
-    return None
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
     """
@@ -16,8 +14,8 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
     
     required_files = [
         f"video_540p/{content_id}_540p.mp4",
-        f"jsonl/{content_id}_15s.jsonl",
-        f"jsonl/{content_id}_15s_NoDesc.jsonl",
+        f"jsonl/{content_id}_15s_Full.jsonl",
+        f"jsonl/{content_id}_15s_Part.jsonl",
         f"jsonl/{content_id}_15s_GT.jsonl"
     ]
     
@@ -42,7 +40,7 @@ def configure_system_prompt(mode="full"):
         [JSONL 구조 안내]
         각 줄의 데이터는 15초 단위의 구간에 대한 정보를 나타냅니다.
         - timestamp: 해당 구간의 시작 시간 (초)
-        - audio_cls: 오디오 분류 모델이 분석    한 해당 구간 속 오디오 분류 결과
+        - audio_cls: 오디오 분류 모델이 분석한 해당 구간 속 오디오 분류 결과
         - speech: 음성 인식 모델이 인식한 해당 구간의 음성 대화
         - ocr_text: 해당 화면에 등장한 자막 텍스트 (발화자 식별 및 핵심 키워드 파악용)
         - description: 시각적 관찰 모델이 영어로 작성한 해당 구간의 화면/행동 묘사
@@ -120,10 +118,10 @@ def process_gcs_file(gs_bucket_name, content_id, mode="video"):
         file_uri = f"gs://{gs_bucket_name}/video_540p/{content_id}_540p.mp4"
         mime_type = "video/mp4"
     elif mode == "full":
-        file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s.jsonl"
+        file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s_Full.jsonl"
         mime_type = "text/plain" 
     elif mode == "part":
-        file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s_NoDesc.jsonl"
+        file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s_Part.jsonl"
         mime_type = "text/plain" 
     elif mode == "gt":
         file_uri = f"gs://{gs_bucket_name}/jsonl/{content_id}_15s_GT.jsonl"

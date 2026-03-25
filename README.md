@@ -15,7 +15,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
   - `full`: 오디오 분류, 음성 인식, 자막(OCR), 시각적 행동 묘사(Description)가 모두 포함된 15초 단위 JSONL 제공.
   - `part`: 시각적 행동 묘사를 제외한 나머지 메타데이터 JSONL 제공.
 - **최적화된 Session-based 추론 및 평가**: 대용량 파라미터(Video, JSONL)를 매번 재업로드하는 병목을 제거하기 위해 Chat Session을 활용하여 최초 1회만 업로드합니다. 특히 평가(Judge) 파이프라인에도 세션을 도입하되 인과관계 오염을 막는 독립화 프롬프트를 주입하여, 객관성을 유지하면서도 압도적으로 빠른 평가 속도를 보장합니다.
-- **안정적인 기본 리전 및 모델 설정**: 안정적인 멀티모달 처리를 위해 기본 리전은 `us-central1`로 설정되어 있으며, 고성능 추론 및 평가를 위해 `gemini-2.5-pro` 모델을 기본으로 사용합니다. 필요 시 최신 `gemini-3-pro-preview` 모델과 `global` 엔드포인트를 조합하여 사용할 수 있습니다.
+- **안정적인 기본 리전 및 모델 설정**: 안정적인 API 처리를 위해 기본 리전은 `us-central1`로 설정되어 있으며, 고성능 추론 및 평가를 위해 `gemini-2.5-pro` 모델을 기본으로 사용합니다. 필요 시 최신 `gemini-3-pro-preview` 모델과 `global` 엔드포인트를 조합하여 사용할 수 있습니다.
 - **LLM-as-a-Judge 자동 평가 파이프라인**: `gemini-2.5-pro` 판정 모델을 활용해 앞서 생성된 3가지 모드의 답변을 평가합니다. 각 1~5점 척도로 세분화된 점수와 논리적인 평가 사유(`rationale`)를 반환합니다.
   - Judge 모델은 원본 video와 GT JSONL을 기준으로 평가를 진행합니다.
   - GT JSONL 파일은  `YoutubeDataCollection` 에서 추출한 메타데이터 중 하나입니다.
@@ -116,14 +116,15 @@ python main.py \
 ```
 *과정: 1) 질문 생성 (`output/query_generated.json`) -> 2) 답변 생성 (`output/responses.json`) -> 3) 최종 평가 (`output/scores.json`)*
 
-### 3. 모델 커스텀 및 최신 3 Pro 적용법
-특정 단계에서 구동되는 모델을 변경하거나, 리전(Location)을 설정해야 될 때 다음과 같은 파라미터를 추가 조절할 수 있습니다:
+### 3. Query 및 Score 생성에 Gemini 3 Pro 사용법
+
+**Note: 높은 확률로 Resource가 소진되어 추론 끊김이 발생할 수 있습니다.**
+
 - `--query_gen_model`: 질문 자동 생성 모델 (기본: `gemini-2.5-pro`)
-- `--response_gen_model`: 답변 생성(Inference) 모델 (기본: `gemini-2.5-flash`)
+- `--response_gen_model`: 답변 생성 모델 (기본: `gemini-2.5-flash`)
 - `--judge_model`: 평가 모델 (기본: `gemini-2.5-pro`)
 - `--location`: GCP 리전 설정 (기본: `us-central1`)
 
-**예시: Gemini 3.0 Pro 미리보기 모델을 사용해 E2E 파이프라인 가동하기**
 ```bash
 python main.py \
   --generate-query \
