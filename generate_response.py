@@ -2,7 +2,11 @@ import os
 import time
 import argparse
 import json
+import subprocess
+import sys
 import vertexai
+import concurrent.futures
+import threading
 from gemini_api_utils import (
     process_gcs_file, start_chat_session, send_chat_message, 
     init_generation_model, check_gcs_files_exist
@@ -17,6 +21,7 @@ def main():
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
     parser.add_argument("--location", default="us-central1", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
+    parser.add_argument("--max_workers", type=int, default=3, help="동시 실행할 비디오 개수 (기본값: 3)")
 
     args = parser.parse_args()
 
@@ -121,18 +126,19 @@ def main():
                         print(f"    - query \"{q}\" : {', '.join(modes)}")
                 print("-" * 50)
 
-            for item in query_list:
+            file_write_lock = threading.Lock()
+
+            def process_item(item):
                 content_id = item["content_id"]
                 if content_id not in pending_work:
-                    continue
+                    return False
                     
-                new_data_processed = True
                 queries = item["queries"]
                 
                 print(f"\nProcessing Content: '{content_id}'")
                 
                 if not check_gcs_files_exist(args.gs_bucket_name, content_id):
-                    continue
+                    return False
                     
                 parts = {
                     "video": process_gcs_file(args.gs_bucket_name, content_id, mode="video"),
@@ -140,7 +146,7 @@ def main():
                     "part": process_gcs_file(args.gs_bucket_name, content_id, mode="part"),
                 }
 
-                print(f"Initializing Generation models ({args.response_gen_model})...")
+                print(f"[{content_id}] Initializing Generation models ({args.response_gen_model})...")
                 gen_chats = {}
                 for mode in ["video", "full", "part"]:
                     gen_model = init_generation_model(mode=mode, model_name=args.response_gen_model)
@@ -156,18 +162,18 @@ def main():
                 existing_query_map = {q["query"]: q.get("answers", {}) for q in existing_queries}
 
                 for user_prompt in queries:
-                    print(f"Processing Query: '{user_prompt}'")
+                    print(f"[{content_id}] Processing Query: '{user_prompt[:30]}...'")
                     answers_for_query = {}
                     existing_answers = existing_query_map.get(user_prompt, {})
                     
                     for mode in ["video", "full", "part"]:
                         prev_ans = existing_answers.get(mode, "")
                         if prev_ans and not str(prev_ans).startswith("Error"):
-                            print(f"  [{mode}] already completed (skip)")
+                            print(f"[{content_id}]  [{mode}] already completed (skip)")
                             answers_for_query[mode] = prev_ans
                             continue
                         
-                        print(f"  Generating [{mode}]...")
+                        print(f"[{content_id}]  Generating [{mode}]...")
                         file_part = parts[mode] if is_first_turn_for_mode[mode] else None
                         
                         try:
@@ -176,7 +182,7 @@ def main():
                             answers_for_query[mode] = response.text
                             is_first_turn_for_mode[mode] = False
                         except Exception as e: 
-                            print(f"  Generating [{mode}] Error: {e}")
+                            print(f"[{content_id}]  Generating [{mode}] Error: {e}")
                             answers_for_query[mode] = f"Error: {str(e)}"
 
                     answers_dict["queries"].append({
@@ -186,11 +192,19 @@ def main():
                     print("-" * 50)
                     
                     # 쿼리 하나 끝날 때마다 JSONL로 Append 저장 (부분 저장)
-                    with open(args.output_file, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(answers_dict, ensure_ascii=False) + "\n")
-                    print(f"  -> {content_id} (진행중 쿼리 임시 저장 완료): {args.output_file}")
+                    with file_write_lock:
+                        with open(args.output_file, "a", encoding="utf-8") as f:
+                            f.write(json.dumps(answers_dict, ensure_ascii=False) + "\n")
+                    print(f"[{content_id}]  -> 진행중 쿼리 임시 저장 완료: {args.output_file}")
                     
                 processed_ids.add(content_id)
+                return True
+
+            items_to_process = [item for item in query_list if item["content_id"] in pending_work]
+            if items_to_process:
+                new_data_processed = True
+                with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+                    executor.map(process_item, items_to_process)
 
             if not args.continuous:
                 break
@@ -201,6 +215,11 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 모니터링 루프가 중단되었습니다.")
+
+    if not args.continuous:
+        print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
+        output_dir = os.path.dirname(args.output_file) or "output"
+        subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
 
     print("\n생성 프로세스가 완료/종료되었습니다.\n" + "=" * 50)
 

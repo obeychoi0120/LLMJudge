@@ -19,6 +19,8 @@ def main():
     parser.add_argument("--generate-query", action="store_true", help="질문 자동 생성을 우선 수행")
     parser.add_argument("--skip-response", action="store_true", help="답변 생성을 건너뛰기")
     parser.add_argument("--skip-judge", action="store_true", help="평가를 건너뛰기")
+    parser.add_argument("--skip-aggregate", action="store_true", help="최종 JSON 변환 건너뛰기")
+    parser.add_argument("--max_workers", type=int, default=3, help="동시 실행할 비디오 개수 (기본값: 3)")
     
     args = parser.parse_args()
     
@@ -100,7 +102,8 @@ def main():
             "--json_file", current_input_file,
             "--output_file", args.responses_file,
             "--gs_bucket_name", args.gs_bucket_name,
-            "--response_gen_model", args.response_gen_model
+            "--response_gen_model", args.response_gen_model,
+            "--max_workers", str(args.max_workers)
         ] + common_project_args
         subprocess.run(cmd, check=True)
         
@@ -113,8 +116,20 @@ def main():
             "--answers_file", args.responses_file,
             "--output_file", args.scores_file,
             "--gs_bucket_name", args.gs_bucket_name,
-            "--judge_model", args.judge_model
+            "--judge_model", args.judge_model,
+            "--max_workers", str(args.max_workers)
         ] + common_project_args
+        subprocess.run(cmd, check=True)
+        
+    if not args.skip_aggregate:
+        print("\n" + "="*60)
+        print(">>> 3. Aggregating JSONL to JSON")
+        print("="*60)
+        output_dir = os.path.dirname(args.scores_file) or "output"
+        cmd = [
+            sys.executable, "jsonl_to_json.py",
+            "--input_dir", output_dir
+        ]
         subprocess.run(cmd, check=True)
         
     print("\n\nEnd-to-End Pipeline Completed Successfully!")
