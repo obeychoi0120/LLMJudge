@@ -114,7 +114,7 @@ def main():
                     pending_work[c_id] = c_pending
                     
             if pending_work:
-                print("\n[Resume Plan] 앞으로 평가(Judge)해야 할 항목 목록:")
+                print("\n[TODO] 작업 목록:")
                 for c_id, queries_dict in pending_work.items():
                     print(f"- content_id '{c_id}':")
                     for q, modes in queries_dict.items():
