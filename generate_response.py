@@ -147,10 +147,12 @@ def main():
                     gen_chats[mode] = start_chat_session(gen_model)
 
                 is_first_turn_for_mode = {"video": True, "full": True, "part": True}
-                answers_dict = {"content_id": content_id, "queries": []}
                 
                 existing_ans_data = existing_answers_dict.get(content_id, {})
                 existing_queries = existing_ans_data.get("queries", [])
+                
+                # Copy existing fully or partially completed queries so they are not lost
+                answers_dict = {"content_id": content_id, "queries": existing_queries.copy()}
                 existing_query_map = {q["query"]: q.get("answers", {}) for q in existing_queries}
 
                 for user_prompt in queries:
@@ -161,11 +163,11 @@ def main():
                     for mode in ["video", "full", "part"]:
                         prev_ans = existing_answers.get(mode, "")
                         if prev_ans and not str(prev_ans).startswith("Error"):
-                            print(f"  [{mode}] mode already completed (skip)")
+                            print(f"  [{mode}] already completed (skip)")
                             answers_for_query[mode] = prev_ans
                             continue
                         
-                        
+                        print(f"  Generating [{mode}]...")
                         file_part = parts[mode] if is_first_turn_for_mode[mode] else None
                         
                         try:
@@ -173,9 +175,8 @@ def main():
                             response = send_chat_message(gen_chats[mode], user_prompt, file_part=file_part)
                             answers_for_query[mode] = response.text
                             is_first_turn_for_mode[mode] = False
-                            print(f"  [{mode}] mode completed.")
                         except Exception as e: 
-                            print(f"  [{mode}] mode Error: {e}")
+                            print(f"  Generating [{mode}] Error: {e}")
                             answers_for_query[mode] = f"Error: {str(e)}"
 
                     answers_dict["queries"].append({
@@ -184,10 +185,11 @@ def main():
                     })
                     print("-" * 50)
                     
-                # 하나의 콘텐츠 처리가 끝나면 JSONL로 저장 (Append)
-                with open(args.output_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(answers_dict, ensure_ascii=False) + "\n")
-                print(f"  -> {content_id} 저장 완료: {args.output_file}")
+                    # 쿼리 하나 끝날 때마다 JSONL로 Append 저장 (부분 저장)
+                    with open(args.output_file, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(answers_dict, ensure_ascii=False) + "\n")
+                    print(f"  -> {content_id} (진행중 쿼리 임시 저장 완료): {args.output_file}")
+                    
                 processed_ids.add(content_id)
 
             if not args.continuous:

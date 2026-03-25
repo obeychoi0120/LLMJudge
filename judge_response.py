@@ -144,8 +144,14 @@ def main():
                 
                 is_first_turn_for_mode = {"video": True, "full": True, "part": True}
                 
-                # Input 파일(responses)에 저장되어있는 queries 기준으로만 일단 점수 매김
+                # 기존에 평가가 완료되었던 쿼리 점수들이 있다면 먼저 복사해서 누적합니다
                 content_scores = []
+                if old_content_scores:
+                    for entry in old_content_scores:
+                        judge_data = entry.get("judge", {})
+                        if "raw_response" not in judge_data and "scores" in judge_data:
+                            content_scores.append(entry)
+                            
                 scores_dict = {"content_id": content_id, "scores": content_scores}
 
                 for query_item in content_answers.get("queries", []):
@@ -157,9 +163,15 @@ def main():
                     for mode in ["video", "full", "part"]:
                         generated_answer = answers.get(mode)
                         if not generated_answer or str(generated_answer).startswith("Error"):
-                            print(f"  [{mode}] 유효한 답변이 없습니다 (건너뜀).")
+                            print(f"  Evaluating [{mode}] skipped (no valid answer).")
+                            continue
+                            
+                        # 기존에 이미 평가 완료된 모드라면 다시 API를 부르지 않음
+                        if mode in existing_score_map.get(user_prompt, {}):
+                            print(f"  Evaluating [{mode}] already completed (skip).")
                             continue
                         
+                        print(f"  Evaluating [{mode}]...")
                         time.sleep(1) # 평가 루프 과부하 방지
                         
                         try:
@@ -192,18 +204,18 @@ def main():
                             }   
                             
                             content_scores.append(score_entry)
-                            print(f"  [{mode}] Evaluation completed.")
                             is_first_turn_for_mode[mode] = False
                             
                         except Exception as e:
-                            print(f"  [{mode}] Evaluation error: {e}")
+                            print(f"  Evaluating [{mode}] error: {e}")
                     
                     print("-" * 50)
                     
-                # 하나의 콘텐츠 처리가 끝나면 JSONL로 Append 저장
-                with open(args.output_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(scores_dict, ensure_ascii=False) + "\n")
-                print(f"  -> 평가 쿼리 완료: {args.output_file}")
+                    # 쿼리 한 개 평가가 끝날 때마다 JSONL로 Append 저장 (부분 저장)
+                    with open(args.output_file, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(scores_dict, ensure_ascii=False) + "\n")
+                    print(f"  -> {content_id} (진행중 쿼리 임시 저장 완료): {args.output_file}")
+                    
                 processed_ids.add(content_id)
 
             if not args.continuous:
