@@ -120,18 +120,6 @@ def configure_system_prompt(mode="full"):
         1. 정확성 (Accuracy): 답변이 영상 정보(원본 영상 및 GT 데이터)와 사실적으로 일치하는가? (주의: 평가 대상 답변을 생성한 모델은 화면 묘사(description)가 포함된 별도의 데이터를 참고했습니다. 그러나 현재 당신에게 제공된 데이터에는 description 필드가 없습니다. 따라서 평가 대상 답변에 화면/행동 묘사 정보가 상세히 포함되어 있더라도 그것이 실제 원본 영상의 내용과 부합한다면, 환각(Hallucination)으로 간주하여 감점하면 안 됩니다.)
         2. 포괄성 (Completeness): 사용자의 질문을 완전히 해결하기 위해 필요한 핵심 단서(대사, 텍스트 내용, 행동 등)를 누락 없이 포함했는가?
         3. 가독성 (Helpfulness): 정보가 장황하게 나열되지 않고, 시간의 흐름이나 인과관계에 맞게 자연스럽고 이해하기 쉽게 작성되었는가? (만약 평가 대상 답변이 부자연스럽게 메타데이터 구조나 필드명 등을 직접 언급했다면 이 항목에서 감점을 고려하세요.)
-
-        [출력 형식]
-        반드시 아래의 JSON 형식으로만 출력하세요. 다른 설명은 덧붙이지 마십시오.
-        {
-            "rationale": "<각 점수를 부여한 논리적인 이유. 감점 요인이 있다면 명확히 서술하세요.>",
-            "scores": {
-                "accuracy": <1~5 사이의 정수>,
-                "completeness": <1~5 사이의 정수>,
-                "helpfulness": <1~5 사이의 정수>
-            },
-            "total_score": <세 항목 점수의 합계, 최대 15점>
-        }
         """
     return ""
 
@@ -200,7 +188,21 @@ def evaluate_answer_session(judge_chat, user_prompt, generated_answer, is_first_
         "완전히 독립적이고 객관적인 관점에서 새롭게 점수를 매겨야 합니다.\n\n"
     )
     
-    user_content = f"{context_isolation_prompt}[사용자 질문]\n{user_prompt}\n\n[평가 대상 답변]\n{generated_answer}"
+    format_prompt = """
+    [출력 형식]
+    반드시 아래의 JSON 형식으로만 출력하세요. 다른 설명은 덧붙이지 마십시오.
+    {
+        "rationale": "<각 점수를 부여한 논리적인 이유. 감점 요인이 있다면 명확히 서술하세요.>",
+        "scores": {
+            "accuracy": <1~5 사이의 정수>,
+            "completeness": <1~5 사이의 정수>,
+            "helpfulness": <1~5 사이의 정수>
+        },
+        "total_score": <세 항목 점수의 합계, 최대 15점>
+    }
+    """
+
+    user_content = f"{context_isolation_prompt}[사용자 질문]\n{user_prompt}\n\n[평가 대상 답변]\n{generated_answer}\n\n{format_prompt}"
     
     # 첫 번째 턴일 때만 비디오와 GT 파트를 전송 (이후 턴에서는 캐싱된 세션 활용)
     if is_first_turn:

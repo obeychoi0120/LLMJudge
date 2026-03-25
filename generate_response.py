@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
-    parser.add_argument("--location", default="asia-northeast3", help="GCP Location")
+    parser.add_argument("--location", default="us-central1", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
 
     args = parser.parse_args()

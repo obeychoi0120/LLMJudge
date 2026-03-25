@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
-    parser.add_argument("--location", default="asia-northeast3", help="GCP Location")
+    parser.add_argument("--location", default="us-central1", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
 
     args = parser.parse_args()
@@ -209,13 +209,12 @@ def main():
                         except Exception as e:
                             print(f"  Evaluating [{mode}] error: {e}")
                     
-                    print("-" * 50)
-                    
                     # 쿼리 한 개 평가가 끝날 때마다 JSONL로 Append 저장 (부분 저장)
                     with open(args.output_file, "a", encoding="utf-8") as f:
                         f.write(json.dumps(scores_dict, ensure_ascii=False) + "\n")
                     print(f"  -> {content_id} (진행중 쿼리 임시 저장 완료): {args.output_file}")
-                    
+                    print("-" * 50)
+
                 processed_ids.add(content_id)
 
             if not args.continuous:
