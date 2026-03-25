@@ -64,16 +64,20 @@ def main():
                             pass
 
             # 2. Input 읽기
-            content_answers_list = []
+            content_answers_dict = {}
             if os.path.exists(args.answers_file):
                 with open(args.answers_file, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             try:
-                                content_answers_list.append(json.loads(line))
+                                data = json.loads(line)
+                                if "content_id" in data:
+                                    content_answers_dict[data["content_id"]] = data
                             except json.JSONDecodeError:
                                 pass
+                content_answers_list = list(content_answers_dict.values())
             else:
+                content_answers_list = []
                 if not args.continuous:
                     print(f"Error: {args.answers_file} 파일이 존재하지 않습니다. 먼저 generate_response.py를 실행하세요.")
                     return

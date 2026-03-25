@@ -71,16 +71,20 @@ def main():
                             pass
 
             # 2. Input 읽기
-            query_list = []
+            query_dict = {}
             if os.path.exists(args.json_file):
                 with open(args.json_file, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             try:
-                                query_list.append(json.loads(line))
+                                data = json.loads(line)
+                                if "content_id" in data:
+                                    query_dict[data["content_id"]] = data
                             except json.JSONDecodeError:
                                 pass
+                query_list = list(query_dict.values())
             else:
+                query_list = []
                 if not args.continuous:
                     print(f"Error: {args.json_file} 파일이 존재하지 않습니다.")
                     return
