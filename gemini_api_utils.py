@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import vertexai
 from google.cloud import storage
 from vertexai.generative_models import (
@@ -26,6 +27,29 @@ SAFETY_SETTINGS = [
     ),
 ]
 
+
+def load_config(args):
+    """config.json 파일이 존재하면 열어 args에 값을 병합합니다."""
+    if os.path.exists("config.json"):
+        with open("config.json", "r", encoding="utf-8") as f:
+            try:
+                config = json.load(f)
+                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
+                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
+            except json.JSONDecodeError:
+                pass
+    return args
+
+def parse_json_response(text):
+    """마크다운 태그(```json ... ```)를 정제하고 JSON 객체로 파싱합니다."""
+    clean_text = text.strip()
+    if clean_text.startswith("```json"):
+        clean_text = clean_text[7:]
+    elif clean_text.startswith("```"):
+        clean_text = clean_text[3:]
+    if clean_text.endswith("```"):
+        clean_text = clean_text[:-3]
+    return json.loads(clean_text)
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
     """

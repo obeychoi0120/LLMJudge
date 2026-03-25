@@ -3,6 +3,7 @@ import subprocess
 import sys
 import os
 import json
+from gemini_api_utils import load_config
 
 def main():
     parser = argparse.ArgumentParser(description="End-to-End LLM Judge Pipeline Orchestrator")
@@ -23,15 +24,7 @@ def main():
     parser.add_argument("--max_workers", type=int, default=3, help="동시 실행할 비디오 개수 (기본값: 3)")
     
     args = parser.parse_args()
-    
-    if os.path.exists("config.json"):
-        with open("config.json", "r", encoding="utf-8") as f:
-            try:
-                config = json.load(f)
-                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
-                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
-            except json.JSONDecodeError:
-                pass
+    args = load_config(args)
 
     if not args.gcp_project_id or not args.gs_bucket_name:
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (--gcp_project_id 인자를 주입하거나 config.json을 생성하세요)")

@@ -9,7 +9,8 @@ import concurrent.futures
 import threading
 from gemini_api_utils import (
     process_gcs_file, start_chat_session, 
-    evaluate_answer_session, init_judge_model, check_gcs_files_exist
+    evaluate_answer_session, init_judge_model, check_gcs_files_exist,
+    load_config, parse_json_response
 )
 
 def main():
@@ -25,14 +26,7 @@ def main():
 
     args = parser.parse_args()
 
-    if os.path.exists("config.json"):
-        with open("config.json", "r", encoding="utf-8") as f:
-            try:
-                config = json.load(f)
-                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
-                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
-            except json.JSONDecodeError:
-                pass
+    args = load_config(args)
                 
     if not args.gcp_project_id or not args.gs_bucket_name:
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
@@ -208,14 +202,7 @@ def main():
                                     gt_json_part=gt_part
                                 )
                                 
-                                # JSON 파싱 정제부
-                                clean_text = score_text.strip()
-                                if clean_text.startswith("```json"):
-                                    clean_text = clean_text[7:]
-                                if clean_text.endswith("```"):
-                                    clean_text = clean_text[:-3]
-                                    
-                                score_dict = json.loads(clean_text)
+                                score_dict = parse_json_response(score_text)
                                 parse_success = True
                                 break # 파싱 성공 시 루프 탈출
                                 

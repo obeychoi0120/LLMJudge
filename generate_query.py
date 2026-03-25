@@ -4,7 +4,7 @@ import argparse
 import json
 import vertexai
 from vertexai.generative_models import GenerativeModel
-from gemini_api_utils import process_gcs_file, check_gcs_files_exist, SAFETY_SETTINGS
+from gemini_api_utils import process_gcs_file, check_gcs_files_exist, SAFETY_SETTINGS, load_config, parse_json_response
 
 def init_query_generator_model(model_name):
     system_prompt = """
@@ -62,14 +62,7 @@ def main():
     
     args = parser.parse_args()
     
-    if os.path.exists("config.json"):
-        with open("config.json", "r", encoding="utf-8") as f:
-            try:
-                config = json.load(f)
-                args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
-                args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
-            except json.JSONDecodeError:
-                pass
+    args = load_config(args)
 
     project_id = args.gcp_project_id
     gs_bucket_name = args.gs_bucket_name
@@ -136,16 +129,9 @@ def main():
             try:
                 time.sleep(2) # API Rate Limit 방지
                 response_text = generate_queries_for_content(generator_model, video_part, gt_part)
-                
-                # JSON parsing
-                clean_text = response_text.strip()
-                if clean_text.startswith("```json"):
-                    clean_text = clean_text[7:]
-                if clean_text.endswith("```"):
-                    clean_text = clean_text[:-3]
-                    
-                generated_queries = json.loads(clean_text)
+                generated_queries = parse_json_response(response_text)
                 print(f"Successfully generated {len(generated_queries)} queries for '{content_id}':")
+                
                 for i, q in enumerate(generated_queries, 1):
                     print(f"  {i}. {q}")
                 
