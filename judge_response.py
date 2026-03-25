@@ -22,7 +22,6 @@ def main():
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
     parser.add_argument("--location", default="us-central1", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
-    parser.add_argument("--max_workers", type=int, default=3, help="동시 실행할 비디오 개수 (기본값: 3)")
 
     args = parser.parse_args()
 
@@ -176,19 +175,18 @@ def main():
                     
                     print(f"[{content_id}] Scoring Query: '{user_prompt[:30]}...'")
                     
-                    for mode in ["video", "full", "part"]:
+                    def judge_for_mode(mode):
                         generated_answer = answers.get(mode)
                         if not generated_answer or str(generated_answer).startswith("Error"):
                             print(f"[{content_id}]  Evaluating [{mode}] skipped (no valid answer).")
-                            continue
+                            return None
                             
-                        # 기존에 이미 평가 완료된 모드라면 다시 API를 부르지 않음
                         if mode in item_existing_score_map.get(user_prompt, {}):
                             print(f"[{content_id}]  Evaluating [{mode}] already completed (skip).")
-                            continue
+                            return None
                         
                         print(f"[{content_id}]  Evaluating [{mode}]...")
-                        time.sleep(1) # 평가 루프 과부하 방지
+                        time.sleep(1) # 동시 호출 시 약간의 지연
                         
                         max_parse_retries = 3
                         parse_success = False
@@ -208,31 +206,35 @@ def main():
                                 
                                 score_dict = parse_json_response(score_text)
                                 parse_success = True
-                                break # 파싱 성공 시 루프 탈출
+                                break
                                 
                             except json.JSONDecodeError:
                                 print(f"[{content_id}]  [Warning] JSON 파싱 실패 (시도 {attempt+1}/{max_parse_retries}). 잠시 후 재시도합니다.")
                                 print(f"[{content_id}]  [Raw Text]: {score_text[:100]}...")
-                                # 재시도 시에는 비디오 파트를 다시 업로드하지 않기 위해 첫 턴 플래그 해제
                                 current_is_first = False
                                 time.sleep(2)
                                 
                             except Exception as e:
                                 print(f"[{content_id}]  Evaluating [{mode}] error: {e}")
-                                break # 기타 API 오류는 중단
+                                break
                                 
                         if not parse_success:
-                            print(f"[{content_id}]  [Error] {max_parse_retries}번의 재시도 끝에 JSON 파싱에 실패했습니다.")
+                            print(f"[{content_id}]  [Error] JSON 파싱 최종 실패.")
                             score_dict = {"raw_response": score_text if 'score_text' in locals() else "Error"}
                             
-                        score_entry = {
+                        return {
                             "query": user_prompt,
                             "mode": mode,
                             "judge": score_dict 
-                        }   
-                        
-                        content_scores.append(score_entry)
-                        is_first_turn_for_mode[mode] = False
+                        }
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as mode_executor:
+                        futures = [mode_executor.submit(judge_for_mode, m) for m in ["video", "full", "part"]]
+                        for future in concurrent.futures.as_completed(futures):
+                            score_entry = future.result()
+                            if score_entry:
+                                content_scores.append(score_entry)
+                                is_first_turn_for_mode[score_entry["mode"]] = False
                     
                     # 쿼리 한 개 평가가 끝날 때마다 JSONL로 Append 저장 (부분 저장)
                     with file_write_lock:
@@ -244,11 +246,9 @@ def main():
                 processed_ids.add(content_id)
                 return True
 
-            items_to_process = [ca for ca in content_answers_list if ca["content_id"] in pending_work]
-            if items_to_process:
-                new_data_processed = True
-                with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-                    executor.map(process_item, items_to_process)
+            for content_answers in content_answers_list:
+                if process_item(content_answers):
+                    new_data_processed = True
 
             if not args.continuous:
                 break

@@ -21,7 +21,6 @@ def main():
     parser.add_argument("--skip-response", action="store_true", help="답변 생성을 건너뛰기")
     parser.add_argument("--skip-judge", action="store_true", help="평가를 건너뛰기")
     parser.add_argument("--skip-aggregate", action="store_true", help="최종 JSON 변환 건너뛰기")
-    parser.add_argument("--max_workers", type=int, default=3, help="동시 실행할 비디오 개수 (기본값: 3)")
     
     args = parser.parse_args()
     args = load_config(args)
@@ -95,8 +94,7 @@ def main():
             "--json_file", current_input_file,
             "--output_file", args.responses_file,
             "--gs_bucket_name", args.gs_bucket_name,
-            "--response_gen_model", args.response_gen_model,
-            "--max_workers", str(args.max_workers)
+            "--response_gen_model", args.response_gen_model
         ] + common_project_args
         subprocess.run(cmd, check=True)
         
@@ -109,8 +107,7 @@ def main():
             "--answers_file", args.responses_file,
             "--output_file", args.scores_file,
             "--gs_bucket_name", args.gs_bucket_name,
-            "--judge_model", args.judge_model,
-            "--max_workers", str(args.max_workers)
+            "--judge_model", args.judge_model
         ] + common_project_args
         subprocess.run(cmd, check=True)
         

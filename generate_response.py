@@ -21,7 +21,6 @@ def main():
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
     parser.add_argument("--location", default="us-central1", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
-    parser.add_argument("--max_workers", type=int, default=3, help="동시 실행할 비디오 개수 (기본값: 3)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -162,45 +161,48 @@ def main():
                     answers_for_query = {}
                     existing_answers = existing_query_map.get(user_prompt, {})
                     
-                    for mode in ["video", "full", "part"]:
+                    def generate_for_mode(mode):
                         prev_ans = existing_answers.get(mode, "")
                         if prev_ans and not str(prev_ans).startswith("Error"):
                             print(f"[{content_id}]  [{mode}] already completed (skip)")
-                            answers_for_query[mode] = prev_ans
-                            continue
+                            return mode, prev_ans
                         
                         print(f"[{content_id}]  Generating [{mode}]...")
                         file_part = parts[mode] if is_first_turn_for_mode[mode] else None
                         
                         try:
-                            time.sleep(2) # API Rate Limit 과부하 방지 (각 생성마다 2초 대기)
+                            time.sleep(1) # 동시 호출 시 약간의 지연
                             response = send_chat_message(gen_chats[mode], user_prompt, file_part=file_part)
-                            answers_for_query[mode] = response.text
-                            is_first_turn_for_mode[mode] = False
+                            return mode, response.text
                         except Exception as e: 
                             print(f"[{content_id}]  Generating [{mode}] Error: {e}")
-                            answers_for_query[mode] = f"Error: {str(e)}"
+                            return mode, f"Error: {str(e)}"
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as mode_executor:
+                        futures = [mode_executor.submit(generate_for_mode, m) for m in ["video", "full", "part"]]
+                        for future in concurrent.futures.as_completed(futures):
+                            m, text = future.result()
+                            answers_for_query[m] = text
+                            is_first_turn_for_mode[m] = False
 
                     answers_dict["queries"].append({
                         "query": user_prompt,
                         "answers": answers_for_query
                     })
-                    print("-" * 50)
                     
                     # 쿼리 하나 끝날 때마다 JSONL로 Append 저장 (부분 저장)
                     with file_write_lock:
                         with open(args.output_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(answers_dict, ensure_ascii=False) + "\n")
                     print(f"[{content_id}]  -> 진행중 쿼리 임시 저장 완료: {args.output_file}")
+                    print("-" * 50)
                     
                 processed_ids.add(content_id)
                 return True
 
-            items_to_process = [item for item in query_list if item["content_id"] in pending_work]
-            if items_to_process:
-                new_data_processed = True
-                with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-                    executor.map(process_item, items_to_process)
+            for item in query_list:
+                if process_item(item):
+                    new_data_processed = True
 
             if not args.continuous:
                 break
