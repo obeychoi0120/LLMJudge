@@ -74,6 +74,44 @@ def main():
             
             data = list(data_dict.values())
             
+            # scores 파일일 경우, query를 기준으로 mode들을 묶는 전처리 수행
+            if "scores.jsonl" in jsonl_path or "scores" in base_name:
+                reformatted_data = []
+                for item in data:
+                    c_id = item.get("content_id")
+                    original_scores = item.get("scores", [])
+                    
+                    # 쿼리별로 모드를 모음
+                    query_map = {}
+                    for entry in original_scores:
+                        q = entry.get("query")
+                        m = entry.get("mode")
+                        j = entry.get("judge")
+                        if not q: continue
+                        
+                        if q not in query_map:
+                            query_map[q] = {}
+                        query_map[q][m] = j
+                        
+                    # 최종 딕셔너리 구조 생성 시 지정된 mode 순서 적용
+                    queries_list = []
+                    desired_order = ["video", "full", "part"]
+                    for q, s in query_map.items():
+                        ordered_scores = {}
+                        for m_key in desired_order:
+                            if m_key in s:
+                                ordered_scores[m_key] = s[m_key]
+                        for m_key, val in s.items():
+                            if m_key not in desired_order:
+                                ordered_scores[m_key] = val
+                        queries_list.append({"query": q, "scores": ordered_scores})
+                        
+                    reformatted_data.append({
+                        "content_id": c_id,
+                        "queries": queries_list
+                    })
+                data = reformatted_data
+            
             # reference_order(입력 메타데이터) 순서에 맞춰서 최종 정렬
             if reference_order:
                 def get_sort_key(item):
