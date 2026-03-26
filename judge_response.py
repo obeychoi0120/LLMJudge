@@ -106,7 +106,7 @@ def main():
                     missing_modes = []
                     for m in ["video", "full", "part"]:
                         gen_ans = answers.get(m)
-                        if not gen_ans or str(gen_ans).startswith("Error"):
+                        if not gen_ans or not str(gen_ans).strip() or str(gen_ans).startswith("Error"):
                             continue # 평가할 답변이 없으면 우선 건너뜀
                         if m not in existing_score_map.get(q_str, {}):
                             missing_modes.append(m)
@@ -177,7 +177,7 @@ def main():
                     
                     def judge_for_mode(mode):
                         generated_answer = answers.get(mode)
-                        if not generated_answer or str(generated_answer).startswith("Error"):
+                        if not generated_answer or not str(generated_answer).strip() or str(generated_answer).startswith("Error"):
                             print(f"[{content_id}]  Evaluating [{mode}] skipped (no valid answer).")
                             return None
                             
@@ -240,7 +240,7 @@ def main():
                     with file_write_lock:
                         with open(args.output_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(scores_dict, ensure_ascii=False) + "\n")
-                    print(f"[{content_id}]  -> 진행중 쿼리 임시 저장 완료: {args.output_file}")
+                    print(f"[{content_id}]  -> Score 임시 저장 완료: {args.output_file}")
                     print("-" * 50)
 
                 processed_ids.add(content_id)

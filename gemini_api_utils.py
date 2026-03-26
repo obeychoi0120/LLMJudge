@@ -30,12 +30,23 @@ SAFETY_SETTINGS = [
 
 def load_config(args):
     """config.json 파일이 존재하면 열어 args에 값을 병합합니다."""
+    import sys
     if os.path.exists("config.json"):
         with open("config.json", "r", encoding="utf-8") as f:
             try:
                 config = json.load(f)
                 args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
                 args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
+                
+                # argparse 기본값이 세팅된 상태이더라도, config.json에 값이 존재하고 CLI에서 명시적으로 입력하지 않은 경우에 한해 덮어쓰기
+                if hasattr(args, 'query_gen_model') and 'query_gen_model' in config and '--query_gen_model' not in sys.argv:
+                    args.query_gen_model = config['query_gen_model']
+                if hasattr(args, 'response_gen_model') and 'response_gen_model' in config and '--response_gen_model' not in sys.argv:
+                    args.response_gen_model = config['response_gen_model']
+                if hasattr(args, 'judge_model') and 'judge_model' in config and '--judge_model' not in sys.argv:
+                    args.judge_model = config['judge_model']
+                if hasattr(args, 'location') and 'location' in config and '--location' not in sys.argv:
+                    args.location = config['location']
             except json.JSONDecodeError:
                 pass
     return args

@@ -106,7 +106,7 @@ def main():
                     existing_answers = existing_query_map.get(q_str, {})
                     for m in ["video", "full", "part"]:
                         ans = existing_answers.get(m, "")
-                        if not ans or str(ans).startswith("Error"):
+                        if not ans or not str(ans).strip() or str(ans).startswith("Error"):
                             missing_modes.append(m)
                     if missing_modes:
                         c_pending[q_str] = missing_modes
@@ -157,13 +157,13 @@ def main():
                 existing_query_map = {q["query"]: q.get("answers", {}) for q in existing_queries}
 
                 for user_prompt in queries:
-                    print(f"[{content_id}] Processing Query: '{user_prompt[:30]}...'")
+                    print(f"[{content_id}] Processing Query: '{user_prompt}'")
                     answers_for_query = {}
                     existing_answers = existing_query_map.get(user_prompt, {})
                     
                     def generate_for_mode(mode):
                         prev_ans = existing_answers.get(mode, "")
-                        if prev_ans and not str(prev_ans).startswith("Error"):
+                        if prev_ans and str(prev_ans).strip() and not str(prev_ans).startswith("Error"):
                             print(f"[{content_id}]  [{mode}] already completed (skip)")
                             return mode, prev_ans
                         
@@ -194,9 +194,9 @@ def main():
                     with file_write_lock:
                         with open(args.output_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(answers_dict, ensure_ascii=False) + "\n")
-                    print(f"[{content_id}]  -> 진행중 쿼리 임시 저장 완료: {args.output_file}")
+                    print(f"[{content_id}]  -> Response 임시 저장 완료: {args.output_file}")
                     print("-" * 50)
-                    
+
                 processed_ids.add(content_id)
                 return True
 

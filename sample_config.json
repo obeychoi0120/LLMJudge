@@ -1,4 +1,8 @@
 {
-    "gcp_project_id": "YOUR_GCP_PROJECT_ID",
-    "gs_bucket_name": "YOUR_GS_BUCKET_NAME"
+  "gcp_project_id": "your-project-id",
+  "gs_bucket_name": "your-bucket-name",
+  "location": "us-central1",
+  "query_gen_model": "gemini-3.1-pro-preview",
+  "response_gen_model": "gemini-2.5-flash",
+  "judge_model": "gemini-3.1-pro-preview"
 }
