@@ -99,6 +99,23 @@ python main.py \
   python judge_response.py --continuous
   ```
 
+### 💡 모델 및 환경 변수 통합 설정 (`config.json`)
+파이프라인 실행 시 사용하는 **GCP 리전**과 **Gemini 모델** 이름들은 `config.json` 파일 하나에 정의하여 모든 개별 스크립트에 **전역(Global)으로 통합 적용**할 수 있습니다.
+
+예를 들어, 쿼리 생성 및 최종 평가에 최신 `gemini-3.1-pro-preview` 모델을 사용하고 싶다면 아래와 같이 `config.json`을 작성하면 됩니다. (터미널 명령은 기본 포맷을 그대로 사용해도 자동 반영됩니다.)
+```json
+{
+  "gcp_project_id": "your-project-id",
+  "gs_bucket_name": "your-bucket-name",
+  "location": "global",
+  "query_gen_model": "gemini-3.1-pro-preview",
+  "response_gen_model": "gemini-2.5-flash",
+  "judge_model": "gemini-3.1-pro-preview"
+}
+```
+*(단, 터미널 실행 시 `--judge_model gemini-2.5-pro` 같은 옵션을 직접 주면 항상 터미널 명령이 최우선 적용됩니다.)*
+
+
 ### 💡 분석용 JSON 실시간 변환 도구
 파이프라인이 `.jsonl` 형태로 데이터를 실시간 누적(Append)하므로 일반 텍스트 편집기에서 읽기에는 다소 불편할 수 있습니다. 
 파이프라인 동작 도중이든 완료 후든 **언제든지** 아래 명령으로 오류 처리 이력이 깔끔하게 자동으로 병합된 상태의 분석용 `.json` 파일들을 추출해 낼 수 있습니다.

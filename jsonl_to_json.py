@@ -14,6 +14,37 @@ def main():
         return
 
     print("=== JSONL to JSON 분석용 추출을 시작합니다 ===")
+    
+    # query_generated.json(l) 파일로부터 content_id 기본 순서 추출
+    reference_order = []
+    qg_json_path = os.path.join(args.input_dir, "query_generated.json")
+    qg_jsonl_path = os.path.join(args.input_dir, "query_generated.jsonl")
+    
+    if os.path.exists(qg_json_path):
+        try:
+            with open(qg_json_path, "r", encoding="utf-8") as f:
+                qg_data = json.load(f)
+                for item in qg_data:
+                    c_id = item.get("content_id")
+                    if c_id and c_id not in reference_order:
+                        reference_order.append(c_id)
+        except Exception:
+            pass
+    elif os.path.exists(qg_jsonl_path):
+        try:
+            with open(qg_jsonl_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        obj = json.loads(line)
+                        c_id = obj.get("content_id")
+                        if c_id and c_id not in reference_order:
+                            reference_order.append(c_id)
+        except Exception:
+            pass
+            
+    if reference_order:
+        print(f"-> 정렬 기준 확인: query_generated 기준 {len(reference_order)}개 항목 순서 적용")
+        
     for jsonl_path in jsonl_files:
         base_name = os.path.splitext(jsonl_path)[0]
         json_path = base_name + ".json"
@@ -42,6 +73,16 @@ def main():
                         error_count += 1
             
             data = list(data_dict.values())
+            
+            # reference_order(입력 메타데이터) 순서에 맞춰서 최종 정렬
+            if reference_order:
+                def get_sort_key(item):
+                    c_id = item.get("content_id")
+                    try:
+                        return reference_order.index(c_id)
+                    except ValueError:
+                        return len(reference_order) # 리스트에 없으면 맨 뒤로
+                data.sort(key=get_sort_key)
             
             # 사람이 보기 편하도록 indent=4 속성 추가
             with open(json_path, "w", encoding="utf-8") as f:
