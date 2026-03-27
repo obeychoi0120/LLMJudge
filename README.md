@@ -14,26 +14,26 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 flowchart TB
     subgraph INPUT["Input"]
         CL["content_list.json"]
-        GCS["GCS Bucket\n\nVideo\nFull JSONL\nPart JSONL\nRef JSONL"]
+        GCS["GCS Bucket<br/>Video / Full JSONL / Part JSONL / Ref JSONL"]
     end
 
     subgraph STAGE0["0. Query Generation - generate_query.py (Single-turn)"]
-        QG["(Pro) Generated Queries\nVideo\n+ Ref JSONL"]
+        QG["(Pro) Generated Queries<br/>Video + Ref JSONL"]
     end
 
     subgraph STAGE1["1. Response Generation - generate_response.py (Multi-turn)"]
         direction LR
-        REF["(Pro) Reference\nVideo\n+ Ref JSONL\n+ System Prompt1\n+ Generated Query"]
-        MODE_V["(Flash) Video Response \nVideo\n+ System Prompt2\n+ Generated Query"]
-        MODE_F["(Flash) Full Meta Response\nFull JSONL\n+ System Prompt3\n+ Generated Query"]
-        MODE_P["(Flash) Part Meta Response\nPart JSONL\n+ System Prompt4\n+ Generated Query"]
-    end 
+        REF["(Pro) Reference<br/>Video + Ref JSONL<br/>+ System Prompt + Query"]
+        MODE_V["(Flash) Video Response<br/>Video + System Prompt + Query"]
+        MODE_F["(Flash) Full Meta Response<br/>Full JSONL + System Prompt + Query"]
+        MODE_P["(Flash) Part Meta Response<br/>Part JSONL + System Prompt + Query"]
+    end
 
     subgraph STAGE2["2. Judging - judge_response.py (Single-turn)"]
         direction LR
-        J_V["(Pro) Video 평가\nReference\n+ Video Response"]
-        J_F["(Pro) Full Meta 평가\nReference\n+ Full Meta Response"]
-        J_P["(Pro) Part Meta 평가\nReference\n+ Part Meta Response"]   
+        J_V["(Pro) Video 평가<br/>Reference + Video Response"]
+        J_F["(Pro) Full Meta 평가<br/>Reference + Full Meta Response"]
+        J_P["(Pro) Part Meta 평가<br/>Reference + Part Meta Response"]
     end
 
     subgraph OUTPUT["Output"]
