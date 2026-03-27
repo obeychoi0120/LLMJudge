@@ -12,38 +12,35 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ```mermaid
 flowchart TB
-    subgraph INPUT["📂 Input"]
-        CL["content_list.json<br/>(Content ID 목록)"]
-        GCS["☁️ GCS Bucket<br/>• video_540p/*.mp4<br/>• jsonl/*_15s_Full.jsonl<br/>• jsonl/*_15s_Part.jsonl<br/>• jsonl/*_15s_Ref.jsonl"]
+    subgraph INPUT["Input"]
+        CL["content_list.json"]
+        GCS["GCS Bucket"]
     end
 
-    subgraph STAGE0["0️⃣ Query Generation (generate_query.py)"]
-        QG["Pro 모델이 Video + Ref JSONL을 분석하여<br/>시청자 질문 5~10개를 자동 생성"]
+    subgraph STAGE0["0. Query Generation - generate_query.py"]
+        QG["Pro + Video + Ref JSONL\n(Single-turn)"]
     end
 
-    subgraph STAGE1["1️⃣ Response Generation (generate_response.py)"]
-        direction TB
-        REF["🔑 Reference Answer 생성<br/>Pro 모델 + Video + Ref JSONL → 기준 정답 (1회)"]
-        MODE_V["video 모드<br/>Flash 모델 + 원본 MP4"]
-        MODE_F["full 모드<br/>Flash 모델 + Full JSONL"]
-        MODE_P["part 모드<br/>Flash 모델 + Part JSONL"]
-        REF --> MODE_V & MODE_F & MODE_P
+    subgraph STAGE1["1. Response Generation - generate_response.py"]
+        direction LR
+        REF["Reference\nPro + Video + Ref JSONL\n(Multi-turn)"]
+        MODE_V["video mode\nFlash + MP4\n(Multi-turn)"]
+        MODE_F["full mode\nFlash + Full JSONL\n(Multi-turn)"]
+        MODE_P["part mode\nFlash + Part JSONL\n(Multi-turn)"]
     end
 
-    subgraph STAGE2["2️⃣ Judging (judge_response.py)"]
-        direction TB
-        J_NOTE["📝 Reference Answer(텍스트)를 기준으로<br/>각 모드 답변을 비교 평가<br/>(비디오 재전송 없음 → 토큰 절감)"]
-        J_V["video 답변 평가"]
-        J_F["full 답변 평가"]
-        J_P["part 답변 평가"]
-        J_NOTE --- J_V & J_F & J_P
+    subgraph STAGE2["2. Judging - judge_response.py"]
+        direction LR
+        J_V["video 평가\n(Single-turn)"]
+        J_F["full 평가\n(Single-turn)"]
+        J_P["part 평가\n(Single-turn)"]
     end
 
-    subgraph OUTPUT["📊 Output"]
+    subgraph OUTPUT["Output"]
         QGO["query_generated.jsonl"]
-        RSP["responses.jsonl<br/>(reference + 3모드 답변)"]
-        SCR["scores.jsonl<br/>(3모드 × 3항목 점수)"]
-        JSON["*.json (분석용)"]
+        RSP["responses.jsonl"]
+        SCR["scores.jsonl"]
+        JSON["*.json"]
     end
 
     CL --> QG
@@ -56,6 +53,8 @@ flowchart TB
     STAGE2 --> SCR
     SCR --> JSON
 ```
+
+> **Note**: Judge 단계에서는 비디오를 재전송하지 않고, Stage 1에서 생성된 **Reference Answer(텍스트)** 만을 기준으로 각 모드 답변을 비교 평가합니다.
 
 ### 세션 구조 상세
 
