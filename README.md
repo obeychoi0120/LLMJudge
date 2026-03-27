@@ -17,11 +17,11 @@ flowchart TB
         GCS["GCS Bucket"]
     end
 
-    subgraph STAGE0["0. Query Generation - generate_query.py"]
-        QG["Pro + Video + Ref JSONL\n(Single-turn)"]
+    subgraph STAGE0["0. Query Generation - generate_query.py (Single-turn)"]
+        QG["Pro + Video + Ref JSONL"]
     end
 
-    subgraph STAGE1["1. Response Generation - generate_response.py\n(Multi-turn)"]
+    subgraph STAGE1["1. Response Generation - generate_response.py (Multi-turn)"]
         direction LR
         REF["Reference\nPro + Video + Ref JSONL"]
         MODE_V["Video Response\nFlash + MP4"]
@@ -29,7 +29,7 @@ flowchart TB
         MODE_P["Part Response\nFlash + Part JSONL"]
     end 
 
-    subgraph STAGE2["2. Judging - judge_response.py\n(Single-turn)"]
+    subgraph STAGE2["2. Judging - judge_response.py (Single-turn)"]
         direction LR
         J_V["Video 평가\nPro + Reference + Response"]
         J_F["Full 평가\nPro + Reference + Response"]
