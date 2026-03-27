@@ -23,10 +23,10 @@ flowchart TB
 
     subgraph STAGE1["1. Response Generation - generate_response.py (Multi-turn)"]
         direction LR
-        REF["(Pro) Reference\nVideo\n+ Ref JSONL"]
-        MODE_V["(Flash) Video Response \nVideo\n+ System Prompt1\n+ Generated Query"]
-        MODE_F["(Flash) Full Meta Response\nFull JSONL\n+ System Prompt2\n+ Generated Query"]
-        MODE_P["(Flash) Part Meta Response\nPart JSONL\n+ System Prompt3\n+ Generated Query"]
+        REF["(Pro) Reference\nVideo\n+ Ref JSONL\n+ System Prompt1\n+ Generated Query"]
+        MODE_V["(Flash) Video Response \nVideo\n+ System Prompt2\n+ Generated Query"]
+        MODE_F["(Flash) Full Meta Response\nFull JSONL\n+ System Prompt3\n+ Generated Query"]
+        MODE_P["(Flash) Part Meta Response\nPart JSONL\n+ System Prompt4\n+ Generated Query"]
     end 
 
     subgraph STAGE2["2. Judging - judge_response.py (Single-turn)"]
