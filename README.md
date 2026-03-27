@@ -4,105 +4,163 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ## 📝 프로젝트 개요
 
-이 프로젝트는 긴 비디오 영상 데이터와 그에서 추출한 15초 단위의 멀티모달 메타데이터(JSONL)를 Gemini 모델(`gemini-2.5-flash`)에 입력하여 사용자 질문에 대한 다중 턴(Multi-turn) 답변을 생성합니다. 
-생성된 답변은 Judge 모델(`gemini-2.5-pro`)을 통해 **정확성(Accuracy)**, **포괄성(Completeness)**, **가독성(Helpfulness)** 의 3가지 기준으로 절대평가되며 자동으로 채점됩니다.
+이 프로젝트는 긴 비디오 영상과 15초 단위 멀티모달 메타데이터(JSONL)를 Gemini 모델에 입력하여 사용자 질문에 대한 답변을 생성하고, Judge 모델을 통해 자동으로 채점합니다.
 
-## ✨ 주요 특징 및 아키텍처
+평가 기준: **정확성(Accuracy)**, **포괄성(Completeness)**, **가독성(Helpfulness)** — 각 1~5점, 총 15점 만점.
 
-- **시청자 질문 자동 생성**: `gemini-2.5-pro` 모델이 원본 비디오와 정답(GT) 메타데이터를 분석하여 해당 콘텐츠를 시청한 사용자가 실제 궁금해할 만한 핵심 문항(5~10개)을 자동으로 생성합니다.
-- **다중 모드(Multi-mode) 추론**: 영상 정보를 제공하는 방식에 따라 3가지 모드로 추론을 진행합니다.
-  - `video`: 원본 비디오 파일(.mp4)만을 제공하여 답변을 생성.
-  - `full`: 오디오 분류, 음성 인식, 자막(OCR), 시각적 행동 묘사(Description)가 모두 포함된 15초 단위 JSONL 제공.
-  - `part`: 시각적 행동 묘사를 제외한 나머지 메타데이터 JSONL 제공.
-- **최적화된 Session-based 추론 및 평가**: 대용량 파라미터(Video, JSONL)를 매번 재업로드하는 병목을 제거하기 위해 Chat Session을 활용하여 최초 1회만 업로드합니다.
-- **안정적인 재시도(Exponential Backoff)**: API Rate Limit(429) 등 일시적 리소스 고갈 발생 시, 지수 백오프 기반 재시도 로직이 동작하여 프로세스가 강제 종료되지 않고 안전하게 복구됩니다.
-- **쿼리 단위 부분 저장(Partial Checkpoint) 및 이어하기(Resume)**: 기존의 단일 비디오(전체 쿼리) 완료 후 저장 방식에서 탈피하여, **단일 쿼리(질문 1개)** 처리가 끝날 때마다 JSONL 파일에 실시간으로 Append(누적) 저장합니다. 스크립트 중단 시, 시작할 때 이전 이력을 완벽히 복원하고 잔여 작업(Resume Plan)만 효율적으로 연산합니다.
-- **비동기 연속 파이프라인 모니터링 (`--continuous`)**: 각 스크립트(`generate_response`, `judge_response`)는 `--continuous` 플래그를 통해 이전 단계의 출력을 실시간으로 모니터링하며 병렬 파이프라인 형태로 구동될 수 있습니다.
+## 🔄 파이프라인 흐름
+
+```mermaid
+flowchart TB
+    subgraph INPUT["📂 Input"]
+        CL["content_list.json<br/>(Content ID 목록)"]
+        GCS["☁️ GCS Bucket<br/>• video_540p/*.mp4<br/>• jsonl/*_15s_Full.jsonl<br/>• jsonl/*_15s_Part.jsonl<br/>• jsonl/*_15s_Ref.jsonl"]
+    end
+
+    subgraph STAGE0["0️⃣ Query Generation (generate_query.py)"]
+        QG["Pro 모델이 Video + Ref JSONL을 분석하여<br/>시청자 질문 5~10개를 자동 생성"]
+    end
+
+    subgraph STAGE1["1️⃣ Response Generation (generate_response.py)"]
+        direction TB
+        REF["🔑 Reference Answer 생성<br/>Pro 모델 + Video + Ref JSONL → 기준 정답 (1회)"]
+        MODE_V["video 모드<br/>Flash 모델 + 원본 MP4"]
+        MODE_F["full 모드<br/>Flash 모델 + Full JSONL"]
+        MODE_P["part 모드<br/>Flash 모델 + Part JSONL"]
+        REF --> MODE_V & MODE_F & MODE_P
+    end
+
+    subgraph STAGE2["2️⃣ Judging (judge_response.py)"]
+        direction TB
+        J_NOTE["📝 Reference Answer(텍스트)를 기준으로<br/>각 모드 답변을 비교 평가<br/>(비디오 재전송 없음 → 토큰 절감)"]
+        J_V["video 답변 평가"]
+        J_F["full 답변 평가"]
+        J_P["part 답변 평가"]
+        J_NOTE --- J_V & J_F & J_P
+    end
+
+    subgraph OUTPUT["📊 Output"]
+        QGO["query_generated.jsonl"]
+        RSP["responses.jsonl<br/>(reference + 3모드 답변)"]
+        SCR["scores.jsonl<br/>(3모드 × 3항목 점수)"]
+        JSON["*.json (분석용)"]
+    end
+
+    CL --> QG
+    GCS --> QG
+    QG --> QGO
+    QGO --> STAGE1
+    GCS --> STAGE1
+    STAGE1 --> RSP
+    RSP --> STAGE2
+    STAGE2 --> SCR
+    SCR --> JSON
+```
+
+### 세션 구조 상세
+
+| 단계 | 세션 구조 | 비고 |
+|------|----------|------|
+| Query 생성 | Content 당 1회 호출 (`generate_content`) | Single-turn |
+| Reference 생성 | Content 당 1 Chat Session, 쿼리별 Multi-turn | 첫 턴에 Video+Ref JSONL 전송 |
+| Response 생성 | Mode별 1 Chat Session × 3, 쿼리별 Multi-turn | 첫 턴에 파일 전송, 이후 텍스트만 |
+| Judge 평가 | **(query, mode)별 독립 세션** | 이전 평가 history 영향 없음 |
+
+## ✨ 주요 특징
+
+- **Reference Answer 기반 평가**: Pro 모델이 원본 비디오 + Ref 메타데이터를 참조하여 **기준 정답을 1회 생성**. Judge 모델은 이 텍스트만으로 비교 평가 → **Judge 단계 비디오 토큰 100% 제거**.
+- **다중 모드(Multi-mode) 추론**:
+  - `video`: 원본 비디오 파일(.mp4)만 제공
+  - `full`: 오디오 분류 + 음성 인식 + OCR + 행동 묘사(Description) 포함 JSONL
+  - `part`: 행동 묘사를 제외한 메타데이터 JSONL
+- **쿼리 단위 Resume**: (content_id, query) 단위로 실시간 JSONL Append. 중단 후 재실행 시 잔여 작업만 처리.
+- **재시도(Exponential Backoff)**: API Rate Limit 등 일시적 오류에 대해 자동 복구.
+- **비동기 병렬 파이프라인 (`--continuous`)**: 각 단계를 독립 터미널에서 동시에 실행하여 이전 단계 출력을 실시간 모니터링.
 
 ## 🗂 파일 구조
 
 ```text
 LLMJudge/
-├── main.py                     # 전체 파이프라인 분기점을 관리하는 오케스트레이터
-├── generate_query.py           # 질문 생성 모듈 (`--generate-query` 옵션 시 동작)
-├── generate_response.py        # 모드별 답변 생성(Inference) 모듈 
-├── judge_response.py           # 프롬프트 기반 평가(Judge) 모듈
-├── gemini_api_utils.py           # Gemini SDK 초기화, GCS 데이터 검증 등 헬퍼 
-├── jsonl_to_json.py            # [분석 도구] 생성된 JSONL 로그를 읽기 편한 JSON으로 변환
-├── sample_config.json          # 설정 파일 샘플 (복사하여 config.json으로 사용)
-├── sample_user_query_list.json # 기본 입력 파일 샘플
-└── output/                     # 파이프라인의 결과물이 통합 저장되는 디렉토리
-    ├── query_generated.jsonl   # 1️⃣ 자동 생성된 질문 목록 (실시간 누적)
-    ├── responses.jsonl         # 2️⃣ 각 모드별 추론 답변 (실시간 누적)
-    └── scores.jsonl            # 3️⃣ 최종 평가 점수 및 Rationale (실 실시간 누적)
+├── main.py                     # E2E 파이프라인 오케스트레이터
+├── generate_query.py           # 질문 자동 생성
+├── generate_response.py        # Reference + 3모드 답변 생성
+├── judge_response.py           # Reference 기반 비교 평가
+├── gemini_api_utils.py         # Gemini SDK, GCS 검증, 재시도 등 공통 유틸
+├── jsonl_to_json.py            # JSONL → 분석용 JSON 변환
+├── config.json                 # 환경 설정 (GCP, 모델명 등)
+├── content_list.json           # 평가 대상 Content ID 목록
+└── output/                     # 파이프라인 결과 저장
+    ├── query_generated.jsonl   # 0️⃣ 생성된 질문
+    ├── responses.jsonl         # 1️⃣ Reference + 3모드 답변
+    └── scores.jsonl            # 2️⃣ 최종 평가 점수
 ```
 
 ## 🚀 설치 및 사전 준비
 
-1. **Python 환경 설정 및 패키지 설치**
+1. **Python 패키지 설치**
    ```bash
    pip install google-cloud-aiplatform google-cloud-storage vertexai
    ```
 
-2. **GCP 인증 및 설정**
+2. **GCP 인증**
    ```bash
    gcloud auth application-default login
    ```
 
-3. **설정 파일 복사 (`config.json`)**
+3. **설정 파일 생성**
    ```bash
    cp sample_config.json config.json
-   # 본인의 GCP Project ID 및 Bucket Name으로 수정
+   # config.json에서 본인의 GCP Project ID, Bucket Name 등 수정
    ```
 
 4. **GCS 데이터 구조**
-    컨텐츠 하나 당 4개의 데이터가 필요합니다.
-    ```text
-    gs://{BUCKET_NAME}/video_540p/{content_id}.mp4
-    gs://{BUCKET_NAME}/jsonl/{content_id}_15s_Full.jsonl
-    gs://{BUCKET_NAME}/jsonl/{content_id}_15s_Part.jsonl
-    gs://{BUCKET_NAME}/jsonl/{content_id}_15s_GT.jsonl
-    ```
+   컨텐츠 하나 당 4개의 파일이 필요합니다:
+   ```text
+   gs://{BUCKET}/video_540p/{content_id}_540p.mp4
+   gs://{BUCKET}/jsonl/{content_id}_15s_Full.jsonl
+   gs://{BUCKET}/jsonl/{content_id}_15s_Part.jsonl
+   gs://{BUCKET}/jsonl/{content_id}_15s_Ref.jsonl
+   ```
 
 ## 🎯 실행 방법
 
-### 방법 A. 메인 오케스트레이터 일괄 실행 (순차 진행)
-`main.py`를 실행하면 옵션에 따라 필요한 파이프라인을 유연하게 제어할 수 있습니다. 스크립트는 중단 후 재실행 시 누락된 단위(쿼리)부터 자동으로 이어하기(Resume)를 알립니다.
+### A. 일괄 실행 (순차 진행)
 
-**1. 기본 사용법 (입력 파일에 Query가 이미 있는 경우)**
 ```bash
-python main.py \
-  --input_file <YOUR_QUERY_LIST_JSONL_FILE>
+# Content ID만 있는 경우 (E2E)
+python main.py --generate-query --input_file content_list.json
+
+# Query가 이미 있는 JSONL 파일 입력
+python main.py --input_file output/query_generated.jsonl
 ```
 
-**2. E2E 사용법 (입력 파일에 Content ID만 있는 경우)**
-지정된 입력이 빈 리스트일 때 `--generate-query` 플래그를 추가하면 파이프라인의 맨 앞단인 '질문 생성' 부터 시작됩니다.
+### B. 병렬 파이프라인 (`--continuous`)
+
+3개 터미널에서 각각 실행:
 ```bash
-python main.py \
-  --generate-query \
-  --input_file <YOUR_CONTENT_LIST_JSON_FILE> \
+# 터미널 1: 질문 생성
+python generate_query.py --input_file content_list.json
+
+# 터미널 2: 답변 생성 (실시간 모니터링)
+python generate_response.py --continuous
+
+# 터미널 3: 평가 (실시간 모니터링)
+python judge_response.py --continuous
 ```
 
-### 방법 B. 병렬 모니터링 파이프라인 실행 (`--continuous`)
-가장 권장되는 대규모 파이프라인 방식입니다. 3개의 시스템 (또는 터미널 창)을 열고 스크립트를 각각 독립적으로 켜두면, 앞선 단계의 결과물이 파일에 기록되는 즉시 다음 단계 스크립트가 실시간으로 데이터를 이어받아 연쇄 처리합니다.
+### 주요 옵션
 
-- **터미널 1 (질문 생성 완료 후 JSONL 출력만 관리)**
-  ```bash
-  python generate_query.py --input_file content_list.json
-  ```
-- **터미널 2 (답변 생성 모니터링)**
-  ```bash
-  python generate_response.py --continuous
-  ```
-- **터미널 3 (답변 평가 모니터링)**
-  ```bash
-  python judge_response.py --continuous
-  ```
+| 옵션 | 설명 | 기본값 |
+|------|------|--------|
+| `--reference_model` | Reference Answer 생성 모델 | `gemini-2.5-pro` |
+| `--response_gen_model` | 3모드 답변 생성 모델 | `gemini-2.5-flash` |
+| `--judge_model` | 평가 모델 | `gemini-2.5-pro` |
+| `--no-reference-ref` | Reference 생성 시 Ref JSONL 미참조 (Video만 사용) | OFF (Ref 참조) |
+| `--skip-response` | 답변 생성 단계 건너뛰기 | — |
+| `--skip-judge` | 평가 단계 건너뛰기 | — |
 
-### 💡 모델 및 환경 변수 통합 설정 (`config.json`)
-파이프라인 실행 시 사용하는 **GCP 리전**과 **Gemini 모델** 이름들은 `config.json` 파일 하나에 정의하여 모든 개별 스크립트에 **전역(Global)으로 통합 적용**할 수 있습니다.
+### `config.json` 통합 설정
 
-예를 들어, 쿼리 생성 및 최종 평가에 최신 `gemini-3.1-pro-preview` 모델을 사용하고 싶다면 아래와 같이 `config.json`을 작성하면 됩니다. (터미널 명령은 기본 포맷을 그대로 사용해도 자동 반영됩니다.)
 ```json
 {
   "gcp_project_id": "your-project-id",
@@ -110,41 +168,43 @@ python main.py \
   "location": "global",
   "query_gen_model": "gemini-3.1-pro-preview",
   "response_gen_model": "gemini-2.5-flash",
+  "reference_model": "gemini-3.1-pro-preview",
   "judge_model": "gemini-3.1-pro-preview"
 }
 ```
-*(단, 터미널 실행 시 `--judge_model gemini-2.5-pro` 같은 옵션을 직접 주면 항상 터미널 명령이 최우선 적용됩니다.)*
+CLI 인자가 항상 `config.json`보다 우선 적용됩니다.
 
+### 분석용 JSON 변환
 
-### 💡 분석용 JSON 실시간 변환 도구
-파이프라인이 `.jsonl` 형태로 데이터를 실시간 누적(Append)하므로 일반 텍스트 편집기에서 읽기에는 다소 불편할 수 있습니다. 
-파이프라인 동작 도중이든 완료 후든 **언제든지** 아래 명령으로 오류 처리 이력이 깔끔하게 자동으로 병합된 상태의 분석용 `.json` 파일들을 추출해 낼 수 있습니다.
 ```bash
 python jsonl_to_json.py
 ```
 
-## 📊 평가 결과 (`output/scores.jsonl`)
+## 📊 출력 포맷 예시
 
-평가가 완료된 후 `jsonl_to_json.py`를 통해 추출되는 `scores.json` 결과 예시입니다.
+### `responses.jsonl` (쿼리 1건 = 1줄)
 ```json
-[
-  {
-    "content_id": "001_NatGeoKR_Narwhal_6m",
-    "scores": [
-      {
-        "query": "이 영상에서 일각돌고래가 사냥하는 모습을 묘사해 줘.",
-        "mode": "full",
-        "judge": {
-          "rationale": "답변이 제공된 메타데이터에 충실하게 작성되었으며...",
-          "scores": {
-            "accuracy": 5,
-            "completeness": 5,
-            "helpfulness": 4
-          },
-          "total_score": 14
-        }
-      }
-    ]
+{
+  "content_id": "001_NatGeoKR_Narwhal_6m",
+  "query": "이 영상에서 일각돌고래가 뭐 하는 거야?",
+  "reference": "Pro 모델이 생성한 기준 정답 텍스트...",
+  "answers": {
+    "video": "영상을 직접 분석한 답변...",
+    "full": "Full 메타데이터 기반 답변...",
+    "part": "Part 메타데이터 기반 답변..."
   }
-]
+}
+```
+
+### `scores.jsonl` (쿼리 1건 = 1줄)
+```json
+{
+  "content_id": "001_NatGeoKR_Narwhal_6m",
+  "query": "이 영상에서 일각돌고래가 뭐 하는 거야?",
+  "judge": {
+    "video": { "rationale": "...", "scores": { "accuracy": 4, "completeness": 4, "helpfulness": 5 }, "total_score": 13 },
+    "full":  { "rationale": "...", "scores": { "accuracy": 5, "completeness": 5, "helpfulness": 4 }, "total_score": 14 },
+    "part":  { "rationale": "...", "scores": { "accuracy": 3, "completeness": 3, "helpfulness": 4 }, "total_score": 10 }
+  }
+}
 ```

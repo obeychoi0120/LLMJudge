@@ -9,7 +9,7 @@ import concurrent.futures
 import threading
 from gemini_api_utils import (
     process_gcs_file, start_chat_session, send_chat_message, 
-    init_generation_model, check_gcs_files_exist, load_config
+    init_generation_model, init_reference_model, check_gcs_files_exist, load_config
 )
 
 def main():
@@ -19,7 +19,10 @@ def main():
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
-    parser.add_argument("--location", default="us-central1", help="GCP Location")
+    parser.add_argument("--reference_model", default="gemini-2.5-pro", help="Reference Answer 생성 모델명")
+    parser.add_argument("--no-reference-ref", dest="reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
+    parser.set_defaults(reference_use_ref=True)
+    parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
 
     args = parser.parse_args()
@@ -45,27 +48,25 @@ def main():
 
     try:
         while True:
-            # 1. Output 진행률 읽기
-            processed_ids = set()
-            existing_answers_dict = {}
+            # 1. Output 진행률 읽기 - (content_id, query) 쌍 단위로 추적
+            processed_pairs = set()  # (content_id, query) 튜플
             if os.path.exists(args.output_file):
                 with open(args.output_file, "r", encoding="utf-8") as f:
                     for line in f:
                         if not line.strip(): continue
                         try:
                             ans = json.loads(line)
-                            c_id = ans["content_id"]
-                            existing_answers_dict[c_id] = ans
-                            # 부분 평가가 아니라 전체 완료인지 검증 (JSONL이 쓰여졌으면 완료로 보는 것이 일반적이나 안전하게 체크)
-                            is_complete = True
-                            for q in ans.get("queries", []):
-                                answers = q.get("answers", {})
-                                for mode in ["video", "full", "part"]:
-                                    m_ans = answers.get(mode, "")
-                                    if not m_ans or str(m_ans).startswith("Error"):
-                                        is_complete = False
-                            if is_complete:
-                                processed_ids.add(c_id)
+                            c_id = ans.get("content_id")
+                            query = ans.get("query")
+                            if c_id and query:
+                                # 3개 모드에 유효한 답변이 모두 있으면 완료로 간주
+                                answers = ans.get("answers", {})
+                                is_complete = all(
+                                    answers.get(m) and not str(answers.get(m, "")).startswith("Error")
+                                    for m in ["video", "full", "part"]
+                                )
+                                if is_complete:
+                                    processed_pairs.add((c_id, query))
                         except json.JSONDecodeError:
                             pass
 
@@ -90,35 +91,23 @@ def main():
 
             new_data_processed = False
 
-            # Resume Plan 계산 및 출력
+            # Resume Plan 계산 및 출력 - (content_id, query) 쌍 단위
             pending_work = {}
             for item in query_list:
                 c_id = item["content_id"]
-                if c_id in processed_ids: continue
-                
-                existing_ans_data = existing_answers_dict.get(c_id, {})
-                existing_queries = existing_ans_data.get("queries", [])
-                existing_query_map = {q["query"]: q.get("answers", {}) for q in existing_queries}
-                
-                c_pending = {}
-                for q_str in item.get("queries", []):
-                    missing_modes = []
-                    existing_answers = existing_query_map.get(q_str, {})
-                    for m in ["video", "full", "part"]:
-                        ans = existing_answers.get(m, "")
-                        if not ans or not str(ans).strip() or str(ans).startswith("Error"):
-                            missing_modes.append(m)
-                    if missing_modes:
-                        c_pending[q_str] = missing_modes
+                c_pending = [
+                    q_str for q_str in item.get("queries", [])
+                    if (c_id, q_str) not in processed_pairs
+                ]
                 if c_pending:
                     pending_work[c_id] = c_pending
                     
             if pending_work:
                 print("\n[TODO] 작업 목록:")
-                for c_id, queries_dict in pending_work.items():
+                for c_id, queries in pending_work.items():
                     print(f"- content_id '{c_id}':")
-                    for q, modes in queries_dict.items():
-                        print(f"    - query \"{q}\" : {', '.join(modes)}")
+                    for q in queries:
+                        print(f"    - query \"{q}\"")
                 print("-" * 50)
 
             file_write_lock = threading.Lock()
@@ -129,6 +118,7 @@ def main():
                     return False
                     
                 queries = item["queries"]
+                pending_queries = pending_work[content_id]
                 
                 print(f"\nProcessing Content: '{content_id}'")
                 
@@ -140,6 +130,7 @@ def main():
                     "full": process_gcs_file(args.gs_bucket_name, content_id, mode="full"),
                     "part": process_gcs_file(args.gs_bucket_name, content_id, mode="part"),
                 }
+                ref_part = process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
 
                 print(f"[{content_id}] Initializing Generation models ({args.response_gen_model})...")
                 gen_chats = {}
@@ -147,26 +138,42 @@ def main():
                     gen_model = init_generation_model(mode=mode, model_name=args.response_gen_model)
                     gen_chats[mode] = start_chat_session(gen_model)
 
+                print(f"[{content_id}] Initializing Reference model ({args.reference_model}, Ref={'ON' if args.reference_use_ref else 'OFF'})...")
+                ref_model = init_reference_model(model_name=args.reference_model)
+                ref_chat = start_chat_session(ref_model)
+                is_first_ref_turn = True
+
                 is_first_turn_for_mode = {"video": True, "full": True, "part": True}
-                
-                existing_ans_data = existing_answers_dict.get(content_id, {})
-                existing_queries = existing_ans_data.get("queries", [])
-                
-                # Copy existing fully or partially completed queries so they are not lost
-                answers_dict = {"content_id": content_id, "queries": existing_queries.copy()}
-                existing_query_map = {q["query"]: q.get("answers", {}) for q in existing_queries}
 
                 for user_prompt in queries:
+                    # 이미 처리된 (content_id, query) 쌍이면 건너뜀
+                    if user_prompt not in pending_queries:
+                        print(f"[{content_id}] Processing Query: '{user_prompt}' -> already completed (skip)")
+                        continue
+
                     print(f"[{content_id}] Processing Query: '{user_prompt}'")
+
+                    # 1. Reference Answer 생성 (Pro + Video [+ Ref JSONL])
+                    ref_label = "Video+Ref" if args.reference_use_ref else "Video only"
+                    print(f"[{content_id}]  Generating [reference] ({ref_label})...")
+                    try:
+                        if is_first_ref_turn:
+                            ref_file_part = [parts["video"], ref_part] if args.reference_use_ref else [parts["video"]]
+                        else:
+                            ref_file_part = None
+                        ref_contents = (ref_file_part or []) + [user_prompt]
+                        ref_response = ref_chat.send_message(ref_contents)
+                        reference_answer = ref_response.text
+                        is_first_ref_turn = False
+                        print(f"[{content_id}]  Reference answer generated ({len(reference_answer)} chars)")
+                    except Exception as e:
+                        print(f"[{content_id}]  Generating [reference] Error: {e}")
+                        reference_answer = f"Error: {str(e)}"
+
+                    # 2. 3개 Mode 답변 생성 (기존 로직)
                     answers_for_query = {}
-                    existing_answers = existing_query_map.get(user_prompt, {})
                     
                     def generate_for_mode(mode):
-                        prev_ans = existing_answers.get(mode, "")
-                        if prev_ans and str(prev_ans).strip() and not str(prev_ans).startswith("Error"):
-                            print(f"[{content_id}]  [{mode}] already completed (skip)")
-                            return mode, prev_ans
-                        
                         print(f"[{content_id}]  Generating [{mode}]...")
                         file_part = parts[mode] if is_first_turn_for_mode[mode] else None
                         
@@ -185,19 +192,22 @@ def main():
                             answers_for_query[m] = text
                             is_first_turn_for_mode[m] = False
 
-                    answers_dict["queries"].append({
+                    # 쿼리 하나 끝나면 (content_id, query) 단위로 1줄 append
+                    # mode 순서 정렬 (video, full, part)
+                    ordered_answers = {m: answers_for_query[m] for m in ["video", "full", "part"] if m in answers_for_query}
+                    response_record = {
+                        "content_id": content_id,
                         "query": user_prompt,
-                        "answers": answers_for_query
-                    })
-                    
-                    # 쿼리 하나 끝날 때마다 JSONL로 Append 저장 (부분 저장)
+                        "reference": reference_answer,
+                        "answers": ordered_answers
+                    }
                     with file_write_lock:
                         with open(args.output_file, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(answers_dict, ensure_ascii=False) + "\n")
-                    print(f"[{content_id}]  -> Response 임시 저장 완료: {args.output_file}")
+                            f.write(json.dumps(response_record, ensure_ascii=False) + "\n")
+                    processed_pairs.add((content_id, user_prompt))
+                    print(f"[{content_id}]  -> Response 저장 완료: {args.output_file}")
                     print("-" * 50)
 
-                processed_ids.add(content_id)
                 return True
 
             for item in query_list:

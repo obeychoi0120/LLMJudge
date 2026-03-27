@@ -8,8 +8,8 @@ import vertexai
 import concurrent.futures
 import threading
 from gemini_api_utils import (
-    process_gcs_file, start_chat_session, 
-    evaluate_answer_session, init_judge_model, check_gcs_files_exist,
+    start_chat_session, 
+    evaluate_answer_session, init_judge_model,
     load_config, parse_json_response
 )
 
@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
-    parser.add_argument("--location", default="us-central1", help="GCP Location")
+    parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
 
     args = parser.parse_args()
@@ -46,9 +46,8 @@ def main():
 
     try:
         while True:
-            # 1. Output (진행률) 읽기
-            processed_ids = set()
-            existing_scores_dict = {}
+            # 1. Output (진행률) 읽기 - (content_id, query) 쌍 단위로 추적
+            processed_pairs = set()  # (content_id, query) 튜플
             if os.path.exists(args.output_file):
                 with open(args.output_file, "r", encoding="utf-8") as f:
                     for line in f:
@@ -56,22 +55,40 @@ def main():
                         try:
                             sc = json.loads(line)
                             c_id = sc.get("content_id")
-                            if c_id:
-                                existing_scores_dict[c_id] = sc
-                                processed_ids.add(c_id)
+                            query = sc.get("query")
+                            if c_id and query:
+                                processed_pairs.add((c_id, query))
                         except json.JSONDecodeError:
                             pass
 
-            # 2. Input 읽기
-            content_answers_dict = {}
+            # 2. Input 읽기 - 새 포맷: 각 줄 = {"content_id", "query", "answers"}
+            #    content_id별로 queries 리스트로 재그룹핑
+            content_answers_dict = {}  # content_id -> {"content_id": ..., "queries": [...]}
+            content_query_order = {}   # content_id -> [query, ...] (순서 보존)
             if os.path.exists(args.answers_file):
                 with open(args.answers_file, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             try:
                                 data = json.loads(line)
-                                if "content_id" in data:
-                                    content_answers_dict[data["content_id"]] = data
+                                c_id = data.get("content_id")
+                                query = data.get("query")
+                                answers = data.get("answers")
+                                if c_id and query and answers:
+                                    # 새 포맷: (content_id, query) 단위 레코드
+                                    if c_id not in content_answers_dict:
+                                        content_answers_dict[c_id] = {"content_id": c_id, "queries": []}
+                                        content_query_order[c_id] = []
+                                    if query not in content_query_order[c_id]:
+                                        content_query_order[c_id].append(query)
+                                        content_answers_dict[c_id]["queries"].append({
+                                            "query": query, 
+                                            "reference": data.get("reference", ""),
+                                            "answers": answers
+                                        })
+                                elif c_id and "queries" in data:
+                                    # 구 포맷 호환: {"content_id", "queries": [...]} 단위 레코드
+                                    content_answers_dict[c_id] = data
                             except json.JSONDecodeError:
                                 pass
                 content_answers_list = list(content_answers_dict.values())
@@ -83,44 +100,31 @@ def main():
 
             new_data_processed = False
 
-            # Resume Plan 계산 및 출력
+            # Resume Plan 계산 및 출력 - (content_id, query) 쌍 단위
             pending_work = {}
             for content_answers in content_answers_list:
                 c_id = content_answers["content_id"]
-                if c_id in processed_ids: continue
                 
-                existing_sc_data = existing_scores_dict.get(c_id, {})
-                old_content_scores = existing_sc_data.get("scores", [])
-                existing_score_map = {}
-                for entry in old_content_scores:
-                    q_text = entry.get("query")
-                    m = entry.get("mode")
-                    judge_data = entry.get("judge", {})
-                    if "raw_response" not in judge_data and "scores" in judge_data:
-                        existing_score_map.setdefault(q_text, {})[m] = entry
-                
-                c_pending = {}
+                c_pending = []
                 for query_item in content_answers.get("queries", []):
                     q_str = query_item["query"]
                     answers = query_item.get("answers", {})
-                    missing_modes = []
-                    for m in ["video", "full", "part"]:
-                        gen_ans = answers.get(m)
-                        if not gen_ans or not str(gen_ans).strip() or str(gen_ans).startswith("Error"):
-                            continue # 평가할 답변이 없으면 우선 건너뜀
-                        if m not in existing_score_map.get(q_str, {}):
-                            missing_modes.append(m)
-                    if missing_modes:
-                        c_pending[q_str] = missing_modes
+                    # 평가 가능한 유효 답변이 하나라도 있고, 아직 처리 안 된 쌍이면 pending
+                    has_valid_answer = any(
+                        answers.get(m) and not str(answers.get(m, "")).startswith("Error")
+                        for m in ["video", "full", "part"]
+                    )
+                    if has_valid_answer and (c_id, q_str) not in processed_pairs:
+                        c_pending.append(q_str)
                 if c_pending:
                     pending_work[c_id] = c_pending
                     
             if pending_work:
                 print("\n[TODO] 작업 목록:")
-                for c_id, queries_dict in pending_work.items():
+                for c_id, queries in pending_work.items():
                     print(f"- content_id '{c_id}':")
-                    for q, modes in queries_dict.items():
-                        print(f"    - query \"{q}\" : {', '.join(modes)}")
+                    for q in queries:
+                        print(f"    - query \"{q}\"")
                 print("-" * 50)
 
             file_write_lock = threading.Lock()
@@ -131,77 +135,51 @@ def main():
                     return False
                     
                 print(f"\nEvaluating Content: '{content_id}'")
-                
-                if not check_gcs_files_exist(args.gs_bucket_name, content_id):
-                    return False
-                    
-                video_part = process_gcs_file(args.gs_bucket_name, content_id, mode="video")
-                gt_part = process_gcs_file(args.gs_bucket_name, content_id, mode="gt")
 
-                print(f"[{content_id}] Initializing Judge model ({args.judge_model})...")
-                judge_model = init_judge_model(model_name=args.judge_model)
+                pending_queries = pending_work[content_id]
                 
-                judge_chats = {}
-                for mode in ["video", "full", "part"]:
-                    judge_chats[mode] = start_chat_session(judge_model)
-                
-                is_first_turn_for_mode = {"video": True, "full": True, "part": True}
-                
-                # BUGFIX: 기존에는 루프 밖에서 스코어를 읽어버려 여러개의 content_id 처리 시 앞쪽의 스코어 맵이 덮어써지는 문제가 있었음
-                # process_item 단위(content_id 단위)에서 기존 스코어를 다시 가져옴
-                existing_sc_data = existing_scores_dict.get(content_id, {})
-                old_content_scores = existing_sc_data.get("scores", [])
-                item_existing_score_map = {}
-                for entry in old_content_scores:
-                    q_text = entry.get("query")
-                    m = entry.get("mode")
-                    judge_data = entry.get("judge", {})
-                    if "raw_response" not in judge_data and "scores" in judge_data:
-                        item_existing_score_map.setdefault(q_text, {})[m] = entry
-
-                # 기존에 평가가 완료되었던 쿼리 점수들이 있다면 먼저 복사해서 누적합니다
-                content_scores = []
-                if old_content_scores:
-                    for entry in old_content_scores:
-                        judge_data = entry.get("judge", {})
-                        if "raw_response" not in judge_data and "scores" in judge_data:
-                            content_scores.append(entry)
-                            
-                scores_dict = {"content_id": content_id, "scores": content_scores}
-
                 for query_item in content_answers.get("queries", []):
                     user_prompt = query_item["query"]
                     answers = query_item.get("answers", {})
+                    reference_answer = query_item.get("reference", "")
+                    
+                    # 이미 처리된 (content_id, query) 쌍이면 건너뜀
+                    if user_prompt not in pending_queries:
+                        print(f"[{content_id}] Scoring Query: '{user_prompt[:30]}...' -> already completed (skip)")
+                        continue
                     
                     print(f"[{content_id}] Scoring Query: '{user_prompt[:30]}...'")
+                    
+                    if not reference_answer or str(reference_answer).startswith("Error"):
+                        print(f"[{content_id}]  [Warning] Reference answer가 없거나 오류입니다. 이 쿼리를 건너뜁니다.")
+                        continue
+                    
+                    judge_results = {}  # mode -> score_dict
                     
                     def judge_for_mode(mode):
                         generated_answer = answers.get(mode)
                         if not generated_answer or not str(generated_answer).strip() or str(generated_answer).startswith("Error"):
                             print(f"[{content_id}]  Evaluating [{mode}] skipped (no valid answer).")
-                            return None
-                            
-                        if mode in item_existing_score_map.get(user_prompt, {}):
-                            print(f"[{content_id}]  Evaluating [{mode}] already completed (skip).")
-                            return None
+                            return mode, None
                         
                         print(f"[{content_id}]  Evaluating [{mode}]...")
-                        time.sleep(1) # 동시 호출 시 약간의 지연
+                        time.sleep(1)
+                        
+                        # 독립 세션: (query, mode)별 완전 격리
+                        judge_model = init_judge_model(model_name=args.judge_model)
+                        judge_chat = start_chat_session(judge_model)
                         
                         max_parse_retries = 3
                         parse_success = False
-                        current_is_first = is_first_turn_for_mode[mode]
                         score_dict = None
                         
                         for attempt in range(max_parse_retries):
                             try:
                                 score_text = evaluate_answer_session(
-                                    judge_chat=judge_chats[mode], 
+                                    judge_chat=judge_chat, 
                                     user_prompt=user_prompt, 
                                     generated_answer=generated_answer,
-                                    is_first_turn=current_is_first,
-                                    video_part=video_part,
-                                    gt_json_part=gt_part
+                                    reference_answer=reference_answer
                                 )
                                 
                                 score_dict = parse_json_response(score_text)
@@ -211,7 +189,6 @@ def main():
                             except json.JSONDecodeError:
                                 print(f"[{content_id}]  [Warning] JSON 파싱 실패 (시도 {attempt+1}/{max_parse_retries}). 잠시 후 재시도합니다.")
                                 print(f"[{content_id}]  [Raw Text]: {score_text[:100]}...")
-                                current_is_first = False
                                 time.sleep(2)
                                 
                             except Exception as e:
@@ -222,28 +199,31 @@ def main():
                             print(f"[{content_id}]  [Error] JSON 파싱 최종 실패.")
                             score_dict = {"raw_response": score_text if 'score_text' in locals() else "Error"}
                             
-                        return {
-                            "query": user_prompt,
-                            "mode": mode,
-                            "judge": score_dict 
-                        }
+                        return mode, score_dict
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as mode_executor:
                         futures = [mode_executor.submit(judge_for_mode, m) for m in ["video", "full", "part"]]
                         for future in concurrent.futures.as_completed(futures):
-                            score_entry = future.result()
-                            if score_entry:
-                                content_scores.append(score_entry)
-                                is_first_turn_for_mode[score_entry["mode"]] = False
+                            mode, score_dict = future.result()
+                            if score_dict is not None:
+                                judge_results[mode] = score_dict
                     
-                    # 쿼리 한 개 평가가 끝날 때마다 JSONL로 Append 저장 (부분 저장)
-                    with file_write_lock:
-                        with open(args.output_file, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(scores_dict, ensure_ascii=False) + "\n")
-                    print(f"[{content_id}]  -> Score 임시 저장 완료: {args.output_file}")
+                    # 쿼리 한 개 평가가 끝나면 (content_id, query) 단위로 1줄 append
+                    if judge_results:
+                        # mode 순서 정렬 (video, full, part)
+                        ordered_judge = {m: judge_results[m] for m in ["video", "full", "part"] if m in judge_results}
+                        score_record = {
+                            "content_id": content_id,
+                            "query": user_prompt,
+                            "judge": ordered_judge
+                        }
+                        with file_write_lock:
+                            with open(args.output_file, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(score_record, ensure_ascii=False) + "\n")
+                        processed_pairs.add((content_id, user_prompt))
+                    print(f"[{content_id}]  -> Score 저장 완료: {args.output_file}")
                     print("-" * 50)
 
-                processed_ids.add(content_id)
                 return True
 
             for content_answers in content_answers_list:

@@ -4,12 +4,15 @@ import argparse
 import json
 import vertexai
 from vertexai.generative_models import GenerativeModel
-from gemini_api_utils import process_gcs_file, check_gcs_files_exist, SAFETY_SETTINGS, load_config, parse_json_response
+from gemini_api_utils import (
+    process_gcs_file, check_gcs_files_exist, SAFETY_SETTINGS,
+    load_config, parse_json_response, _retry_api_call,
+)
 
 def init_query_generator_model(model_name):
     system_prompt = """
-    당신은 영상 콘텐츠와 정답 메타데이터(GT JSONL)를 분석하여 해당 영상을 시청한 일반 사용자가 던질 법한 질문들을 자연스럽게 생성하는 전문가입니다.
-    첨부된 파일은 원본 비디오 영상과 영상의 핵심 정답(GT) 내용이 포함된 JSONL 파일입니다.
+    당신은 영상 콘텐츠와 Ref 메타데이터(JSONL)를 분석하여 해당 영상을 시청한 일반 사용자가 던질 법한 질문들을 자연스럽게 생성하는 전문가입니다.
+    첨부된 파일은 원본 비디오 영상과 영상의 핵심 내용이 포함된 JSONL 파일입니다.
 
     [지시사항]
     1. 이 영상을 시청하는 일반인이 실제로 물어볼 만한 자연스러운 질문을 5~10개 생성해 주세요.
@@ -34,22 +37,13 @@ def init_query_generator_model(model_name):
         safety_settings=SAFETY_SETTINGS
     )
 
-def generate_queries_for_content(model, video_part, gt_part, max_retries=4, base_delay=3):
-    prompt = f"제공된 영상 콘텐츠에 대해, 포괄적인 흐름을 묻는 질문과 구체적인 핵심을 묻는 질문을 섞어, 실제 시청자가 할 법한 질문 5-10개를 캐주얼한 어투로 생성해 주세요."
-    contents = [video_part, gt_part, prompt]
-    
-    for attempt in range(max_retries):
-        try:
-            response = model.generate_content(contents)
-            return response.text
-        except Exception as e:
-            if attempt == max_retries - 1:
-                print(f"      [Query Generation 마지막 시도 실패] {e}")
-                raise e
-            sleep_time = base_delay * (2 ** attempt)
-            print(f"      [Query Generation 오류] {e}")
-            print(f"      -> {sleep_time}초 후 재시도합니다... ({attempt+1}/{max_retries})")
-            time.sleep(sleep_time)
+def generate_queries_for_content(model, video_part, ref_part):
+    prompt = "제공된 영상 콘텐츠에 대해, 포괄적인 흐름을 묻는 질문과 구체적인 핵심을 묻는 질문을 섞어, 실제 시청자가 할 법한 질문 5-10개를 캐주얼한 어투로 생성해 주세요."
+    contents = [video_part, ref_part, prompt]
+    return _retry_api_call(
+        lambda: model.generate_content(contents).text,
+        label="Query Generation",
+    )
 
 def main():
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
@@ -58,21 +52,18 @@ def main():
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="질문 생성에 사용할 모델명")
-    parser.add_argument("--location", default="us-central1", help="GCP Location")
+    parser.add_argument("--location", default="global", help="GCP Location")
     
     args = parser.parse_args()
     
     args = load_config(args)
 
-    project_id = args.gcp_project_id
-    gs_bucket_name = args.gs_bucket_name
-    
-    if not project_id or not gs_bucket_name:
+    if not args.gcp_project_id or not args.gs_bucket_name:
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (config.json을 생성하세요)")
         return
 
-    print(f"Initializing Gemini client for project: {project_id}, location: {args.location}...")
-    vertexai.init(project=project_id, location=args.location)
+    print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
+    vertexai.init(project=args.gcp_project_id, location=args.location)
     
     print(f"Initializing Query Generator Model ({args.query_gen_model})...")
     generator_model = init_query_generator_model(model_name=args.query_gen_model)
@@ -84,7 +75,6 @@ def main():
     with open(args.input_file, "r", encoding="utf-8") as f:
         input_list = json.load(f)
         
-    output_list = []
     processed_ids = set()
     if os.path.exists(args.output_file):
         with open(args.output_file, "r", encoding="utf-8") as f:
@@ -117,18 +107,18 @@ def main():
                 
             print(f"\nProcessing Content: '{content_id}'")
             
-            if not check_gcs_files_exist(gs_bucket_name, content_id):
+            if not check_gcs_files_exist(args.gs_bucket_name, content_id):
                 continue
                 
-            # Use the video and gt files
-            print(f"Preparing GCS files (mode: video, gt) for {content_id}...")
-            video_part = process_gcs_file(gs_bucket_name, content_id, mode="video")
-            gt_part = process_gcs_file(gs_bucket_name, content_id, mode="gt")
+            # Use the video and ref files
+            print(f"Preparing GCS files (mode: video, ref) for {content_id}...")
+            video_part = process_gcs_file(args.gs_bucket_name, content_id, mode="video")
+            ref_part = process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
             
             print("Generating queries...")
             try:
                 time.sleep(2) # API Rate Limit 방지
-                response_text = generate_queries_for_content(generator_model, video_part, gt_part)
+                response_text = generate_queries_for_content(generator_model, video_part, ref_part)
                 generated_queries = parse_json_response(response_text)
                 print(f"Successfully generated {len(generated_queries)} queries for '{content_id}':")
                 

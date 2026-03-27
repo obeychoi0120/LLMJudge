@@ -13,9 +13,12 @@ def main():
     parser.add_argument("--scores_file", default="output/scores.jsonl", help="최종 평가 결과를 저장할 파일 경로")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--location", default="us-central1", help="GCP Location (Set to 'global' for gemini-3-pro-preview)")
+    parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="사용할 질문 생성 모델명")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 답변 생성 모델명")
+    parser.add_argument("--reference_model", default="gemini-2.5-pro", help="Reference Answer 생성 모델명")
+    parser.add_argument("--no-reference-ref", dest="reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
+    parser.set_defaults(reference_use_ref=True)
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
     parser.add_argument("--generate-query", action="store_true", help="질문 자동 생성을 우선 수행")
     parser.add_argument("--skip-response", action="store_true", help="답변 생성을 건너뛰기")
@@ -94,8 +97,12 @@ def main():
             "--json_file", current_input_file,
             "--output_file", args.responses_file,
             "--gs_bucket_name", args.gs_bucket_name,
-            "--response_gen_model", args.response_gen_model
-        ] + common_project_args
+            "--response_gen_model", args.response_gen_model,
+            "--reference_model", args.reference_model
+        ]
+        if not args.reference_use_ref:
+            cmd.append("--no-reference-ref")
+        cmd += common_project_args
         subprocess.run(cmd, check=True)
         
     if not args.skip_judge:

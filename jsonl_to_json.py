@@ -59,57 +59,79 @@ def main():
             content = content.replace('}{', '}\n{')
             lines = content.split('\n')
             
+            # responses.jsonl / scores.jsonl 여부 판단: 새 포맷은 "query" 키를 최상위로 보유
+            is_scores_file = "scores" in base_name
+            is_responses_file = "responses" in base_name
+            is_flat_format = is_scores_file or is_responses_file  # (content_id, query) 단위 포맷
+            
             for line in lines:
                 if line.strip():
                     try:
                         obj = json.loads(line.strip())
                         c_id = obj.get("content_id")
                         if c_id:
-                            # 딕셔너리로 덮어쓰기하여 가장 최신(마지막)의 정상 업데이트만 유지합니다.
-                            # 즉, 중간에 Error로 기록된 내역이 있더라도 나중에 Resume을 통해 정상 덮어써졌다면
-                            # 최종 파일에는 정상본만 남게 됩니다.
-                            data_dict[c_id] = obj
+                            if is_flat_format:
+                                # 새 포맷: 키 = (content_id, query)
+                                query = obj.get("query")
+                                if query:
+                                    data_dict[(c_id, query)] = obj
+                                elif is_scores_file:
+                                    # 구 포맷(scores content_id 단위) 마이그레이션 보조
+                                    for entry in obj.get("scores", []):
+                                        q = entry.get("query")
+                                        m = entry.get("mode")
+                                        j = entry.get("judge")
+                                        if q and m and j:
+                                            key = (c_id, q)
+                                            if key not in data_dict:
+                                                data_dict[key] = {"content_id": c_id, "query": q, "judge": {}}
+                                            data_dict[key]["judge"][m] = j
+                                elif is_responses_file:
+                                    # 구 포맷(responses content_id 단위) 마이그레이션 보조
+                                    for q_entry in obj.get("queries", []):
+                                        q = q_entry.get("query")
+                                        ans = q_entry.get("answers")
+                                        if q and ans:
+                                            data_dict[(c_id, q)] = {"content_id": c_id, "query": q, "answers": ans}
+                            else:
+                                # 일반 JSONL (query_generated 등): content_id 단위로 덮어쓰기
+                                data_dict[c_id] = obj
                     except json.JSONDecodeError:
                         error_count += 1
             
             data = list(data_dict.values())
             
-            # scores 파일일 경우, query를 기준으로 mode들을 묶는 전처리 수행
-            if "scores.jsonl" in jsonl_path or "scores" in base_name:
-                reformatted_data = []
+            # flat 포맷 파일(responses, scores)일 경우, (content_id, query) 레코드를 content_id별로 재구성
+            if is_flat_format:
+                content_query_map = {}   # content_id -> [query, ...] (insertion order)
+                content_data_map = {}    # content_id -> {query -> payload dict}
+                
+                data_key = "judge" if is_scores_file else "answers"
+                
                 for item in data:
                     c_id = item.get("content_id")
-                    original_scores = item.get("scores", [])
-                    
-                    # 쿼리별로 모드를 모음
-                    query_map = {}
-                    for entry in original_scores:
-                        q = entry.get("query")
-                        m = entry.get("mode")
-                        j = entry.get("judge")
-                        if not q: continue
-                        
-                        if q not in query_map:
-                            query_map[q] = {}
-                        query_map[q][m] = j
-                        
-                    # 최종 딕셔너리 구조 생성 시 지정된 mode 순서 적용
+                    query = item.get("query")
+                    if not c_id or not query:
+                        continue
+                    if c_id not in content_query_map:
+                        content_query_map[c_id] = []
+                        content_data_map[c_id] = {}
+                    if query not in content_data_map[c_id]:
+                        content_query_map[c_id].append(query)
+                    content_data_map[c_id][query] = item.get(data_key, {})
+                
+                desired_mode_order = ["video", "full", "part"]
+                reformatted_data = []
+                for c_id in content_query_map:
                     queries_list = []
-                    desired_order = ["video", "full", "part"]
-                    for q, s in query_map.items():
-                        ordered_scores = {}
-                        for m_key in desired_order:
-                            if m_key in s:
-                                ordered_scores[m_key] = s[m_key]
-                        for m_key, val in s.items():
-                            if m_key not in desired_order:
-                                ordered_scores[m_key] = val
-                        queries_list.append({"query": q, "scores": ordered_scores})
-                        
-                    reformatted_data.append({
-                        "content_id": c_id,
-                        "queries": queries_list
-                    })
+                    for q in content_query_map[c_id]:
+                        raw = content_data_map[c_id][q]
+                        ordered = {m: raw[m] for m in desired_mode_order if m in raw}
+                        for m, val in raw.items():
+                            if m not in desired_mode_order:
+                                ordered[m] = val
+                        queries_list.append({"query": q, data_key: ordered})
+                    reformatted_data.append({"content_id": c_id, "queries": queries_list})
                 data = reformatted_data
             
             # reference_order(입력 메타데이터) 순서에 맞춰서 최종 정렬
