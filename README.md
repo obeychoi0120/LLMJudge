@@ -18,22 +18,22 @@ flowchart TB
     end
 
     subgraph STAGE0["0. Query Generation - generate_query.py (Single-turn)"]
-        QG["Pro + Video + Ref JSONL"]
+        QG["(Pro) Generated Queries\nVideo + Ref JSONL"]
     end
 
     subgraph STAGE1["1. Response Generation - generate_response.py (Multi-turn)"]
         direction LR
-        REF["Reference\nPro + Video + Ref JSONL"]
-        MODE_V["Video Response\nFlash + MP4"]
-        MODE_F["Full Response\nFlash + Full JSONL"]
-        MODE_P["Part Response\nFlash + Part JSONL"]
+        REF["(Pro) Reference\nVideo + Ref JSONL"]
+        MODE_V["(Flash) Video Response \nVideo + System Prompt1\n+ Generated Query"]
+        MODE_F["(Flash) Full Meta Response\nFull JSONL + System Prompt2\n+ Generated Query"]
+        MODE_P["(Flash) Part Meta Response\nPart JSONL + System Prompt3\n+ Generated Query"]
     end 
 
     subgraph STAGE2["2. Judging - judge_response.py (Single-turn)"]
         direction LR
-        J_V["Video 평가\nPro + Reference + Response"]
-        J_F["Full 평가\nPro + Reference + Response"]
-        J_P["Part 평가\nPro + Reference + Response"]   
+        J_V["(Pro) Video 평가\nReference + Video Response"]
+        J_F["(Pro) Full Meta 평가\nReference + Full Meta Response"]
+        J_P["(Pro) Part Meta 평가\nReference + Part Meta Response"]   
     end
 
     subgraph OUTPUT["Output"]
