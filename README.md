@@ -14,7 +14,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 flowchart TB
     subgraph INPUT["Input"]
         CL["content_list.json"]
-        GCS["GCS Bucket"]
+        GCS["GCS Bucket\n\nVideo\nFull JSONL\nPart JSONL\nRef JSONL"]
     end
 
     subgraph STAGE0["0. Query Generation - generate_query.py (Single-turn)"]
