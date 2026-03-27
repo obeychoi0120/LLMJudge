@@ -18,22 +18,22 @@ flowchart TB
     end
 
     subgraph STAGE0["0. Query Generation - generate_query.py (Single-turn)"]
-        QG["(Pro) Generated Queries\nVideo + Ref JSONL"]
+        QG["(Pro) Generated Queries\nVideo\n+ Ref JSONL"]
     end
 
     subgraph STAGE1["1. Response Generation - generate_response.py (Multi-turn)"]
         direction LR
-        REF["(Pro) Reference\nVideo + Ref JSONL"]
-        MODE_V["(Flash) Video Response \nVideo + System Prompt1\n+ Generated Query"]
-        MODE_F["(Flash) Full Meta Response\nFull JSONL + System Prompt2\n+ Generated Query"]
-        MODE_P["(Flash) Part Meta Response\nPart JSONL + System Prompt3\n+ Generated Query"]
+        REF["(Pro) Reference\nVideo\n+ Ref JSONL"]
+        MODE_V["(Flash) Video Response \nVideo\n+ System Prompt1\n+ Generated Query"]
+        MODE_F["(Flash) Full Meta Response\nFull JSONL\n+ System Prompt2\n+ Generated Query"]
+        MODE_P["(Flash) Part Meta Response\nPart JSONL\n+ System Prompt3\n+ Generated Query"]
     end 
 
     subgraph STAGE2["2. Judging - judge_response.py (Single-turn)"]
         direction LR
-        J_V["(Pro) Video 평가\nReference + Video Response"]
-        J_F["(Pro) Full Meta 평가\nReference + Full Meta Response"]
-        J_P["(Pro) Part Meta 평가\nReference + Part Meta Response"]   
+        J_V["(Pro) Video 평가\nReference\n+ Video Response"]
+        J_F["(Pro) Full Meta 평가\nReference\n+ Full Meta Response"]
+        J_P["(Pro) Part Meta 평가\nReference\n+ Part Meta Response"]   
     end
 
     subgraph OUTPUT["Output"]
