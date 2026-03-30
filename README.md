@@ -11,74 +11,79 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 ## 🔄 파이프라인 흐름
 
 ```mermaid
-flowchart LR
-    subgraph INPUT["Input"]
-        direction TB
-        CL["content_list.json"]
-        GCS["**GCS Bucket**<br/>Video<br/>Full JSONL<br/>Part JSONL<br/>Ref JSONL"]
-    end
-
-    subgraph STAGE0["Gen. Query (Pro, Single-turn)"]
-        direction TB
-        QG["**Queries**<br/>Video + Ref JSONL"]
-    end
-
-    subgraph STAGE1["Gen. Response (Hybrid)"]
+flowchart TD
+    subgraph INPUT["1. Input Data"]
         direction LR
-        REF["**(Pro) Reference**<br/>(Multi-turn)"]
-        MODE_V["**(Flash) Video**<br/>(Multi-turn)"]
-        MODE_F["**(Flash) Full Meta**<br/>(Single-turn)"]
-        MODE_P["**(Flash) Part Meta**<br/>(Single-turn)"]
+        CL["**content_list.json**<br/>Content ID 목록"]
+        GCS["GCS Bucket Asset<br/>Video, Full/Part/Ref Meta"]
     end
 
-    subgraph STAGE2["Judge (Pro, Single-turn)"]
-        direction LR
-        J_V["**Video 평가**<br/>Ref + Video Response"]
-        J_F["**Full Meta 평가**<br/>Ref + Full Response"]
-        J_P["**Part Meta 평가**<br/>Ref + Part Response"]
-    end
-
-    subgraph OUTPUT["Output"]
+    subgraph STEP1["2. Query Generation"]
         direction TB
-        QGO["query_generated.jsonl<br/>query_generated.json"]
-        REF_O["references.jsonl"]
-        RSP["responses.jsonl<br/>responses.json"]
-        SCR["scores.jsonl<br/>scores.json"]
+        Q_SCRIPT["**generate_query.py**"]
+        Q_OUT["**query_generated.jsonl**<br/>질문 목록"]
     end
 
-    CL --> QG
-    GCS --> QG
-    QG --> QGO
-    QGO --> STAGE1
-    GCS --> STAGE1
-    STAGE1 --> REF_O
-    STAGE1 --> RSP
-    RSP --> STAGE2
-    REF_O --> STAGE2
-    STAGE2 --> SCR
-    SCR --> JSON
+    subgraph STEP2["3. Response Generation"]
+        direction TB
+        R_SCRIPT["**generate_response.py**"]
+        R_OUT1["**references.jsonl**<br/>기준 정답"]
+        R_OUT2["**responses.jsonl**<br/>3개 모드 답변"]
+    end
+
+    subgraph STEP3["4. Judge & Scoring"]
+        direction TB
+        J_SCRIPT["**judge_response.py**"]
+        J_OUT["**scores.jsonl**<br/>평가 점수 및 사유"]
+    end
+
+    subgraph STEP4["5. Post-processing"]
+        direction TB
+        A_SCRIPT["**jsonl_to_json.py**<br/>**aggregate_scores.py**"]
+        A_OUT["**최종 JSON Files**<br/>references.json<br/>responses.json<br/>scores.json<br/>(최종 통계) scores_aggregated.json"]
+    end
+
+    CL --> Q_SCRIPT
+    GCS -.-> Q_SCRIPT
+    Q_SCRIPT --> Q_OUT
+    
+    Q_OUT --> R_SCRIPT
+    GCS -.-> R_SCRIPT
+    R_SCRIPT --> R_OUT1
+    R_SCRIPT --> R_OUT2
+    
+    R_OUT1 --> J_SCRIPT
+    R_OUT2 --> J_SCRIPT
+    J_SCRIPT --> J_OUT
+    
+    J_OUT --> A_SCRIPT
+    Q_OUT --> A_SCRIPT
+    R_OUT1 --> A_SCRIPT
+    R_OUT2 --> A_SCRIPT
+    A_SCRIPT --> A_OUT
 ```
 
 > **Note**: Judge 단계에서는 비디오를 재전송하지 않고, Stage 1에서 생성된 **Reference Answer(텍스트)** 만을 기준으로 각 모드 답변을 비교 평가합니다.
 
 ### 세션 구조 상세
 
-| 단계 | 세션 구조 | 비고 |
-|------|----------|------|
-| Query 생성 | Content 당 1회 호출 (`generate_content`) | Single-turn |
-| Reference 생성 | Content 당 1 Chat Session, 쿼리별 Multi-turn | 첫 턴에 Video+Ref JSONL 전송 |
-| Response 생성 | Mode별 1 Chat Session × 3, 쿼리별 Multi-turn | 첫 턴에 파일 전송, 이후 텍스트만 |
-| Judge 평가 | **(query, mode)별 독립 세션** | 이전 평가 history 영향 없음 |
+| 단계 | 입력 | 세션 구조 |
+|------|------|----------|
+| **Query 생성** | Video + Ref Meta | Single-turn |
+| **Reference 생성** | Video + Ref Meta | 첫 턴에 데이터 전송 이후<br> 쿼리별 Multi-turn |
+| **Response 생성** | Video 또는 Meta | Video: Multi-turn </br> Full/Part: Single-turn |
+| **Response 평가** | Reference + Mode별 Response | Single-turn |
+
 
 ## ✨ 주요 특징
 
-- **Reference Answer 기반 평가**: Pro 모델이 원본 비디오 + Ref 메타데이터를 참조하여 **기준 정답을 1회 생성**. Judge 모델은 이 텍스트만으로 비교 평가 → **Judge 단계 비디오 토큰 100% 제거**.
+- **Reference Answer 기반 평가**: Pro 모델이 원본 비디오 + Ref 메타데이터를 참조하여 **기준 정답을 1회 생성**. Judge 모델은 이 텍스트만으로 비교 평가 → Judge 단계에서 비디오 토큰 사용 없음.
 - **다중 모드(Multi-mode) 추론**:
-  - `video`: 원본 비디오 파일(.mp4)만 제공
-  - `full`: 오디오 분류 + 음성 인식 + OCR + 행동 묘사(Description) 포함 JSONL
-  - `part`: 행동 묘사를 제외한 메타데이터 JSONL
-- **쿼리 단위 Resume**: (content_id, query) 단위로 실시간 JSONL Append. 중단 후 재실행 시 잔여 작업만 처리.
-- **재시도(Exponential Backoff)**: API Rate Limit 등 일시적 오류에 대해 자동 복구.
+  - `Video`: 원본 비디오 파일(.mp4)만 제공
+  - `Full`: 오디오 분류 + ASR + OCR + 행동 묘사(Description) 포함 JSONL
+  - `Part`: Full에서 행동 묘사를 제외한 JSONL
+- **쿼리 단위 Resume**: (content_id, query) 단위로 실시간 답변 Append. 중단 후 재실행 시 잔여 작업만 처리.
+- **재시도 로직 (Retry Loop for 429/5xx)**: API Rate Limit 등 일시적 오류 발생 시 10초 간격으로 성공할 때까지 무한 재시도하여 중단 없는 작업 수행 (치명적 오류는 즉시 중지).
 - **비동기 병렬 파이프라인 (`--continuous`)**: 각 단계를 독립 터미널에서 동시에 실행하여 이전 단계 출력을 실시간 모니터링.
 
 ## 🗂 파일 구조
@@ -94,10 +99,11 @@ LLMJudge/
 ├── config.json                 # 환경 설정 (GCP, 모델명 등)
 ├── content_list.json           # 평가 대상 Content ID 목록
 └── output/                     # 파이프라인 결과 저장
-    ├── query_generated.jsonl   # 0. 생성된 질문
-    ├── references.jsonl        # 1-A. Reference 답변 (기준 정답)
-    ├── responses.jsonl         # 1-B. 3모드 답변 (평가 대상)
-    └── scores.jsonl            # 2️. 최종 평가 점수
+    ├── query_generated.jsonl   # 2. 생성된 질문
+    ├── references.jsonl        # 3-A. Reference 답변 (기준 정답)
+    ├── responses.jsonl         # 3-B. 3개 모드 답변 (평가 대상)
+    ├── scores.jsonl            # 4. 최종 평가 점수
+    └── scores_aggregated.json  # 5. 비디오별/전체 통계 집계
 ```
 
 ## 🚀 설치 및 사전 준비
@@ -112,22 +118,39 @@ LLMJudge/
    gcloud auth application-default login
    ```
 
-3. **설정 파일 생성**
-   ```bash
-   cp sample_config.json config.json
-   # config.json에서 본인의 GCP Project ID, Bucket Name 등 수정
-   ```
-
-4. **GCS 데이터 구조**
-   컨텐츠 하나 당 4개의 파일이 필요합니다:
+3. **GCS 데이터 구조**
+   
+   컨텐츠 하나 당 4개의 파일이 필요합니다.
    ```text
-   gs://{BUCKET}/video_540p/{content_id}_540p.mp4
-   gs://{BUCKET}/jsonl/{content_id}_15s_Full.jsonl
-   gs://{BUCKET}/jsonl/{content_id}_15s_Part.jsonl
-   gs://{BUCKET}/jsonl/{content_id}_15s_Ref.jsonl
+   gs://{gs_bucket_name}/video_540p/{content_id}_540p.mp4
+   gs://{gs_bucket_name}/jsonl/{content_id}_15s_Full.jsonl
+   gs://{gs_bucket_name}/jsonl/{content_id}_15s_Part.jsonl
+   gs://{gs_bucket_name}/jsonl/{content_id}_15s_Ref.jsonl
    ```
 
 ## 🎯 실행 방법
+
+### 통합 설정 (`config.json` 생성하기)
+`sample_config.json`을 복사하여 사용하세요.
+
+```json
+{
+  "gcp_project_id": "your-gcp-project-id",
+  "gs_bucket_name": "your-gcs-bucket-name",
+  "location": "global",                         # 3.1 Pro는 global만 가능
+  "query_gen_model": "gemini-3.1-pro-preview",  # 질문 생성 모델
+  "response_gen_model": "gemini-2.5-flash",     # 답변 생성 모델
+  "reference_model": "gemini-3.1-pro-preview",  # 기준 답변 생성 모델
+  "judge_model": "gemini-3.1-pro-preview",      # 평가 모델
+  "reference_use_ref": true                     # 기준 답변 생성 시 Ref Meta 참조 여부
+}
+```
+- CLI Arguments: 항상 `config.json`보다 우선 적용됩니다.
+
+  | 옵션 | 설명 |
+  |------|------|
+  | `--skip-response` | 답변 생성 단계 건너뛰기 |
+  | `--skip-judge` | 평가 단계 건너뛰기 |
 
 ### A. 일괄 실행 (순차 진행)
 
@@ -153,41 +176,19 @@ python generate_response.py --continuous
 python judge_response.py --continuous
 ```
 
-### 주요 옵션
+### 분석용 JSON 및 통계 집계
 
-| 옵션 | 설명 | 기본값 |
-|------|------|--------|
-| `--reference_model` | Reference Answer 생성 모델 | `gemini-2.5-pro` |
-| `--response_gen_model` | 3모드 답변 생성 모델 | `gemini-2.5-flash` |
-| `--judge_model` | 평가 모델 | `gemini-2.5-pro` |
-| `--no-reference-ref` | Reference 생성 시 Ref JSONL 미참조 (Video만 사용) | OFF (Ref 참조) |
-| `--skip-response` | 답변 생성 단계 건너뛰기 | — |
-| `--skip-judge` | 평가 단계 건너뛰기 | — |
-
-### `config.json` 통합 설정
-
-```json
-{
-  "gcp_project_id": "your-project-id",
-  "gs_bucket_name": "your-bucket-name",
-  "location": "global",
-  "query_gen_model": "gemini-3.1-pro-preview",
-  "response_gen_model": "gemini-2.5-flash",
-  "reference_model": "gemini-3.1-pro-preview",
-  "judge_model": "gemini-3.1-pro-preview"
-}
-```
-CLI 인자가 항상 `config.json`보다 우선 적용됩니다.
-
-### 분석용 JSON 변환
+평가 완료 후 `jsonl_to_json.py`와 `aggregate_scores.py`가 자동으로 실행되어 직관적인 JSON 포맷과 통계 분석 결과를 생성합니다.
 
 ```bash
+# 수동 실행 시
 python jsonl_to_json.py
+python aggregate_scores.py
 ```
 
 ## 📊 출력 포맷 예시
 
-### `references.json` (쿼리 1건 = 1줄)
+### `references.json`
 ```json
 {
   "content_id": "001_NatGeoKR_Narwhal_6m",
@@ -196,7 +197,7 @@ python jsonl_to_json.py
 }
 ```
 
-### `responses.json` (쿼리 1건 = 1줄)
+### `responses.json`
 ```json
 {
   "content_id": "001_NatGeoKR_Narwhal_6m",
@@ -209,7 +210,7 @@ python jsonl_to_json.py
 }
 ```
 
-### `scores.json` (쿼리 1건 = 1줄)
+### `scores.json`
 ```json
 {
   "content_id": "001_NatGeoKR_Narwhal_6m",
@@ -219,5 +220,23 @@ python jsonl_to_json.py
     "full":  { "rationale": "...", "scores": { "accuracy": 5, "completeness": 5, "helpfulness": 4 }, "total_score": 14 },
     "part":  { "rationale": "...", "scores": { "accuracy": 3, "completeness": 3, "helpfulness": 4 }, "total_score": 10 }
   }
+}
+```
+
+### `scores_aggregated.json` (비디오별/전체 평균 통계)
+```json
+{
+    "by_video": {
+        "001_NatGeoKR_Narwhal_6m": {
+            "video": { "accuracy": 4.25, "completeness": 4.1, "helpfulness": 4.8, "total_score": 13.15 },
+            "full": { ... },
+            "part": { ... }
+        }
+    },
+    "overall": {
+        "video": { "accuracy": 4.1, "completeness": 4.0, "helpfulness": 4.5, "total_score": 12.6 },
+        "full": { ... },
+        "part": { ... }
+    }
 }
 ```

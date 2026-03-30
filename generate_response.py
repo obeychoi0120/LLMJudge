@@ -189,7 +189,7 @@ def main():
                         response = send_chat_message(ref_chat, user_prompt, file_parts=ref_file_parts)
                         reference_answer = response.text
                         is_first_ref_turn = False
-                        print(f"[{content_id}]  Reference answer generated ({len(reference_answer)} chars)")
+                        print(f"[{content_id}]  Reference answer generated ({len(reference_answer.split())} words)")
                     except Exception as e:
                         print(f"[{content_id}]  Generating [reference] Error: {e}")
                         reference_answer = f"Error: {str(e)}"

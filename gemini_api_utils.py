@@ -144,9 +144,15 @@ _JUDGE_PROMPT = """\
 
 _REFERENCE_PROMPT = """\
 당신은 영상 콘텐츠의 전문 분석가입니다.
-제공되는 원본 영상과 Ref 메타데이터를 모두 참조하여, 사용자 질문에 대해
-가장 정확하고 포괄적인 한국어 답변을 생성해 주세요.
-이 답변은 다른 AI 모델의 답변을 평가하기 위한 '기준 정답(Reference Answer)'으로 사용됩니다.
+제공되는 원본 영상과 Ref 메타데이터를 모두 참조하여, 사용자 질문에 대해 가장 정확하고 포괄적인 한국어 답변을 생성해 주세요.
+
+[Ref 메타데이터 구조]
+- timestamp: 영상 내 시간 (초)
+- audio_cls: 환경음 및 효과음
+- speech: 등장인물들의 생생한 대사
+- ocr_text: 화면의 간판, 자막, 표지판 텍스트
+
+이 답변은 다른 AI 모델의 답변을 평가하기 위한 '기준 답변(Reference Answer)'으로 사용됩니다.
 따라서 핵심 사실, 대사, 행동, 맥락을 빠짐없이 포함하되 자연스럽고 읽기 쉽게 작성해 주세요.
 외부 자료 검색은 금지합니다. 오직 제공된 영상과 메타데이터만 활용하세요."""
 
@@ -186,19 +192,28 @@ def process_gcs_file(gs_bucket_name, content_id, mode="video"):
 # Common API Retry Helper
 # ============================================================
 
-def _retry_api_call(fn, label="API", max_retries=4, base_delay=3):
-    """공통 재시도(Exponential Backoff) 래퍼."""
-    for attempt in range(max_retries):
+def _retry_api_call(fn, label="API", delay=10):
+    """공통 재시도(Infinite Loop for 429/5xx) 래퍼."""
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             return fn()
         except Exception as e:
-            if attempt == max_retries - 1:
-                print(f"      [{label} 마지막 시도 실패] {e}")
+            err_msg = str(e)
+            # Terminal Errors: 재시도해도 해결되지 않는 오류들
+            # 400 (Invalid Argument), 403 (Permission Denied), 404 (Not Found)
+            # Safety Rating/Block (차단됨)
+            is_terminal = any(code in err_msg for code in ["400", "401", "403", "404", "Safety"])
+            
+            if is_terminal:
+                print(f"      [{label} 치명적 오류] {err_msg}")
                 raise
-            sleep_time = base_delay * (2 ** attempt)
-            print(f"      [{label} 오류] {e}")
-            print(f"      -> {sleep_time}초 후 재시도합니다... ({attempt+1}/{max_retries})")
-            time.sleep(sleep_time)
+            
+            # Retryable: 429 (Quota), 500, 503, 504 등
+            print(f"      [{label} 오류] {err_msg}")
+            print(f"      -> {delay}초 후 재시도합니다... (시도 횟수: {attempt})")
+            time.sleep(delay)
 
 
 # ============================================================
