@@ -229,14 +229,14 @@ python aggregate_scores.py
     "by_video": {
         "001_NatGeoKR_Narwhal_6m": {
             "video": { "accuracy": 4.25, "completeness": 4.1, "helpfulness": 4.8, "total_score": 13.15 },
-            "full": { ... },
-            "part": { ... }
+            "full": { "..." },
+            "part": { "..." }
         }
     },
     "overall": {
         "video": { "accuracy": 4.1, "completeness": 4.0, "helpfulness": 4.5, "total_score": 12.6 },
-        "full": { ... },
-        "part": { ... }
+        "full": { "..." },
+        "part": { "..." }
     }
 }
 ```
