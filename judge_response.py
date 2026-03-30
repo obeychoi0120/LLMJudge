@@ -16,6 +16,7 @@ from gemini_api_utils import (
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Responses using Judge model")
     parser.add_argument("--answers_file", default="output/responses.jsonl", help="답변 목록 JSONL 파일 경로")
+    parser.add_argument("--references_file", default="output/references.jsonl", help="Reference 답변 목록 JSONL 파일 경로")
     parser.add_argument("--output_file", default="output/scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
@@ -61,7 +62,23 @@ def main():
                         except json.JSONDecodeError:
                             pass
 
-            # 2. Input 읽기 - 새 포맷: 각 줄 = {"content_id", "query", "answers"}
+            # 2-1. Reference 읽기
+            reference_map = {} # (content_id, query) -> reference_text
+            if os.path.exists(args.references_file):
+                with open(args.references_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                ref_data = json.loads(line)
+                                r_cid = ref_data.get("content_id")
+                                r_query = ref_data.get("query")
+                                r_text = ref_data.get("reference")
+                                if r_cid and r_query and r_text:
+                                    reference_map[(r_cid, r_query)] = r_text
+                            except json.JSONDecodeError:
+                                pass
+
+            # 2-2. Input 읽기 - 새 포맷: 각 줄 = {"content_id", "query", "answers"}
             #    content_id별로 queries 리스트로 재그룹핑
             content_answers_dict = {}  # content_id -> {"content_id": ..., "queries": [...]}
             content_query_order = {}   # content_id -> [query, ...] (순서 보존)
@@ -81,9 +98,13 @@ def main():
                                         content_query_order[c_id] = []
                                     if query not in content_query_order[c_id]:
                                         content_query_order[c_id].append(query)
+                                        
+                                        # reference_map에서 참조 가져오기
+                                        ref_text = reference_map.get((c_id, query), data.get("reference", ""))
+                                        
                                         content_answers_dict[c_id]["queries"].append({
                                             "query": query, 
-                                            "reference": data.get("reference", ""),
+                                            "reference": ref_text,
                                             "answers": answers
                                         })
                                 elif c_id and "queries" in data:
@@ -244,6 +265,11 @@ def main():
         print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
         output_dir = os.path.dirname(args.output_file) or "output"
         subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
+        
+        # 추가 집계: aggregate_scores.py 호출
+        scores_json = os.path.join(output_dir, "scores.json")
+        if os.path.exists(scores_json):
+            subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
 
     print("\n모든 평가 처리가 완료/종료되었습니다.\n" + "=" * 50)
 

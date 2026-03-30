@@ -11,36 +11,39 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 ## 🔄 파이프라인 흐름
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph INPUT["Input"]
+        direction TB
         CL["content_list.json"]
-        GCS["GCS Bucket<br/>Video / Full JSONL / Part JSONL / Ref JSONL"]
+        GCS["**GCS Bucket**<br/>Video<br/>Full JSONL<br/>Part JSONL<br/>Ref JSONL"]
     end
 
-    subgraph STAGE0["0. Query Generation - generate_query.py (Single-turn)"]
-        QG["(Pro) Generated Queries<br/>Video + Ref JSONL"]
+    subgraph STAGE0["Gen. Query (Pro, Single-turn)"]
+        direction TB
+        QG["**Queries**<br/>Video + Ref JSONL"]
     end
 
-    subgraph STAGE1["1. Response Generation - generate_response.py (Multi-turn)"]
+    subgraph STAGE1["Gen. Response (Hybrid)"]
         direction LR
-        REF["(Pro) Reference<br/>Video + Ref JSONL<br/>+ System Prompt + Query"]
-        MODE_V["(Flash) Video Response<br/>Video + System Prompt + Query"]
-        MODE_F["(Flash) Full Meta Response<br/>Full JSONL + System Prompt + Query"]
-        MODE_P["(Flash) Part Meta Response<br/>Part JSONL + System Prompt + Query"]
+        REF["**(Pro) Reference**<br/>(Multi-turn)"]
+        MODE_V["**(Flash) Video**<br/>(Multi-turn)"]
+        MODE_F["**(Flash) Full Meta**<br/>(Single-turn)"]
+        MODE_P["**(Flash) Part Meta**<br/>(Single-turn)"]
     end
 
-    subgraph STAGE2["2. Judging - judge_response.py (Single-turn)"]
+    subgraph STAGE2["Judge (Pro, Single-turn)"]
         direction LR
-        J_V["(Pro) Video 평가<br/>Reference + Video Response"]
-        J_F["(Pro) Full Meta 평가<br/>Reference + Full Meta Response"]
-        J_P["(Pro) Part Meta 평가<br/>Reference + Part Meta Response"]
+        J_V["**Video 평가**<br/>Ref + Video Response"]
+        J_F["**Full Meta 평가**<br/>Ref + Full Response"]
+        J_P["**Part Meta 평가**<br/>Ref + Part Response"]
     end
 
     subgraph OUTPUT["Output"]
-        QGO["query_generated.jsonl"]
-        RSP["responses.jsonl"]
-        SCR["scores.jsonl"]
-        JSON["*.json"]
+        direction TB
+        QGO["query_generated.jsonl<br/>query_generated.json"]
+        REF_O["references.jsonl"]
+        RSP["responses.jsonl<br/>responses.json"]
+        SCR["scores.jsonl<br/>scores.json"]
     end
 
     CL --> QG
@@ -48,8 +51,10 @@ flowchart TB
     QG --> QGO
     QGO --> STAGE1
     GCS --> STAGE1
+    STAGE1 --> REF_O
     STAGE1 --> RSP
     RSP --> STAGE2
+    REF_O --> STAGE2
     STAGE2 --> SCR
     SCR --> JSON
 ```
@@ -89,9 +94,10 @@ LLMJudge/
 ├── config.json                 # 환경 설정 (GCP, 모델명 등)
 ├── content_list.json           # 평가 대상 Content ID 목록
 └── output/                     # 파이프라인 결과 저장
-    ├── query_generated.jsonl   # 0️⃣ 생성된 질문
-    ├── responses.jsonl         # 1️⃣ Reference + 3모드 답변
-    └── scores.jsonl            # 2️⃣ 최종 평가 점수
+    ├── query_generated.jsonl   # 0. 생성된 질문
+    ├── references.jsonl        # 1-A. Reference 답변 (기준 정답)
+    ├── responses.jsonl         # 1-B. 3모드 답변 (평가 대상)
+    └── scores.jsonl            # 2️. 최종 평가 점수
 ```
 
 ## 🚀 설치 및 사전 준비
@@ -181,12 +187,20 @@ python jsonl_to_json.py
 
 ## 📊 출력 포맷 예시
 
-### `responses.jsonl` (쿼리 1건 = 1줄)
+### `references.json` (쿼리 1건 = 1줄)
 ```json
 {
   "content_id": "001_NatGeoKR_Narwhal_6m",
   "query": "이 영상에서 일각돌고래가 뭐 하는 거야?",
-  "reference": "Pro 모델이 생성한 기준 정답 텍스트...",
+  "reference": "Pro 모델이 생성한 기준 정답 텍스트..."
+}
+```
+
+### `responses.json` (쿼리 1건 = 1줄)
+```json
+{
+  "content_id": "001_NatGeoKR_Narwhal_6m",
+  "query": "이 영상에서 일각돌고래가 뭐 하는 거야?",
   "answers": {
     "video": "영상을 직접 분석한 답변...",
     "full": "Full 메타데이터 기반 답변...",
@@ -195,7 +209,7 @@ python jsonl_to_json.py
 }
 ```
 
-### `scores.jsonl` (쿼리 1건 = 1줄)
+### `scores.json` (쿼리 1건 = 1줄)
 ```json
 {
   "content_id": "001_NatGeoKR_Narwhal_6m",

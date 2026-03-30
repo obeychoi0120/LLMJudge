@@ -62,7 +62,8 @@ def main():
             # responses.jsonl / scores.jsonl 여부 판단: 새 포맷은 "query" 키를 최상위로 보유
             is_scores_file = "scores" in base_name
             is_responses_file = "responses" in base_name
-            is_flat_format = is_scores_file or is_responses_file  # (content_id, query) 단위 포맷
+            is_references_file = "references" in base_name
+            is_flat_format = is_scores_file or is_responses_file or is_references_file  # (content_id, query) 단위 포맷
             
             for line in lines:
                 if line.strip():
@@ -106,7 +107,13 @@ def main():
                 content_query_map = {}   # content_id -> [query, ...] (insertion order)
                 content_data_map = {}    # content_id -> {query -> payload dict}
                 
-                data_key = "judge" if is_scores_file else "answers"
+                
+                if is_scores_file:
+                    data_key = "judge"
+                elif is_responses_file:
+                    data_key = "answers"
+                else: # references
+                    data_key = "reference"
                 
                 for item in data:
                     c_id = item.get("content_id")
@@ -126,11 +133,16 @@ def main():
                     queries_list = []
                     for q in content_query_map[c_id]:
                         raw = content_data_map[c_id][q]
-                        ordered = {m: raw[m] for m in desired_mode_order if m in raw}
-                        for m, val in raw.items():
-                            if m not in desired_mode_order:
-                                ordered[m] = val
-                        queries_list.append({"query": q, data_key: ordered})
+                        if isinstance(raw, dict):
+                            # answers나 judge 같은 딕셔너리 데이터는 모드 순서대로 정렬
+                            ordered = {m: raw[m] for m in desired_mode_order if m in raw}
+                            for m, val in raw.items():
+                                if m not in desired_mode_order:
+                                    ordered[m] = val
+                            queries_list.append({"query": q, data_key: ordered})
+                        else:
+                            # reference 같은 문자열 데이터는 그대로 대입
+                            queries_list.append({"query": q, data_key: raw})
                     reformatted_data.append({"content_id": c_id, "queries": queries_list})
                 data = reformatted_data
             

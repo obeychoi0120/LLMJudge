@@ -9,13 +9,15 @@ import concurrent.futures
 import threading
 from gemini_api_utils import (
     process_gcs_file, start_chat_session, send_chat_message, 
-    init_generation_model, init_reference_model, check_gcs_files_exist, load_config
+    init_generation_model, init_reference_model, check_gcs_files_exist, 
+    load_config, generate_single_turn_response
 )
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
     parser.add_argument("--json_file", default="output/query_generated.jsonl", help="질문 목록 JSONL 파일 경로")
     parser.add_argument("--output_file", default="output/responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
+    parser.add_argument("--reference_file", default="output/references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
@@ -35,10 +37,11 @@ def main():
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
     vertexai.init(project=args.gcp_project_id, location=args.location)
     
-    # 출력 폴더 생성
-    output_dir = os.path.dirname(args.output_file)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    # 출력 폴더 생성 (responses, references)
+    for fpath in [args.output_file, args.reference_file]:
+        odir = os.path.dirname(fpath)
+        if odir and not os.path.exists(odir):
+            os.makedirs(odir)
 
     print("\n" + "=" * 50)
     print("Gemini Inference 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
@@ -50,6 +53,24 @@ def main():
         while True:
             # 1. Output 진행률 읽기 - (content_id, query) 쌍 단위로 추적
             processed_pairs = set()  # (content_id, query) 튜플
+            
+            # 1-1. 유효한 Reference 목록 먼저 수집
+            valid_references = set()
+            if os.path.exists(args.reference_file):
+                with open(args.reference_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip(): continue
+                        try:
+                            ref = json.loads(line)
+                            c_id = ref.get("content_id")
+                            query = ref.get("query")
+                            ref_text = ref.get("reference", "")
+                            if c_id and query and not str(ref_text).startswith("Error"):
+                                valid_references.add((c_id, query))
+                        except json.JSONDecodeError:
+                            pass
+
+            # 1-2. Responses 읽기하여 최종 완료 상태 확인
             if os.path.exists(args.output_file):
                 with open(args.output_file, "r", encoding="utf-8") as f:
                     for line in f:
@@ -58,7 +79,7 @@ def main():
                             ans = json.loads(line)
                             c_id = ans.get("content_id")
                             query = ans.get("query")
-                            if c_id and query:
+                            if c_id and query and (c_id, query) in valid_references:
                                 # 3개 모드에 유효한 답변이 모두 있으면 완료로 간주
                                 answers = ans.get("answers", {})
                                 is_complete = all(
@@ -133,10 +154,13 @@ def main():
                 ref_part = process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
 
                 print(f"[{content_id}] Initializing Generation models ({args.response_gen_model})...")
+                gen_models = {}
                 gen_chats = {}
                 for mode in ["video", "full", "part"]:
-                    gen_model = init_generation_model(mode=mode, model_name=args.response_gen_model)
-                    gen_chats[mode] = start_chat_session(gen_model)
+                    gen_models[mode] = init_generation_model(mode=mode, model_name=args.response_gen_model)
+                    # video 모드만 멀티턴 세션 유지 (비디오 토큰 절감)
+                    if mode == "video":
+                        gen_chats[mode] = start_chat_session(gen_models[mode])
 
                 print(f"[{content_id}] Initializing Reference model ({args.reference_model}, Ref={'ON' if args.reference_use_ref else 'OFF'})...")
                 ref_model = init_reference_model(model_name=args.reference_model)
@@ -158,12 +182,12 @@ def main():
                     print(f"[{content_id}]  Generating [reference] ({ref_label})...")
                     try:
                         if is_first_ref_turn:
-                            ref_file_part = [parts["video"], ref_part] if args.reference_use_ref else [parts["video"]]
+                            ref_file_parts = [parts["video"], ref_part] if args.reference_use_ref else [parts["video"]]
                         else:
-                            ref_file_part = None
-                        ref_contents = (ref_file_part or []) + [user_prompt]
-                        ref_response = ref_chat.send_message(ref_contents)
-                        reference_answer = ref_response.text
+                            ref_file_parts = None
+                        
+                        response = send_chat_message(ref_chat, user_prompt, file_parts=ref_file_parts)
+                        reference_answer = response.text
                         is_first_ref_turn = False
                         print(f"[{content_id}]  Reference answer generated ({len(reference_answer)} chars)")
                     except Exception as e:
@@ -175,12 +199,18 @@ def main():
                     
                     def generate_for_mode(mode):
                         print(f"[{content_id}]  Generating [{mode}]...")
-                        file_part = parts[mode] if is_first_turn_for_mode[mode] else None
-                        
                         try:
                             time.sleep(1) # 동시 호출 시 약간의 지연
-                            response = send_chat_message(gen_chats[mode], user_prompt, file_part=file_part)
+                            if mode == "video":
+                                # Multi-turn (Session-based)
+                                file_parts = parts[mode] if is_first_turn_for_mode[mode] else None
+                                response = send_chat_message(gen_chats[mode], user_prompt, file_parts=file_parts)
+                                is_first_turn_for_mode[mode] = False
+                            else:
+                                # Single-turn (Direct call with file)
+                                response = generate_single_turn_response(gen_models[mode], user_prompt, file_part=parts[mode])
                             return mode, response.text
+                            
                         except Exception as e: 
                             print(f"[{content_id}]  Generating [{mode}] Error: {e}")
                             return mode, f"Error: {str(e)}"
@@ -190,22 +220,32 @@ def main():
                         for future in concurrent.futures.as_completed(futures):
                             m, text = future.result()
                             answers_for_query[m] = text
-                            is_first_turn_for_mode[m] = False
 
-                    # 쿼리 하나 끝나면 (content_id, query) 단위로 1줄 append
+                    # 쿼리 하나 끝나면 두 파일에 각각 저장 (Reference / Responses)
                     # mode 순서 정렬 (video, full, part)
                     ordered_answers = {m: answers_for_query[m] for m in ["video", "full", "part"] if m in answers_for_query}
+                    
+                    ref_record = {
+                        "content_id": content_id,
+                        "query": user_prompt,
+                        "reference": reference_answer
+                    }
                     response_record = {
                         "content_id": content_id,
                         "query": user_prompt,
-                        "reference": reference_answer,
                         "answers": ordered_answers
                     }
+                    
                     with file_write_lock:
+                        # 1. Reference 저장
+                        with open(args.reference_file, "a", encoding="utf-8") as f:
+                            f.write(json.dumps(ref_record, ensure_ascii=False) + "\n")
+                        # 2. Response 저장
                         with open(args.output_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(response_record, ensure_ascii=False) + "\n")
+                            
                     processed_pairs.add((content_id, user_prompt))
-                    print(f"[{content_id}]  -> Response 저장 완료: {args.output_file}")
+                    print(f"[{content_id}]  -> Reference/Response 저장 완료")
                     print("-" * 50)
 
                 return True

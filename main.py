@@ -10,6 +10,7 @@ def main():
     parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
     parser.add_argument("--generated_queries_file", default="output/query_generated.jsonl", help="생성된 질문 목록을 저장할 파일 경로")
     parser.add_argument("--responses_file", default="output/responses.jsonl", help="생성/통합된 답변 목록을 저장할 파일 경로")
+    parser.add_argument("--references_file", default="output/references.jsonl", help="Reference 답변 목록을 저장할 파일 경로")
     parser.add_argument("--scores_file", default="output/scores.jsonl", help="최종 평가 결과를 저장할 파일 경로")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
@@ -23,8 +24,7 @@ def main():
     parser.add_argument("--generate-query", action="store_true", help="질문 자동 생성을 우선 수행")
     parser.add_argument("--skip-response", action="store_true", help="답변 생성을 건너뛰기")
     parser.add_argument("--skip-judge", action="store_true", help="평가를 건너뛰기")
-    parser.add_argument("--skip-aggregate", action="store_true", help="최종 JSON 변환 건너뛰기")
-    
+
     args = parser.parse_args()
     args = load_config(args)
 
@@ -96,6 +96,7 @@ def main():
             sys.executable, "generate_response.py", 
             "--json_file", current_input_file,
             "--output_file", args.responses_file,
+            "--reference_file", args.references_file,
             "--gs_bucket_name", args.gs_bucket_name,
             "--response_gen_model", args.response_gen_model,
             "--reference_model", args.reference_model
@@ -112,22 +113,27 @@ def main():
         cmd = [
             sys.executable, "judge_response.py", 
             "--answers_file", args.responses_file,
+            "--references_file", args.references_file,
             "--output_file", args.scores_file,
             "--gs_bucket_name", args.gs_bucket_name,
             "--judge_model", args.judge_model
         ] + common_project_args
         subprocess.run(cmd, check=True)
         
-    if not args.skip_aggregate:
-        print("\n" + "="*60)
-        print(">>> 3. Aggregating JSONL to JSON")
-        print("="*60)
-        output_dir = os.path.dirname(args.scores_file) or "output"
-        cmd = [
-            sys.executable, "jsonl_to_json.py",
-            "--input_dir", output_dir
-        ]
-        subprocess.run(cmd, check=True)
+    print("\n" + "="*60)
+    print(">>> 3. Aggregating JSONL to JSON")
+    print("="*60)
+    output_dir = os.path.dirname(args.scores_file) or "output"
+    cmd = [
+        sys.executable, "jsonl_to_json.py",
+        "--input_dir", output_dir
+    ]
+    subprocess.run(cmd, check=True)
+    
+    # 추가 집계: aggregate_scores.py 호출
+    scores_json = os.path.join(output_dir, "scores.json")
+    if os.path.exists(scores_json):
+        subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
         
     print("\n\nEnd-to-End Pipeline Completed Successfully!")
 

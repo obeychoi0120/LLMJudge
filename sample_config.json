@@ -4,5 +4,6 @@
     "location": "global",
     "query_gen_model": "gemini-3.1-pro-preview",
     "response_gen_model": "gemini-2.5-flash",
-    "judge_model": "gemini-3.1-pro-preview"
+    "judge_model": "gemini-3.1-pro-preview",
+    "reference_use_ref": true
 }

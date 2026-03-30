@@ -30,7 +30,7 @@ SAFETY_SETTINGS = [
 # config.json에서 CLI 인자보다 낮은 우선순위로 덮어쓸 수 있는 키 목록
 _CONFIG_KEYS = [
     "query_gen_model", "response_gen_model", "judge_model",
-    "location", "reference_model",
+    "location", "reference_model", "reference_use_ref"
 ]
 
 
@@ -50,8 +50,14 @@ def load_config(args):
     args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
 
     # 선택 키: argparse 기본값이 세팅되어 있어도, CLI에서 명시하지 않았으면 config 값 사용
+    # reference_use_ref 는 --no-reference-ref 플래그와 연결됨
+    _ARG_FLAG_MAP = {
+        "reference_use_ref": "--no-reference-ref"
+    }
+
     for key in _CONFIG_KEYS:
-        if hasattr(args, key) and key in config and f"--{key}" not in sys.argv:
+        flag = _ARG_FLAG_MAP.get(key, f"--{key}")
+        if hasattr(args, key) and key in config and flag not in sys.argv:
             setattr(args, key, config[key])
 
     return args
@@ -106,6 +112,7 @@ _JSONL_VIEWER_BASE = """\
 - speech: 당신이 들은 등장인물들의 생생한 대사
 - ocr_text: 당신이 화면에서 직접 읽은 간판, 자막, 표지판 텍스트
 {description_field}
+
 [분석 및 지시사항]
 **정보 교정**: 기억의 조각들이 다소 불완전할 수 있으므로, 전체적인 맥락에 맞게 상식적인 선에서 자연스럽게 교정하세요.
 **입체적 재구성**: 당신이 들은 소리, 대사, 읽은 텍스트 정보들을 교차 결합하여 장면의 분위기와 인물들의 대화를 이야기로 생생하게 재구성하세요.
@@ -148,9 +155,9 @@ def configure_system_prompt(mode="full"):
     if mode == "full":
         return _JSONL_VIEWER_BASE.format(description_field=_DESCRIPTION_LINE)
     elif mode == "part":
-        return _JSONL_VIEWER_BASE.format(description_field="\n")
+        return _JSONL_VIEWER_BASE.format(description_field="")
     elif mode == "video":
-        return "외부 정보를 절대 검색하지 말고, 제공된 영상 정보만을 사용하여 사용자 질문에 답변하세요."
+        return "당신은 영상 콘텐츠의 전문 분석가입니다. 외부 정보를 절대 검색하지 말고, 제공된 영상 정보만을 사용하여 사용자 질문에 답변하세요."
     elif mode == "judge":
         return _JUDGE_PROMPT
     return ""
@@ -219,11 +226,27 @@ def start_chat_session(model):
     return model.start_chat()
 
 
-def send_chat_message(chat, user_prompt, file_part=None, max_retries=4, base_delay=3):
-    contents = [file_part, user_prompt] if file_part else [user_prompt]
+def send_chat_message(chat, user_prompt, file_parts=None):
+    """Chat Session을 통한 Multi-turn 메시지 전송."""
+    if file_parts is None:
+        contents = [user_prompt]
+    elif isinstance(file_parts, list):
+        contents = file_parts + [user_prompt]
+    else:
+        contents = [file_parts, user_prompt]
+        
     return _retry_api_call(
         lambda: chat.send_message(contents),
-        label="Generation API", max_retries=max_retries, base_delay=base_delay,
+        label="Generation API (Multi-turn)",
+    )
+
+
+def generate_single_turn_response(model, user_prompt, file_part=None):
+    """모델 직접 호출을 통한 Single-turn 응답 생성."""
+    contents = [file_part, user_prompt] if file_part else [user_prompt]
+    return _retry_api_call(
+        lambda: model.generate_content(contents),
+        label="Generation API (Single-turn)",
     )
 
 
