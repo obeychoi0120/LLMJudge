@@ -12,32 +12,32 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ```mermaid
 flowchart TD
-    subgraph INPUT["1. Input Data"]
+    subgraph INPUT["Input Data"]
         direction LR
         CL["**content_list.json**<br/>Content ID 목록"]
         GCS["GCS Bucket Asset<br/>Video, Full/Part/Ref Meta"]
     end
 
-    subgraph STEP1["2. Query Generation"]
+    subgraph STEP1["1 - Query Generation"]
         direction TB
         Q_SCRIPT["**generate_query.py**"]
         Q_OUT["**query_generated.jsonl**<br/>질문 목록"]
     end
 
-    subgraph STEP2["3. Response Generation"]
+    subgraph STEP2["2 - Response Generation"]
         direction TB
         R_SCRIPT["**generate_response.py**"]
         R_OUT1["**references.jsonl**<br/>기준 정답"]
         R_OUT2["**responses.jsonl**<br/>3개 모드 답변"]
     end
 
-    subgraph STEP3["4. Judge & Scoring"]
+    subgraph STEP3["3 - Judge & Scoring"]
         direction TB
         J_SCRIPT["**judge_response.py**"]
         J_OUT["**scores.jsonl**<br/>평가 점수 및 사유"]
     end
 
-    subgraph STEP4["5. Post-processing"]
+    subgraph STEP4["Post-processing"]
         direction TB
         A_SCRIPT["**jsonl_to_json.py**<br/>**aggregate_scores.py**"]
         A_OUT["**최종 JSON Files**<br/>references.json<br/>responses.json<br/>scores.json<br/>(최종 통계) scores_aggregated.json"]
