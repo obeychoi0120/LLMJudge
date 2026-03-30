@@ -48,7 +48,7 @@ def generate_queries_for_content(model, video_part, ref_part):
 def main():
     parser = argparse.ArgumentParser(description="Generate User Queries using Gemini Pro")
     parser.add_argument("--input_file", default="content_list.json", help="입력 JSON 파일 경로 (content_id 리스트)")
-    parser.add_argument("--output_file", default="output/query_generated.jsonl", help="생성된 질문 목록을 저장할 파일 경로 (.jsonl)")
+    parser.add_argument("--output_file", default="assets/query_generated.jsonl", help="생성된 질문 목록을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="질문 생성에 사용할 모델명")

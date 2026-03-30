@@ -15,9 +15,9 @@ from gemini_api_utils import (
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Responses using Judge model")
-    parser.add_argument("--answers_file", default="output/responses.jsonl", help="답변 목록 JSONL 파일 경로")
-    parser.add_argument("--references_file", default="output/references.jsonl", help="Reference 답변 목록 JSONL 파일 경로")
-    parser.add_argument("--output_file", default="output/scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
+    parser.add_argument("--answers_file", default="assets/responses.jsonl", help="답변 목록 JSONL 파일 경로")
+    parser.add_argument("--references_file", default="assets/references.jsonl", help="Reference 답변 목록 JSONL 파일 경로")
+    parser.add_argument("--output_file", default="assets/scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
@@ -263,13 +263,15 @@ def main():
         
     if not args.continuous:
         print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
-        output_dir = os.path.dirname(args.output_file) or "output"
+        output_dir = os.path.dirname(args.output_file) or "assets"
         subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
         
         # 추가 집계: aggregate_scores.py 호출
         scores_json = os.path.join(output_dir, "scores.json")
         if os.path.exists(scores_json):
             subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
+            # 엑셀 변환 추가
+            subprocess.run([sys.executable, "export_to_excel.py"])
 
     print("\n모든 평가 처리가 완료/종료되었습니다.\n" + "=" * 50)
 

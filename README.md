@@ -37,10 +37,10 @@ flowchart TD
         J_OUT["**scores.jsonl**<br/>평가 점수 및 사유"]
     end
 
-    subgraph STEP4["Post-processing"]
+    subgraph STEP4["4 - Post-processing"]
         direction TB
-        A_SCRIPT["**jsonl_to_json.py**<br/>**aggregate_scores.py**"]
-        A_OUT["**최종 JSON Files**<br/>references.json<br/>responses.json<br/>scores.json<br/>(최종 통계) scores_aggregated.json"]
+        A_SCRIPT["**jsonl_to_json.py**<br/>**aggregate_scores.py**<br/>**export_to_excel.py**"]
+        A_OUT["**분석용 Excel Files**<br/>results/details.xlsx<br/>results/scores.xlsx"]
     end
 
     CL --> Q_SCRIPT
@@ -98,19 +98,25 @@ LLMJudge/
 ├── jsonl_to_json.py            # JSONL → 분석용 JSON 변환
 ├── config.json                 # 환경 설정 (GCP, 모델명 등)
 ├── content_list.json           # 평가 대상 Content ID 목록
-└── output/                     # 파이프라인 결과 저장
-    ├── query_generated.jsonl   # 2. 생성된 질문
-    ├── references.jsonl        # 3-A. Reference 답변 (기준 정답)
-    ├── responses.jsonl         # 3-B. 3개 모드 답변 (평가 대상)
-    ├── scores.jsonl            # 4. 최종 평가 점수
-    └── scores_aggregated.json  # 5. 비디오별/전체 통계 집계
+├── assets/                     # JSONL/JSON 파이프라인 결과 및 분석용 데이터
+│   ├── query_generated.jsonl   # 2. 생성된 질문
+│   ├── references.jsonl        # 3-A. Reference 답변 (기준 정답)
+│   ├── responses.jsonl         # 3-B. 3개 모드 답변 (평가 대상)
+│   ├── scores.jsonl            # 4. 최종 평가 점수
+│   ├── references.json         # 분석용 포맷 (JSON)
+│   ├── responses.json          # 분석용 포맷 (JSON)
+│   ├── scores.json             # 분석용 포맷 (JSON)
+│   └── scores_aggregated.json  # 5. 비디오별/전체 통계 집계
+└── results/                    # 사용자 분석용 최종 엑셀 파일
+    ├── details.xlsx            # 상세 결과 (Ref/Resp/Judge/Score)
+    └── scores.xlsx             # 통계 요약 결과
 ```
 
 ## 🚀 설치 및 사전 준비
 
 1. **Python 패키지 설치**
    ```bash
-   pip install google-cloud-aiplatform google-cloud-storage vertexai
+   pip install google-cloud-aiplatform google-cloud-storage vertexai pandas openpyxl
    ```
 
 2. **GCP 인증**
@@ -159,7 +165,7 @@ LLMJudge/
 python main.py --generate-query --input_file content_list.json
 
 # Query가 이미 있는 JSONL 파일 입력
-python main.py --input_file output/query_generated.jsonl
+python main.py --input_file assets/query_generated.jsonl
 ```
 
 ### B. 병렬 파이프라인 (`--continuous`)
@@ -176,14 +182,15 @@ python generate_response.py --continuous
 python judge_response.py --continuous
 ```
 
-### 분석용 JSON 및 통계 집계
+### 분석용 JSON 및 XLSX 통계 집계
 
-평가 완료 후 `jsonl_to_json.py`와 `aggregate_scores.py`가 자동으로 실행되어 직관적인 JSON 포맷과 통계 분석 결과를 생성합니다.
+평가 완료 후 `jsonl_to_json.py`, `aggregate_scores.py`, `export_to_excel.py`가 자동으로 실행되어 직관적인 JSON 포맷과 엑셀 분석 결과를 생성합니다.
 
 ```bash
 # 수동 실행 시
-python jsonl_to_json.py
-python aggregate_scores.py
+python jsonl_to_json.py --input_dir assets
+python aggregate_scores.py --scores_file assets/scores.json --output_file assets/scores_aggregated.json
+python export_to_excel.py
 ```
 
 ## 📊 출력 포맷 예시

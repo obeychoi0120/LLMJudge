@@ -15,9 +15,9 @@ from gemini_api_utils import (
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
-    parser.add_argument("--json_file", default="output/query_generated.jsonl", help="질문 목록 JSONL 파일 경로")
-    parser.add_argument("--output_file", default="output/responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
-    parser.add_argument("--reference_file", default="output/references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
+    parser.add_argument("--json_file", default="assets/query_generated.jsonl", help="질문 목록 JSONL 파일 경로")
+    parser.add_argument("--output_file", default="assets/responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
+    parser.add_argument("--reference_file", default="assets/references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
@@ -266,7 +266,7 @@ def main():
 
     if not args.continuous:
         print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
-        output_dir = os.path.dirname(args.output_file) or "output"
+        output_dir = os.path.dirname(args.output_file) or "assets"
         subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
 
     print("\n생성 프로세스가 완료/종료되었습니다.\n" + "=" * 50)

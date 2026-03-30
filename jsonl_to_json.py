@@ -5,7 +5,7 @@ import glob
 
 def main():
     parser = argparse.ArgumentParser(description="Convert JSONL files back to formatted JSON for human analysis")
-    parser.add_argument("--input_dir", default="output", help="모니터링 대상 JSONL 파일들이 있는 디렉토리")
+    parser.add_argument("--input_dir", default="assets", help="모니터링 대상 JSONL 파일들이 있는 디렉토리")
     args = parser.parse_args()
 
     jsonl_files = glob.glob(os.path.join(args.input_dir, "*.jsonl"))

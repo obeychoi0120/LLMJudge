@@ -8,10 +8,10 @@ from gemini_api_utils import load_config
 def main():
     parser = argparse.ArgumentParser(description="End-to-End LLM Judge Pipeline Orchestrator")
     parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
-    parser.add_argument("--generated_queries_file", default="output/query_generated.jsonl", help="생성된 질문 목록을 저장할 파일 경로")
-    parser.add_argument("--responses_file", default="output/responses.jsonl", help="생성/통합된 답변 목록을 저장할 파일 경로")
-    parser.add_argument("--references_file", default="output/references.jsonl", help="Reference 답변 목록을 저장할 파일 경로")
-    parser.add_argument("--scores_file", default="output/scores.jsonl", help="최종 평가 결과를 저장할 파일 경로")
+    parser.add_argument("--generated_queries_file", default="assets/query_generated.jsonl", help="생성된 질문 목록을 저장할 파일 경로")
+    parser.add_argument("--responses_file", default="assets/responses.jsonl", help="생성/통합된 답변 목록을 저장할 파일 경로")
+    parser.add_argument("--references_file", default="assets/references.jsonl", help="Reference 답변 목록을 저장할 파일 경로")
+    parser.add_argument("--scores_file", default="assets/scores.jsonl", help="최종 평가 결과를 저장할 파일 경로")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="global", help="GCP Location")
@@ -123,7 +123,7 @@ def main():
     print("\n" + "="*60)
     print(">>> 3. Aggregating JSONL to JSON")
     print("="*60)
-    output_dir = os.path.dirname(args.scores_file) or "output"
+    output_dir = os.path.dirname(args.scores_file) or "assets"
     cmd = [
         sys.executable, "jsonl_to_json.py",
         "--input_dir", output_dir
@@ -134,6 +134,11 @@ def main():
     scores_json = os.path.join(output_dir, "scores.json")
     if os.path.exists(scores_json):
         subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
+        
+    print("\n" + "="*60)
+    print(">>> 4. Exporting to Excel")
+    print("="*60)
+    subprocess.run([sys.executable, "export_to_excel.py"])
         
     print("\n\nEnd-to-End Pipeline Completed Successfully!")
 

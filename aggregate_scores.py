@@ -4,8 +4,8 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser(description="Aggregate LLM Judge scores")
-    parser.add_argument("--scores_file", default="output/scores.json", help="Path to scores.json")
-    parser.add_argument("--output_file", default="output/scores_aggregated.json", help="Path to aggregated JSON")
+    parser.add_argument("--scores_file", default="assets/scores.json", help="Path to scores.json")
+    parser.add_argument("--output_file", default="assets/scores_aggregated.json", help="Path to aggregated JSON")
     args = parser.parse_args()
 
     if not os.path.exists(args.scores_file):
