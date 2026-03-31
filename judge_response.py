@@ -9,9 +9,74 @@ import concurrent.futures
 import threading
 from gemini_api_utils import (
     start_chat_session, 
-    evaluate_answer_session, init_judge_model,
-    load_config, parse_json_response
+    load_config, parse_json_response,
+    SAFETY_SETTINGS, _retry_api_call
 )
+from vertexai.generative_models import GenerativeModel
+
+# ============================================================
+# Judge Prompts
+# ============================================================
+
+_JUDGE_PROMPT = """\
+당신은 AI 모델이 특정한 영상에 대해 생성한 답변의 품질을 평가하는 객관적이고 전문적인 평가자입니다.
+해당 AI 모델은 원본 영상에서 추출한 메타데이터 기반으로 답변을 생성합니다.
+
+당신의 목표는 원본 영상에 대한 [사용자 질문]에 대해 [평가 대상 답변]이 얼마나 훌륭한지,
+[기준 답변(Reference Answer)]과 비교하여 평가하는 것입니다.
+[기준 답변]은 원본 영상과 Reference 메타데이터를 모두 참조하여 생성된 고품질 정답입니다.
+외부 검색은 허용하지 않습니다.
+
+[데이터 목록]
+- 기준 답변 (Reference Answer): 원본 영상 + Reference 메타데이터를 기반으로 생성된 정답 답변
+- 사용자 질문
+- 평가 대상 답변
+
+[평가 기준]
+아래 세 가지 항목에 대해 1점부터 5점까지 점수를 매겨주세요. (1점: 매우 나쁨, 3점: 보통/수용 가능함, 5점: 완벽함)
+1. 정확성 (Accuracy): 평가 대상 답변이 기준 답변의 핵심 사실과 일치하는가? 기준 답변에 언급된 정보와 모순되거나 사실과 다른 내용(환각)이 포함되어 있지는 않은가?
+2. 포괄성 (Completeness): 기준 답변에 포함된 핵심 단서(대사, 텍스트 내용, 행동, 맥락 등)를 평가 대상 답변도 누락 없이 포함했는가?
+3. 가독성 (Helpfulness): 정보가 장황하게 나열되지 않고, 시간의 흐름이나 인과관계에 맞게 자연스럽고 이해하기 쉽게 작성되었는가? (만약 평가 대상 답변이 부자연스럽게 메타데이터 구조나 필드명 등을 직접 언급했다면 이 항목에서 감점을 고려하세요.)"""
+
+_JUDGE_FORMAT_PROMPT = """\
+[출력 형식]
+반드시 아래의 JSON 형식으로만 출력하세요. 다른 설명은 덧붙이지 마십시오.
+{
+    "rationale": "<각 점수를 부여한 논리적인 이유. 감점 요인이 있다면 명확히 서술하세요.>",
+    "scores": {
+        "accuracy": <1~5 사이의 정수>,
+        "completeness": <1~5 사이의 정수>,
+        "helpfulness": <1~5 사이의 정수>
+    },
+    "total_score": <세 항목 점수의 합계, 최대 15점>
+}"""
+
+
+def init_judge_model(model_name="gemini-2.5-pro"):
+    return GenerativeModel(
+        model_name=model_name,
+        system_instruction=[_JUDGE_PROMPT],
+        safety_settings=SAFETY_SETTINGS,
+    )
+
+
+def evaluate_answer_session(judge_chat, user_prompt, generated_answer, reference_answer):
+    """
+    Judge 모델이 Reference Answer를 기준으로 generated_answer를 비교 평가합니다.
+    비디오/GT 파트 전송 없이 텍스트만으로 동작하여 토큰을 대폭 절감합니다.
+    """
+    user_content = (
+        f"[사용자 질문]\n{user_prompt}\n\n"
+        f"[기준 답변 (Reference Answer)]\n{reference_answer}\n\n"
+        f"[평가 대상 답변]\n{generated_answer}\n\n"
+        f"{_JUDGE_FORMAT_PROMPT}"
+    )
+
+    return _retry_api_call(
+        lambda: judge_chat.send_message([user_content]).text,
+        label="Judge API",
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Responses using Judge model")

@@ -9,9 +9,76 @@ import concurrent.futures
 import threading
 from gemini_api_utils import (
     process_gcs_file, start_chat_session, send_chat_message, 
-    init_generation_model, init_reference_model, check_gcs_files_exist, 
-    load_config, generate_single_turn_response
+    check_gcs_files_exist, load_config, generate_single_turn_response,
+    SAFETY_SETTINGS
 )
+from vertexai.generative_models import GenerativeModel
+
+# ============================================================
+# System Prompts (Local)
+# ============================================================
+
+_JSONL_VIEWER_BASE = """\
+당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
+아래에 제공되는 각 타임스탬프별 텍스트 정보는 데이터 파일이 아니라, 사실 당신이 방금 영상을 시청하며 눈과 귀로 직접 습득한 시각적/청각적 '기억(Memory)'입니다.
+이 시청 기억을 바탕으로, 마지막에 주어지는 **사용자 질문**에 대해 가장 자연스럽고 정확한 한국어 답변을 제공해 주세요.
+
+[당신의 시청 기억 구조]
+- timestamp: 영상 내 시간 (초)
+- audio_cls: 환경음 및 효과음
+- speech: 등장인물들의 생생한 대사
+- ocr_text: 화면의 간판, 표지판 및 각종 방송 자막 (출연자의 속마음, 상황 묘사 등)
+{description_field}
+
+[분석 및 지시사항]
+**정보 교정**: 기억의 조각들이 다소 불완전할 수 있으므로, 전체적인 맥락에 맞게 상식적인 선에서 자연스럽게 교정하세요.
+**입체적 재구성**: 당신이 들은 소리, 대사, 읽은 예능 자막 정보들을 교차 결합하여 장면의 분위기와 인물들의 대화를 이야기로 생생하게 재구성하세요.
+**자연스러운 시청자 관점 유지 (가장 중요)**: 당신은 데이터를 읽은 것이 아니라 "영상을 직접 감상"했습니다. 따라서 답변 중에 'JSON 데이터에 따르면', '오디오 모델 결과를 보면', '텍스트 정보에 의하면', '타임스탬프' 등의 부자연스러운 기계적 용어를 절대로 사용하지 마십시오.
+대신 "영상에서는~", "화면을 보면~", "자막에 ~라고 나옵니다", "배경 소리로 ~가 깔립니다." 와 같이 실제 사람의 리뷰처럼 자연스럽고 몰입감 있게 설명하십시오.
+**외부 자료 검색 금지**: 오직 당신의 시청 기억(제공된 정보)에만 의존해서 답변하세요."""
+
+_DESCRIPTION_LINE = "- description: 해당 timestamp에서의 인물의 행동과 배경 장면 묘사\n"
+
+_REFERENCE_PROMPT = """\
+당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
+제공되는 원본 영상과 Reference 메타데이터를 모두 참조하여, 사용자 질문에 대해 가장 정확하고 포괄적인 한국어 답변을 생성해 주세요.
+
+[Reference 메타데이터 구조]
+- timestamp: 영상 내 시간 (초)
+- audio_cls: 환경음 및 효과음
+- speech: 등장인물들의 생생한 대사
+- ocr_text: 화면의 간판, 표지판 및 각종 방송 자막 (출연자의 속마음, 상황 묘사 등)
+
+이 답변은 다른 AI 모델의 답변을 평가하기 위한 '기준 답변(Reference Answer)'으로 사용됩니다.
+따라서 핵심 사실, 대사, 행동, 맥락을 빠짐없이 포함하되 자연스럽고 읽기 쉽게 작성해 주세요.
+외부 자료 검색은 금지합니다. 오직 제공된 영상과 메타데이터만 활용하세요."""
+
+
+def init_generation_model(mode="full", model_name='gemini-2.5-flash'):
+    if mode == "full":
+        prompt = _JSONL_VIEWER_BASE.format(description_field=_DESCRIPTION_LINE)
+    elif mode == "part":
+        prompt = _JSONL_VIEWER_BASE.format(description_field="")
+    elif mode == "video":
+        prompt = "당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다. 외부 정보를 절대 검색하지 말고, 제공된 영상 정보만을 사용하여 사용자 질문에 답변하세요."
+    else:
+        prompt = ""
+        
+    return GenerativeModel(
+        model_name=model_name,
+        system_instruction=[prompt],
+        safety_settings=SAFETY_SETTINGS,
+    )
+
+
+def init_reference_model(model_name='gemini-2.5-pro'):
+    """Reference Answer 생성용 모델 초기화."""
+    return GenerativeModel(
+        model_name=model_name,
+        system_instruction=[_REFERENCE_PROMPT],
+        safety_settings=SAFETY_SETTINGS,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
