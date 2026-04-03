@@ -82,9 +82,9 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 
     required_files = [
         f"video_540p/{content_id}_540p.mp4",
-        f"jsonl/{content_id}_15s_Full.jsonl",
-        f"jsonl/{content_id}_15s_Part.jsonl",
-        f"jsonl/{content_id}_15s_Ref.jsonl",
+        f"jsonl/{content_id}_Full.jsonl",
+        f"jsonl/{content_id}_Part.jsonl",
+        f"jsonl/{content_id}_Ref.jsonl",
     ]
 
     missing = [f for f in required_files if not bucket.blob(f).exists()]
@@ -102,9 +102,9 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 
 _GCS_MODE_MAP = {
     "video": ("video_540p/{cid}_540p.mp4", "video/mp4"),
-    "full":  ("jsonl/{cid}_15s_Full.jsonl", "text/plain"),
-    "part":  ("jsonl/{cid}_15s_Part.jsonl", "text/plain"),
-    "ref":   ("jsonl/{cid}_15s_Ref.jsonl",  "text/plain"),
+    "full":  ("jsonl/{cid}_Full.jsonl", "text/plain"),
+    "part":  ("jsonl/{cid}_Part.jsonl", "text/plain"),
+    "ref":   ("jsonl/{cid}_Ref.jsonl",  "text/plain"),
 }
 
 def process_gcs_file(gs_bucket_name, content_id, mode="video"):
