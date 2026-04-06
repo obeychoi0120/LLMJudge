@@ -8,7 +8,7 @@ import vertexai
 import concurrent.futures
 import threading
 from gemini_api_utils import (
-    process_gcs_file, start_chat_session, send_chat_message, 
+    process_gcs_file, process_gcs_file_range, process_gcs_file_truncated,
     check_gcs_files_exist, load_config, generate_single_turn_response,
     SAFETY_SETTINGS
 )
@@ -18,36 +18,41 @@ from vertexai.generative_models import GenerativeModel
 # System Prompts (Local)
 # ============================================================
 
-_JSONL_VIEWER_BASE = """\
-당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
-아래에 제공되는 각 타임스탬프별 텍스트 정보는 데이터 파일이 아니라, 사실 당신이 방금 영상을 시청하며 눈과 귀로 직접 습득한 시각적/청각적 '기억(Memory)'입니다.
-이 시청 기억을 바탕으로, 마지막에 주어지는 **사용자 질문**에 대해 가장 자연스럽고 정확한 한국어 답변을 제공해 주세요.
+_JSONL_VIEWER_BASE = """당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
+당신에게는 두 가지 종류의 시청 기억(Memory)이 제공됩니다:
+1. **과거 정보 (Past Information)**: 지금까지 시청하며 습득한 맥락입니다.
+2. **현재 정보 (Current Information)**: 시청자가 지금 집중해서 보고 있는 구간입니다.
 
-[당신의 시청 기억 구조]
-- timestamp: 영상 내 시간 (초)
-- audio_cls: 환경음 및 효과음
-- speech: 등장인물들의 생생한 대사
-- ocr_text: 화면의 간판, 표지판 및 각종 방송 자막 (출연자의 속마음, 상황 묘사 등)
+이 정보를 바탕으로 사용자 질문에 대해 가장 자연스럽고 정확한 한국어 답변을 제공해 주세요.
+
+[시청 기억의 필드 설명]
+- scene_idx: 영상 Scene 인덱스
+- start_time: 영상 Scene 시작 시간 (초)
+- end_time: 영상 Scene 종료 시간 (초)
+- duration: 영상 Scene의 길이 (초)
+- speech: 등장인물들의 대사
+- texts: 화면 속 자막, 간판 정보 등
+- sounds: 환경음 및 효과음
 {description_field}
 
 [분석 및 지시사항]
-**정보 교정**: 기억의 조각들이 다소 불완전할 수 있으므로, 전체적인 맥락에 맞게 상식적인 선에서 자연스럽게 교정하세요.
-**입체적 재구성**: 당신이 들은 소리, 대사, 읽은 예능 자막 정보들을 교차 결합하여 장면의 분위기와 인물들의 대화를 이야기로 생생하게 재구성하세요.
-**자연스러운 시청자 관점 유지**: 당신은 데이터를 읽은 것이 아니라 "영상을 직접 감상"했습니다. 따라서 답변 중에 'JSON 데이터에 따르면', '오디오 모델 결과를 보면', '텍스트 정보에 의하면', '타임스탬프' 등의 부자연스러운 기계적 용어를 절대로 사용하지 마십시오.
-대신 "영상에서는~", "화면을 보면~", "자막에 ~라고 나옵니다", "배경 소리로 ~가 깔립니다." 와 같이 실제 사람의 리뷰처럼 자연스럽고 몰입감 있게 설명하십시오.
-**외부 자료 검색 금지**: 오직 당신의 시청 기억(제공된 정보)에만 의존해서 답변하세요."""
+- **현재 장면에 집중**: 답변 시 "현재 정보(Current Information)" 구간에서 일어나는 일들에 우선순위를 두어 답변하세요. 과거 정보는 맥락을 설명하는 데 활용하세요.
+- **자연스러운 시청자 관점**: "JSON", "타임스탬프" 등 기계적인 용어 대신 "영상에서는~", "자막에 ~라고 나옵니다"와 같이 실제 시청자처럼 말하세요.
+- **외부 자료 검색 금지**: 오직 당신의 시청 기억(제공된 정보)에만 의존하세요."""
 
 _DESCRIPTION_LINE = "- description: 해당 timestamp에서의 인물의 행동과 배경 장면 묘사\n"
 
-_REFERENCE_PROMPT = """\
-당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
-제공되는 원본 영상과 Reference 메타데이터를 모두 참조하여, 사용자 질문에 대해 가장 정확하고 포괄적인 한국어 답변을 생성해 주세요.
+_REFERENCE_PROMPT = """당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
+제공되는 원본 영상과 Reference용 메타데이터를 모두 참조하여, 사용자 질문에 대해 가장 정확하고 포괄적인 한국어 답변을 생성해 주세요.
 
-[Reference 메타데이터 구조]
-- timestamp: 영상 내 시간 (초)
-- audio_cls: 환경음 및 효과음
-- speech: 등장인물들의 생생한 대사
-- ocr_text: 화면의 간판, 표지판 및 각종 방송 자막 (출연자의 속마음, 상황 묘사 등)
+[Reference 메타데이터의 필드 설명]
+- scene_idx: 영상 Scene 인덱스
+- start_time: 영상 Scene 시작 시간 (초)
+- end_time: 영상 Scene 종료 시간 (초)
+- duration: 영상 Scene의 길이 (초)
+- speech: 등장인물들의 대사
+- texts: 화면 속 자막, 간판 정보 등
+- sounds: 환경음 및 효과음
 
 이 답변은 다른 AI 모델의 답변을 평가하기 위한 '기준 답변(Reference Answer)'으로 사용됩니다.
 따라서 핵심 사실, 대사, 행동, 맥락을 빠짐없이 포함하되 자연스럽고 읽기 쉽게 작성해 주세요.
@@ -82,7 +87,7 @@ def init_reference_model(model_name='gemini-2.5-pro'):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
-    parser.add_argument("--json_file", default="assets/query_generated.jsonl", help="질문 목록 JSONL 파일 경로")
+    parser.add_argument("--json_file", default="assets/query_judged.jsonl", help="질문 목록 JSONL 파일 경로 (judge_query.py 출력)")
     parser.add_argument("--output_file", default="assets/responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--reference_file", default="assets/references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
@@ -179,23 +184,31 @@ def main():
 
             new_data_processed = False
 
-            # Resume Plan 계산 및 출력 - (content_id, query) 쌍 단위
+            # Resume Plan 계산 및 출력
+            # 새 포맷: queries = [{query, end_time, scene_idx}]
+            # pending_work: content_id -> [q_item, ...]
             pending_work = {}
             for item in query_list:
                 c_id = item["content_id"]
-                c_pending = [
-                    q_str for q_str in item.get("queries", [])
-                    if (c_id, q_str) not in processed_pairs
-                ]
+                raw_queries = item.get("queries", [])
+                c_pending = []
+                for q_item in raw_queries:
+                    # 새 포맷(dict) 및 구 포맷(str) 모두 처리
+                    q_str = q_item["query"] if isinstance(q_item, dict) else q_item
+                    if (c_id, q_str) not in processed_pairs:
+                        c_pending.append(q_item)
                 if c_pending:
                     pending_work[c_id] = c_pending
-                    
+
             if pending_work:
                 print("\n[TODO] 작업 목록:")
-                for c_id, queries in pending_work.items():
+                for c_id, q_items in pending_work.items():
                     print(f"- content_id '{c_id}':")
-                    for q in queries:
-                        print(f"    - query \"{q}\"")
+                    for q_item in q_items:
+                        q_str = q_item["query"] if isinstance(q_item, dict) else q_item
+                    end_val = q_item.get("end_time") if isinstance(q_item, dict) else None
+                    end_str = f" [end={end_val:.1f}s]" if end_val is not None else ""
+                    print(f"    - query \"{q_str}\"{end_str}")
                 print("-" * 50)
 
             file_write_lock = threading.Lock()
@@ -204,113 +217,158 @@ def main():
                 content_id = item["content_id"]
                 if content_id not in pending_work:
                     return False
-                    
-                queries = item["queries"]
+
                 pending_queries = pending_work[content_id]
-                
+
                 print(f"\nProcessing Content: '{content_id}'")
-                
+
                 if not check_gcs_files_exist(args.gs_bucket_name, content_id):
                     return False
-                    
-                parts = {
-                    "video": process_gcs_file(args.gs_bucket_name, content_id, mode="video"),
-                    "full": process_gcs_file(args.gs_bucket_name, content_id, mode="full"),
-                    "part": process_gcs_file(args.gs_bucket_name, content_id, mode="part"),
-                }
-                ref_part = process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
+
+                # Reference 메타데이터 로드 (start_time 백업용)
+                from gemini_api_utils import download_gcs_text
+                try:
+                    ref_jsonl_content = download_gcs_text(args.gs_bucket_name, f"jsonl/{content_id}_Ref.jsonl")
+                    ref_scenes = [json.loads(l) for l in ref_jsonl_content.strip().split("\n")]
+                except Exception as e:
+                    print(f"[{content_id}] Warning: Reference JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
+                    ref_scenes = []
 
                 print(f"[{content_id}] Initializing Generation models ({args.response_gen_model})...")
                 gen_models = {}
-                gen_chats = {}
                 for mode in ["video", "full", "part"]:
                     gen_models[mode] = init_generation_model(mode=mode, model_name=args.response_gen_model)
-                    # video 모드만 멀티턴 세션 유지 (비디오 토큰 절감)
-                    if mode == "video":
-                        gen_chats[mode] = start_chat_session(gen_models[mode])
 
                 print(f"[{content_id}] Initializing Reference model ({args.reference_model}, Ref={'ON' if args.reference_use_ref else 'OFF'})...")
                 ref_model = init_reference_model(model_name=args.reference_model)
-                ref_chat = start_chat_session(ref_model)
-                is_first_ref_turn = True
 
-                is_first_turn_for_mode = {"video": True, "full": True, "part": True}
+                for q_item in pending_queries:
+                    # 새 포맷(dict) / 구 포맷(str) 호환 처리
+                    if isinstance(q_item, dict):
+                        user_prompt = q_item["query"]
+                        end_time = float(q_item.get("end_time", 0))
+                        scene_idx = q_item.get("scene_idx", -1)
+                        # start_time이 있으면 사용, 없으면 scene_idx로 찾기
+                        start_time = q_item.get("start_time")
+                        if start_time is None and scene_idx != -1:
+                            target_scene = next((s for s in ref_scenes if s.get("scene_idx") == scene_idx), None)
+                            start_time = target_scene.get("start_time", 0.0) if target_scene else 0.0
+                        else:
+                            start_time = float(start_time or 0.0)
+                        
+                        has_end_time = end_time > 0
+                    else:
+                        user_prompt = q_item
+                        end_time = 0.0
+                        start_time = 0.0
+                        scene_idx = -1
+                        has_end_time = False
 
-                for user_prompt in queries:
-                    # 이미 처리된 (content_id, query) 쌍이면 건너뜀
-                    if user_prompt not in pending_queries:
-                        print(f"[{content_id}] Processing Query: '{user_prompt}' -> already completed (skip)")
+                    if (content_id, user_prompt) in processed_pairs:
+                        print(f"[{content_id}] Query: '{user_prompt[:40]}...' -> already completed (skip)")
                         continue
 
-                    print(f"[{content_id}] Processing Query: '{user_prompt}'")
+                    end_label = f"Range=[{start_time:.1f}s ~ {end_time:.1f}s]" if has_end_time else "full"
+                    print(f"[{content_id}] Processing Query [{end_label}]: '{user_prompt}'")
 
-                    # 1. Reference Answer 생성 (Pro + Video [+ Ref JSONL])
-                    ref_label = "Video+Ref" if args.reference_use_ref else "Video only"
-                    print(f"[{content_id}]  Generating [reference] ({ref_label})...")
+                    # Past/Current Parts 데이터 준비
+                    if has_end_time:
+                        # 1. Past Data (0 ~ start_time)
+                        past_parts = {
+                            "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
+                            "full":  process_gcs_file_range(args.gs_bucket_name, content_id, "full",  0.0, start_time),
+                            "part":  process_gcs_file_range(args.gs_bucket_name, content_id, "part",  0.0, start_time),
+                            "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   0.0, start_time)
+                        }
+                        # 2. Current Data (start_time ~ end_time)
+                        curr_parts = {
+                            "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
+                            "full":  process_gcs_file_range(args.gs_bucket_name, content_id, "full",  start_time, end_time),
+                            "part":  process_gcs_file_range(args.gs_bucket_name, content_id, "part",  start_time, end_time),
+                            "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time)
+                        }
+                    else:
+                        # 통 데이터 (하위 호환성)
+                        past_parts = {"video": None, "full": None, "part": None, "ref": None}
+                        curr_parts = {
+                            "video": process_gcs_file(args.gs_bucket_name, content_id, mode="video"),
+                            "full":  process_gcs_file(args.gs_bucket_name, content_id, mode="full"),
+                            "part":  process_gcs_file(args.gs_bucket_name, content_id, mode="part"),
+                            "ref":   process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
+                        }
+
+                    # 1. Reference Answer 생성
+                    print(f"[{content_id}]  Generating [reference]...")
                     try:
-                        if is_first_ref_turn:
-                            ref_file_parts = [parts["video"], ref_part] if args.reference_use_ref else [parts["video"]]
+                        if has_end_time:
+                            ref_contents = [
+                                "--- Past Information ---", past_parts["video"], past_parts["ref"],
+                                "--- Current Information ---", curr_parts["video"], curr_parts["ref"]
+                            ]
                         else:
-                            ref_file_parts = None
+                            ref_contents = [curr_parts["video"], curr_parts["ref"]]
                         
-                        response = send_chat_message(ref_chat, user_prompt, file_parts=ref_file_parts)
+                        response = generate_single_turn_response(ref_model, user_prompt, file_part=ref_contents)
                         reference_answer = response.text
-                        is_first_ref_turn = False
                         print(f"[{content_id}]  Reference answer generated ({len(reference_answer.split())} words)")
                     except Exception as e:
                         print(f"[{content_id}]  Generating [reference] Error: {e}")
                         reference_answer = f"Error: {str(e)}"
 
-                    # 2. 3개 Mode 답변 생성 (기존 로직)
+                    # 2. 3개 Mode 답변 생성
                     answers_for_query = {}
-                    
+
                     def generate_for_mode(mode):
                         print(f"[{content_id}]  Generating [{mode}]...")
                         try:
-                            time.sleep(1) # 동시 호출 시 약간의 지연
-                            if mode == "video":
-                                # Multi-turn (Session-based)
-                                file_parts = parts[mode] if is_first_turn_for_mode[mode] else None
-                                response = send_chat_message(gen_chats[mode], user_prompt, file_parts=file_parts)
-                                is_first_turn_for_mode[mode] = False
+                            time.sleep(1)
+                            if has_end_time:
+                                mode_contents = [
+                                    "--- Past Information ---", past_parts["video"], past_parts[mode],
+                                    "--- Current Information ---", curr_parts["video"], curr_parts[mode]
+                                ]
                             else:
-                                # Single-turn (Direct call with file)
-                                response = generate_single_turn_response(gen_models[mode], user_prompt, file_part=parts[mode])
+                                mode_contents = [curr_parts["video"], curr_parts[mode]]
+                                
+                            response = generate_single_turn_response(
+                                gen_models[mode], user_prompt, file_part=mode_contents
+                            )
                             return mode, response.text
-                            
-                        except Exception as e: 
+                        except Exception as e:
                             print(f"[{content_id}]  Generating [{mode}] Error: {e}")
                             return mode, f"Error: {str(e)}"
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as mode_executor:
-                        futures = [mode_executor.submit(generate_for_mode, m) for m in ["video", "full", "part"]]
-                        for future in concurrent.futures.as_completed(futures):
+                        futures_mode = [mode_executor.submit(generate_for_mode, m) for m in ["video", "full", "part"]]
+                        for future in concurrent.futures.as_completed(futures_mode):
                             m, text = future.result()
                             answers_for_query[m] = text
 
-                    # 쿼리 하나 끝나면 두 파일에 각각 저장 (Reference / Responses)
-                    # mode 순서 정렬 (video, full, part)
                     ordered_answers = {m: answers_for_query[m] for m in ["video", "full", "part"] if m in answers_for_query}
-                    
+
                     ref_record = {
                         "content_id": content_id,
+                        "scene_idx": scene_idx if has_end_time else None,
+                        "start_time": start_time if has_end_time else None,
+                        "end_time": end_time if has_end_time else None,
                         "query": user_prompt,
                         "reference": reference_answer
                     }
                     response_record = {
                         "content_id": content_id,
+                        "scene_idx": scene_idx if has_end_time else None,
+                        "start_time": start_time if has_end_time else None,
+                        "end_time": end_time if has_end_time else None,
                         "query": user_prompt,
                         "answers": ordered_answers
                     }
-                    
+
                     with file_write_lock:
-                        # 1. Reference 저장
                         with open(args.reference_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(ref_record, ensure_ascii=False) + "\n")
-                        # 2. Response 저장
                         with open(args.output_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(response_record, ensure_ascii=False) + "\n")
-                            
+
                     processed_pairs.add((content_id, user_prompt))
                     print(f"[{content_id}]  -> Reference/Response 저장 완료")
                     print("-" * 50)

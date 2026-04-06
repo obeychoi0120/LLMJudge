@@ -30,7 +30,8 @@ SAFETY_SETTINGS = [
 # config.json에서 CLI 인자보다 낮은 우선순위로 덮어쓸 수 있는 키 목록
 _CONFIG_KEYS = [
     "query_gen_model", "response_gen_model", "judge_model",
-    "location", "reference_model", "reference_use_ref"
+    "location", "reference_model", "reference_use_ref",
+    "keypoint_model", "query_judge_model"
 ]
 
 
@@ -116,6 +117,97 @@ def process_gcs_file(gs_bucket_name, content_id, mode="video"):
 
 
 # ============================================================
+# Truncation Helpers (Keypoint 기반 파이프라인용)
+# ============================================================
+
+def download_gcs_text(gs_bucket_name, blob_path):
+    """GCS 버킷에서 텍스트 파일 내용을 다운로드합니다."""
+    client = storage.Client()
+    bucket = client.bucket(gs_bucket_name)
+    blob = bucket.blob(blob_path)
+    return blob.download_as_text(encoding="utf-8")
+
+
+def truncate_jsonl_range(jsonl_text, start_time, end_time):
+    """JSONL 텍스트에서 [start_time, end_time] 구간의 Scene만 추출합니다.
+    
+    각 Scene의 end_time이 (start_time, end_time] 범위에 걸쳐 있는 라인만 유지합니다.
+    (정교한 분할을 위해 end_time 기준으로 판단)
+    
+    Args:
+        jsonl_text: JSONL 형식의 텍스트 문자열
+        start_time: 시작 시간 (초, float)
+        end_time: 종료 시간 (초, float)
+        
+    Returns:
+        구간 내의 JSONL 텍스트 문자열
+    """
+    truncated_lines = []
+    for line in jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            scene_end = scene.get("end_time", float("inf"))
+            if start_time < scene_end <= end_time:
+                truncated_lines.append(line)
+        except json.JSONDecodeError:
+            continue
+    return "\n".join(truncated_lines)
+
+
+def process_gcs_file_range(gs_bucket_name, content_id, mode, start_time, end_time):
+    """[start_time, end_time] 구간 데이터 Part를 반환합니다.
+    
+    - video 모드: VideoMetadata의 start_offset/end_offset을 사용하여 구간 클리핑
+    - jsonl 모드 (full/part/ref): GCS에서 다운로드 후 해당 구간만 추출하여 인라인 Part 반환
+    
+    Args:
+        gs_bucket_name: GCS 버킷 이름
+        content_id: 콘텐츠 ID
+        mode: "video", "full", "part", "ref" 중 하나
+        start_time: 시작 시각 (초, float)
+        end_time: 종료 시각 (초, float)
+        
+    Returns:
+        vertexai Part 객체
+    """
+    from google.cloud.aiplatform_v1beta1.types import content as gapic_content
+    
+    if mode not in _GCS_MODE_MAP:
+        raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
+    
+    path_template, mime_type = _GCS_MODE_MAP[mode]
+    blob_path = path_template.format(cid=content_id)
+    file_uri = f"gs://{gs_bucket_name}/{blob_path}"
+    
+    if mode == "video":
+        # VideoMetadata를 사용하여 구간 비디오 클리핑
+        video_meta = gapic_content.VideoMetadata(
+            start_offset=f"{int(start_time)}s",
+            end_offset=f"{int(end_time)}s"
+        )
+        raw_part = gapic_content.Part(
+            file_data=gapic_content.FileData(
+                file_uri=file_uri,
+                mime_type=mime_type
+            ),
+            video_metadata=video_meta
+        )
+        return Part._from_gapic(raw_part)
+    else:
+        # JSONL 텍스트를 다운로드 후 지정된 구간만 추출하여 인라인 Part로 반환
+        jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
+        range_text = truncate_jsonl_range(jsonl_text, start_time, end_time)
+        return Part.from_data(data=range_text.encode("utf-8"), mime_type="text/plain")
+
+
+def process_gcs_file_truncated(gs_bucket_name, content_id, mode, end_time):
+    """[0, end_time]까지 Truncation된 GCS 파일 Part를 반환합니다. (Scene 기반 파이프라인)"""
+    return process_gcs_file_range(gs_bucket_name, content_id, mode, 0.0, end_time)
+
+
+# ============================================================
 # Common API Retry Helper
 # ============================================================
 
@@ -167,8 +259,16 @@ def send_chat_message(chat, user_prompt, file_parts=None):
 
 
 def generate_single_turn_response(model, user_prompt, file_part=None):
-    """모델 직접 호출을 통한 Single-turn 응답 생성."""
-    contents = [file_part, user_prompt] if file_part else [user_prompt]
+    """모델 직접 호출을 통한 Single-turn 응답 생성.
+    
+    file_part: Part 하나, Part의 리스트, 또는 None 모두 허용.
+    """
+    if file_part is None:
+        contents = [user_prompt]
+    elif isinstance(file_part, list):
+        contents = file_part + [user_prompt]
+    else:
+        contents = [file_part, user_prompt]
     return _retry_api_call(
         lambda: model.generate_content(contents),
         label="Generation API (Single-turn)",
