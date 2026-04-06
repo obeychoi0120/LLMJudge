@@ -4,7 +4,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ## 📝 프로젝트 개요
 
-이 프로젝트는 시청자가 영상을 중간까지 보다가 질문을 남길 만한 핵심 씬 (Keypoint Scene)을 식별하고, 해당 시점까지의 **과거 맥락(Past)**과 **현재 장면(Current Focus)**을 분리하여 분석합니다. 두 가지 유형의 질문을 생성하고, 각각에 적합한 평가 프로세스를 적용합니다.
+이 프로젝트는 시청자가 영상을 중간까지 보다가 질문을 남길 만한 핵심 씬 (Keypoint Scene)을 식별하고, 해당 시점까지의 **과거 맥락(Past)** 과 **현재 장면(Current Focus)** 을 분리하여 분석합니다. 두 가지 유형의 질문을 생성하고, 각각에 적합한 평가 프로세스를 적용합니다.
 
 - **Bubble Query**: 현재 장면에 보이는 것만으로 생성되는 시청자의 즉각적인 궁금증 (장면 중심)
   - Keypoint 식별 → Bubble Query 생성 → Detailed Summary 기반 Query 품질 평가 (Scoring)
@@ -37,7 +37,7 @@ flowchart TD
 
     subgraph STEP3["Bubble Query Scoring"]
         direction TB
-        QJ_SCRIPT["**judge_query.py**<br/>(Detailed Summary 기반)"]
+        QJ_SCRIPT["**judge_bubble_query.py**<br/>(Detailed Summary 기반)"]
         QJ_SCORES["**bubble_query_scores.jsonl**<br/>질문별 품질 점수"]
     end
 
@@ -107,15 +107,15 @@ flowchart TD
 
 ### 파이프라인 요약
 
-| Step | 스크립트 | 입력 | 출력 | 모델 |
+| Step | 스크립트 | Source | Output | 모델 |
 |------|----------|------|------|------|
-| 0-1 | `identify_keypoint.py` | `content_list.json` + GCS | `keypoint_scenes.jsonl` | Flash |
-| 0-2 | `generate_bubble_query.py` | `keypoint_scenes.jsonl` + GCS | `bubble_query.jsonl` | Flash (Query), Pro (Summary) |
-| 0-3 | `generate_user_query.py` | `keypoint_scenes.jsonl` + GCS | `user_query.jsonl` | Pro |
-| 1 | `judge_query.py` | `bubble_query.jsonl` | `bubble_query_scores.jsonl` | Pro |
-| 2 | `generate_response.py` | `user_query.jsonl` + GCS | `uq_responses.jsonl`, `uq_references.jsonl` | Flash (답변), Pro (Reference) |
-| 3 | `judge_response.py` | `uq_responses.jsonl` + `uq_references.jsonl` | `uq_response_scores.jsonl` | Pro |
-| 4 | `jsonl_to_json.py` / `export_to_excel.py` | `uq_response_scores.jsonl` | Excel 리포트 | — |
+| A-1 | `identify_keypoint.py` | Video+Ref JSON | `keypoint_scenes.jsonl` | Flash |
+| A-2 | `generate_bubble_query.py` | Query: Full/Part JSON</br>Summary: Video+Ref JSON | `bubble_query.jsonl` | Flash (Query), Pro (Summary) |
+| A-3 | `judge_bubble_query.py` | Query, Summary+Ref JSON | `bubble_query_scores.jsonl` | Pro |
+| B-1 | `generate_user_query.py` | Video+Ref JSON | `user_query.jsonl` | Pro |
+| B-2 | `generate_response.py` | Video/Full/Part JSON | `uq_responses.jsonl`, `uq_references.jsonl` | Flash (Response), Pro (Reference) |
+| B-3 | `judge_response.py` | Response, Reference | `uq_response_scores.jsonl` | Pro |
+| B-4 | `jsonl_to_json.py` / `export_to_excel.py` | `uq_response_scores.jsonl` | Excel 리포트 | — |
 
 ## ✨ 주요 특징
 
@@ -191,9 +191,9 @@ LLMJudge/
 
 ## 🎯 실행 방법
 
-### 통합 실행 (권장)
+### 통합 실행
 ```bash
-# 전체 파이프라인 실행 (Keypoint 식별 단계에서 사용자 확인 필요)
+# 전체 파이프라인 실행
 python main.py --input_file content_list.json
 
 # Keypoint 식별만 대화형으로 실행
@@ -208,7 +208,7 @@ python main.py --skip-keypoint --skip-query-gen
 
 ### 각 모듈 개별 실행
 ```bash
-# Step 0-1: Keypoint Scene 식별 (Y/N 확인 필요)
+# Step 0-1: Keypoint Scene 식별
 python identify_keypoint.py
 
 # Step 0-2: Bubble Query 생성 (Keypoint 입력)

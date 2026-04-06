@@ -24,12 +24,14 @@ def main():
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="global", help="GCP Location")
     
+    # Bubble Query 모델 설정
     parser.add_argument("--keypoint_model", default="gemini-2.5-flash", help="Keypoint Scene 식별에 사용할 Budget 모델명")
     parser.add_argument("--bubble_query_model", default="gemini-2.5-flash", help="Bubble Query 생성에 사용할 Budget 모델명")
-    parser.add_argument("--user_query_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
     parser.add_argument("--summary_gen_model", default="gemini-2.5-pro", help="Detailed Summary 생성에 사용할 Premium 모델명")
     parser.add_argument("--query_judge_model", default="gemini-2.5-pro", help="Bubble Query 질문 Judge에 사용할 Premium 모델명")
     
+    # User Query 모델 설정
+    parser.add_argument("--user_query_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="User Query 답변 생성 모델명")
     parser.add_argument("--reference_model", default="gemini-2.5-pro", help="User Query Reference Answer 생성 모델명")
     parser.add_argument("--no-reference-ref", dest="reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")

@@ -216,7 +216,7 @@ def main():
                 end_time = float(kp.get("end_time", 0.0))
                 reason = kp.get("reason", "")
 
-                print(f"\n  [{idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | {reason}")
+                print(f"\n  [{idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
 
                 try:
                     time.sleep(2)
