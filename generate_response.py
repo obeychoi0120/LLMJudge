@@ -35,6 +35,12 @@ _JSONL_VIEWER_BASE = """당신은 실시간으로 영상을 시청하고 분석�
 - sounds: 환경음 및 효과음
 {description_field}
 
+[메타데이터 정확도 주의사항]
+speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
+- speech: 음성 인식 오류로 인해 대사가 누락되거나 잘못 전사될 수 있습니다.
+- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
+- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 보조 자료로만 활용하세요.
+
 [분석 및 지시사항]
 - **현재 장면에 집중**: 답변 시 "현재 정보(Current Information)" 구간에서 일어나는 일들에 우선순위를 두어 답변하세요. 과거 정보는 맥락을 설명하는 데 활용하세요.
 - **자연스러운 시청자 관점**: "JSON", "타임스탬프" 등 기계적인 용어 대신 "영상에서는~", "자막에 ~라고 나옵니다"와 같이 실제 시청자처럼 말하세요.
@@ -53,6 +59,13 @@ _REFERENCE_PROMPT = """당신은 실시간으로 영상을 시청하고 분석�
 - speech: 등장인물들의 대사
 - texts: 화면 속 자막, 간판 정보 등
 - sounds: 환경음 및 효과음
+
+[메타데이터 사용 시 주의사항]
+speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
+- speech: 음성 인식 오류로 인해 대사가 누락되거나 잘못 전사될 수 있습니다.
+- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
+- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 
+반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
 
 이 답변은 다른 AI 모델의 답변을 평가하기 위한 '기준 답변(Reference Answer)'으로 사용됩니다.
 따라서 핵심 사실, 대사, 행동, 맥락을 빠짐없이 포함하되 자연스럽고 읽기 쉽게 작성해 주세요.
@@ -87,9 +100,9 @@ def init_reference_model(model_name='gemini-2.5-pro'):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
-    parser.add_argument("--json_file", default="assets/query_judged.jsonl", help="질문 목록 JSONL 파일 경로 (judge_query.py 출력)")
-    parser.add_argument("--output_file", default="assets/responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
-    parser.add_argument("--reference_file", default="assets/references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
+    parser.add_argument("--json_file", default="assets/user_query.jsonl", help="질문 목록 JSONL 파일 경로 (generate_user_query.py 출력)")
+    parser.add_argument("--output_file", default="assets/uq_responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
+    parser.add_argument("--reference_file", default="assets/uq_references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")

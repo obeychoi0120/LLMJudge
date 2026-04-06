@@ -80,9 +80,9 @@ def evaluate_answer_session(judge_chat, user_prompt, generated_answer, reference
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Responses using Judge model")
-    parser.add_argument("--answers_file", default="assets/responses.jsonl", help="답변 목록 JSONL 파일 경로")
-    parser.add_argument("--references_file", default="assets/references.jsonl", help="Reference 답변 목록 JSONL 파일 경로")
-    parser.add_argument("--output_file", default="assets/scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
+    parser.add_argument("--answers_file", default="assets/uq_responses.jsonl", help="답변 목록 JSONL 파일 경로")
+    parser.add_argument("--references_file", default="assets/uq_references.jsonl", help="Reference 답변 목록 JSONL 파일 경로")
+    parser.add_argument("--output_file", default="assets/uq_response_scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")

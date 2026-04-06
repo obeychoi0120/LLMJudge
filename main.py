@@ -10,22 +10,23 @@ def main():
     parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
     
     # Bubble Query (현재 장면 관련 질문) 입출력
-    parser.add_argument("--bubble_queries_file", default="assets/bubble_query_generated.jsonl", help="Bubble Query 생성된 질문 목록 경로")
-    parser.add_argument("--bubble_judged_queries_file", default="assets/bubble_query_judged.jsonl", help="Bubble Query Judge 통과한 질문 목록 경로")
+    parser.add_argument("--bubble_queries_file", default="assets/bubble_query.jsonl", help="Bubble Query 생성된 질문 목록 경로")
+    parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 저장 경로")
     parser.add_argument("--bubble_query_scores_file", default="assets/bubble_query_scores.jsonl", help="Bubble Query 질문별 Judge 점수 파일 경로")
     
     # User Query (전체 시청 내역 기반 질문 및 답변) 입출력
-    parser.add_argument("--user_queries_file", default="assets/user_query_generated.jsonl", help="User Query 생성된 질문 목록 경로")
-    parser.add_argument("--responses_file", default="assets/responses.jsonl", help="User Query 생성/통합된 답변 목록 경로")
-    parser.add_argument("--references_file", default="assets/references.jsonl", help="User Query Reference 답변 목록 경로")
-    parser.add_argument("--scores_file", default="assets/scores.jsonl", help="User Query 최종 답변 평가 결과 경로")
+    parser.add_argument("--user_queries_file", default="assets/user_query.jsonl", help="User Query 생성된 질문 목록 경로")
+    parser.add_argument("--responses_file", default="assets/uq_responses.jsonl", help="User Query 생성/통합된 답변 목록 경로")
+    parser.add_argument("--references_file", default="assets/uq_references.jsonl", help="User Query Reference 답변 목록 경로")
+    parser.add_argument("--scores_file", default="assets/uq_response_scores.jsonl", help="User Query 최종 답변 평가 결과 경로")
     
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="global", help="GCP Location")
     
     parser.add_argument("--keypoint_model", default="gemini-2.5-flash", help="Keypoint Scene 식별에 사용할 Budget 모델명")
-    parser.add_argument("--query_gen_model", default="gemini-2.5-flash", help="질문 생성(Bubble/User)에 사용할 Budget 모델명")
+    parser.add_argument("--bubble_query_model", default="gemini-2.5-flash", help="Bubble Query 생성에 사용할 Budget 모델명")
+    parser.add_argument("--user_query_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
     parser.add_argument("--summary_gen_model", default="gemini-2.5-pro", help="Detailed Summary 생성에 사용할 Premium 모델명")
     parser.add_argument("--query_judge_model", default="gemini-2.5-pro", help="Bubble Query 질문 Judge에 사용할 Premium 모델명")
     
@@ -35,8 +36,9 @@ def main():
     parser.set_defaults(reference_use_ref=True)
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="User Query 답변 평가 모델명")
     
-    parser.add_argument("--skip-query-gen", action="store_true", help="질문 생성(Bubble/User)을 건너뛰기")
-    parser.add_argument("--skip-query-judge", action="store_true", help="Bubble Query 질문 Judge를 건너뛰기")
+    parser.add_argument("--skip-keypoint", action="store_true", help="Keypoint 식별를 건너뛰기")
+    parser.add_argument("--skip-query-gen", action="store_true", help="Bubble/User Query 생성을 건너뛰기")
+    parser.add_argument("--skip-query-judge", action="store_true", help="Bubble Query 품질 Judge를 건너뛰기")
     parser.add_argument("--skip-response", action="store_true", help="User Query 답변 생성을 건너뛰기")
     parser.add_argument("--skip-judge", action="store_true", help="User Query 답변 평가를 건너뛰기")
 
@@ -54,55 +56,72 @@ def main():
     ]
 
     # ───────────────────────────────────────────────
-    # Step 0: Keypoint Scene 식별 + Bubble/User Query 생성
+    # Step 0-1: Keypoint Scene 식별 (identify_keypoint.py)
+    # ───────────────────────────────────────────────
+    if not args.skip_keypoint:
+        print("\n" + "="*60)
+        print(">>> 0-1. Keypoint Scene 식별 (identify_keypoint.py)")
+        print("="*60)
+        cmd_kp = [
+            sys.executable, "identify_keypoint.py",
+            "--input_file", args.input_file,
+            "--output_file", args.keypoints_file,
+            "--keypoint_model", args.keypoint_model,
+        ] + common_project_args
+        subprocess.run(cmd_kp, check=True)
+        print(f"-> Keypoint Scenes 저장 완료: {args.keypoints_file}")
+    else:
+        print(f"\n[Skip] Keypoint 식별 건너뜀.")
+
+    # ───────────────────────────────────────────────
+    # Step 0-2: Bubble Query 생성 (generate_bubble_query.py)
     # ───────────────────────────────────────────────
     if not args.skip_query_gen:
         print("\n" + "="*60)
-        print(">>> 0-1. Keypoint Scene 식별 + Bubble Query 생성 (generate_bubble_query.py)")
+        print(">>> 0-2. Bubble Query 생성 (generate_bubble_query.py)")
         print("="*60)
         cmd_bubble = [
             sys.executable, "generate_bubble_query.py",
-            "--input_file", args.input_file,
+            "--input_file", args.keypoints_file,
             "--output_file", args.bubble_queries_file,
-            "--keypoint_model", args.keypoint_model,
-            "--query_gen_model", args.query_gen_model,
+            "--query_gen_model", args.bubble_query_model,
             "--summary_gen_model", args.summary_gen_model,
         ] + common_project_args
         subprocess.run(cmd_bubble, check=True)
         print(f"-> Bubble Query 저장 완료: {args.bubble_queries_file}")
 
         print("\n" + "="*60)
-        print(">>> 0-2. 파생 Scene 기반 User Query 생성 (generate_user_query.py)")
+        print(">>> 0-3. User Query 생성 (generate_user_query.py)")
         print("="*60)
         cmd_user = [
             sys.executable, "generate_user_query.py",
+            "--keypoints_file", args.keypoints_file,
             "--input_file", args.bubble_queries_file,
             "--output_file", args.user_queries_file,
-            "--query_gen_model", args.query_gen_model,
+            "--query_gen_model", args.user_query_model,
         ] + common_project_args
         subprocess.run(cmd_user, check=True)
         print(f"-> User Query 저장 완료: {args.user_queries_file}")
     else:
-        print(f"\n[Skip] 질문 생성 건너뜀.")
+        print(f"\n[Skip] Query 생성 건너뜀.")
 
     # ───────────────────────────────────────────────
     # Step 1: Bubble Query 질문 품질 Judge (judge_query.py)
     # ───────────────────────────────────────────────
     if not args.skip_query_judge:
         print("\n" + "="*60)
-        print(">>> 1. Bubble Query 질문 통과 여부 Judge (judge_query.py)")
+        print(">>> 1. Bubble Query 질문 품질 평가 (judge_query.py)")
         print("="*60)
         cmd = [
             sys.executable, "judge_query.py",
             "--input_file", args.bubble_queries_file,
-            "--output_file", args.bubble_judged_queries_file,
             "--scores_file", args.bubble_query_scores_file,
             "--query_judge_model", args.query_judge_model,
         ] + common_project_args
         subprocess.run(cmd, check=True)
-        print(f"-> Bubble Query Judge 통과 질문 저장 완료: {args.bubble_judged_queries_file}")
+        print(f"-> Bubble Query 평가 점수 저장 완료: {args.bubble_query_scores_file}")
     else:
-        print(f"\n[Skip] Bubble Query 질문 Judge 건너뜀.")
+        print(f"\n[Skip] Bubble Query 질문 평가 건너뜀.")
 
     # ───────────────────────────────────────────────
     # Step 2: User Query 답변 생성 (generate_response.py)

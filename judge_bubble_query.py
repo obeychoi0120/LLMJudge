@@ -56,8 +56,6 @@ _QUERY_JUDGE_FORMAT_PROMPT = """\
 }\
 """
 
-PASS_THRESHOLD = 9  # 15점 만점 중 9점 이상 통과
-
 
 def init_query_judge_model(model_name="gemini-2.5-pro"):
     return GenerativeModel(
@@ -84,15 +82,13 @@ def evaluate_query(judge_model, detailed_summary, query_text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bubble Query 질문을 텍스트 요약 기반으로 프리미엄 Judge하여 필터링")
-    parser.add_argument("--input_file", default="assets/bubble_query_generated.jsonl", help="Bubble Query 질문 목록 JSONL 경로")
-    parser.add_argument("--output_file", default="assets/bubble_query_judged.jsonl", help="Judge 통과 질문 목록 저장 경로")
+    parser = argparse.ArgumentParser(description="Bubble Query 질문을 텍스트 요약 기반으로 품질 평가")
+    parser.add_argument("--input_file", default="assets/bubble_query.jsonl", help="Bubble Query 질문 목록 JSONL 경로")
     parser.add_argument("--scores_file", default="assets/bubble_query_scores.jsonl", help="Bubble Query 질문별 Judge 점수 저장 경로")
     
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--query_judge_model", default="gemini-2.5-pro", help="질문 평가에 사용할 Premium 모델명")
-    parser.add_argument("--pass_threshold", type=int, default=PASS_THRESHOLD, help=f"통과 점수 기준 (기본값: {PASS_THRESHOLD}/15)")
     parser.add_argument("--location", default="global", help="GCP Location")
 
     args = parser.parse_args()
@@ -105,10 +101,9 @@ def main():
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
     vertexai.init(project=args.gcp_project_id, location=args.location)
 
-    for fpath in [args.output_file, args.scores_file]:
-        odir = os.path.dirname(fpath)
-        if odir and not os.path.exists(odir):
-            os.makedirs(odir)
+    odir = os.path.dirname(args.scores_file)
+    if odir and not os.path.exists(odir):
+        os.makedirs(odir)
 
     processed_pairs = set()
     if os.path.exists(args.scores_file):
@@ -126,7 +121,7 @@ def main():
         print(f"[{len(processed_pairs)}] 개의 (content_id, query) 쌍이 이미 처리됨.")
 
     if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_query.py를 실행하세요.")
+        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_bubble_query.py를 실행하세요.")
         return
 
     content_list = []
@@ -139,7 +134,7 @@ def main():
                 pass
 
     print(f"\n{'='*50}")
-    print(f"Bubble Query 질문 품질 Judge 프로세스 (Text-only) 시작 (통과 기준: {args.pass_threshold}/15점)")
+    print(f"Bubble Query 질문 품질 평가 프로세스 (Text-only) 시작")
     print(f"{'='*50}")
 
     file_write_lock = threading.Lock()
@@ -156,14 +151,12 @@ def main():
 
             pending = [q for q in queries if isinstance(q, dict) and (content_id, q["query"]) not in processed_pairs]
             if not pending:
-                print(f"  -> 모든 질문이 이미 Judge됨. Skip.")
+                print(f"  -> 모든 질문이 이미 평가됨. Skip.")
                 continue
 
             print(f"  -> {len(pending)}개 질문 평가 예정")
 
             judge_model = init_query_judge_model(model_name=args.query_judge_model)
-
-            passed_queries = []
 
             def judge_one(q_item):
                 query_text = q_item["query"]
@@ -173,8 +166,8 @@ def main():
                 print(f"  Judging: \"{query_text[:40]}...\"")
 
                 if not detailed_summary:
-                    print(f"    [Warning] 이 질문에는 detailed_summary가 없습니다. 강제 패스 처리하거나 스킵합니다.")
-                    return None
+                    print(f"    [Warning] 이 질문에는 detailed_summary가 없습니다. 스킵합니다.")
+                    return
 
                 try:
                     time.sleep(1)
@@ -196,55 +189,38 @@ def main():
                             break
 
                     total = score_dict.get("total_score", 0) if score_dict else 0
-                    passed = total >= args.pass_threshold
 
                     score_record = {
                         "content_id": content_id,
                         "query": query_text,
                         "scene_idx": scene_idx,
+                        "start_time": q_item.get("start_time"),
+                        "end_time": q_item.get("end_time"),
                         "judge": score_dict,
-                        "passed": passed,
                     }
 
-                    status = "PASS ✓" if passed else f"FAIL ✗ ({total}/15)"
-                    print(f"    -> {status}: {score_dict.get('rationale', '')[:80] if score_dict else 'N/A'}")
+                    print(f"    -> Score: {total}/15 | {score_dict.get('rationale', '')[:100] if score_dict else 'N/A'}")
 
                     with file_write_lock:
                         with open(args.scores_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(score_record, ensure_ascii=False) + "\n")
 
-                    return q_item if passed else None
-
                 except Exception as e:
                     print(f"    [Error] Judge 최종 실패: {e}")
-                    return None
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 futures = [executor.submit(judge_one, q) for q in pending]
                 for future in concurrent.futures.as_completed(futures):
-                    result = future.result()
-                    if result is not None:
-                        passed_queries.append(result)
+                    future.result()
 
-            if passed_queries:
-                judged_entry = {
-                    "content_id": content_id,
-                    "queries": passed_queries
-                }
-                with file_write_lock:
-                    with open(args.output_file, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(judged_entry, ensure_ascii=False) + "\n")
-
-                print(f"\n  -> '{content_id}': {len(passed_queries)}/{len(pending)}개 통과, 저장 완료")
-            else:
-                print(f"\n  -> '{content_id}': 통과한 질문 없음")
+            scored_count = len([q for q in pending if (content_id, q["query"]) not in processed_pairs])
+            print(f"\n  -> '{content_id}': {scored_count}개 질문 평가 완료")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
 
     print(f"\n{'='*50}")
-    print(f"Bubble Query 질문 Judge 완료. 통과 질문 저장: {args.output_file}")
-    print(f"전체 점수 기록: {args.scores_file}")
+    print(f"Bubble Query 질문 평가 완료. 점수 기록: {args.scores_file}")
     print(f"{'='*50}")
 
 if __name__ == "__main__":
