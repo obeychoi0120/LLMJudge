@@ -1,6 +1,5 @@
 import os
 import time
-import math
 import concurrent.futures
 import argparse
 import json
@@ -8,7 +7,9 @@ from gemini_api_utils import (
     create_client, make_generate_config,
     process_gcs_file, process_gcs_file_range, check_gcs_files_exist,
     load_config, parse_json_response,
-    _retry_api_call, download_gcs_text
+    _retry_api_call, load_ref_scenes,
+    ensure_output_dir, load_processed_content_ids,
+    preload_content_metadata,
 )
 
 # ============================================================
@@ -161,19 +162,19 @@ def build_scene_list_text(scenes):
 # 모델 초기화
 # ============================================================
 
-def make_keypoint_config(model_name):
+def make_keypoint_config(model_name, thinking_budget=None):
     """단일 세션(9~24 Scene)용 config"""
-    return make_generate_config(system_instruction=_KEYPOINT_SYSTEM_PROMPT)
+    return make_generate_config(system_instruction=_KEYPOINT_SYSTEM_PROMPT, thinking_budget=thinking_budget)
 
 
-def make_candidate_config():
+def make_candidate_config(thinking_budget=None):
     """Stage 1: 세그먼트별 Candidate 생성용 config"""
-    return make_generate_config(system_instruction=_CANDIDATE_SYSTEM_PROMPT)
+    return make_generate_config(system_instruction=_CANDIDATE_SYSTEM_PROMPT, thinking_budget=thinking_budget)
 
 
-def make_selector_config():
+def make_selector_config(thinking_budget=None):
     """Stage 2: 최종 Keypoint 선별용 config"""
-    return make_generate_config(system_instruction=_SELECTOR_SYSTEM_PROMPT)
+    return make_generate_config(system_instruction=_SELECTOR_SYSTEM_PROMPT, thinking_budget=thinking_budget)
 
 
 # ============================================================
@@ -269,6 +270,8 @@ def main():
     parser.add_argument("--location", default="global", help="GCP Location")
 
     parser.add_argument("--keypoint_model", default="gemini-2.5-flash", help="Keypoint 식별에 사용할 모델명")
+    parser.add_argument("--keypoint_thinking_budget", type=int, default=1024,
+                        help="Keypoint 식별 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -279,9 +282,9 @@ def main():
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
     client = create_client(args.gcp_project_id, args.location)
-    keypoint_config = make_keypoint_config(args.keypoint_model)
-    candidate_config = make_candidate_config()
-    selector_config = make_selector_config()
+    keypoint_config = make_keypoint_config(args.keypoint_model, thinking_budget=args.keypoint_thinking_budget)
+    candidate_config = make_candidate_config(thinking_budget=args.keypoint_thinking_budget)
+    selector_config = make_selector_config(thinking_budget=args.keypoint_thinking_budget)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
@@ -291,20 +294,10 @@ def main():
         input_list = json.load(f)
 
     # 출력 디렉토리 확인
-    odir = os.path.dirname(args.output_file)
-    if odir and not os.path.exists(odir):
-        os.makedirs(odir, exist_ok=True)
+    ensure_output_dir(args.output_file)
 
     # 기처리분 건너뛰기
-    processed_ids = set()
-    if os.path.exists(args.output_file):
-        with open(args.output_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        processed_ids.add(json.loads(line)["content_id"])
-                    except: pass
-
+    processed_ids = load_processed_content_ids(args.output_file)
     if processed_ids:
         print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 처리되어 건너뜁니다.")
 
@@ -329,8 +322,8 @@ def main():
                 continue
 
             # ---- JSONL 로드 & Scene List 구성 ----
-            ref_jsonl_content = download_gcs_text(args.gs_bucket_name, f"jsonl/{content_id}_Ref.jsonl")
-            ref_scenes = [json.loads(l) for l in ref_jsonl_content.strip().split("\n")]
+            preload_content_metadata(args.gs_bucket_name, content_id)
+            ref_scenes = load_ref_scenes(args.gs_bucket_name, content_id)
             total_scenes = len(ref_scenes)
             full_scene_list_text = build_scene_list_text(ref_scenes)
 
@@ -357,7 +350,7 @@ def main():
             # ======================================================
             elif total_scenes <= _SPLIT_THRESHOLD:
                 print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 이하이므로 단일 세션으로 식별합니다.")
-                model = None  # 신 SDK에서는 model 객체 불필요
+
                 video_part = process_gcs_file(args.gs_bucket_name, content_id, mode="video")
                 ref_part = process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
 
@@ -405,7 +398,7 @@ def main():
                           f"({seg_start_time:.1f}s ~ {seg_end_time:.1f}s)")
 
                     # 각 스레드마다 독립 config 사용 (thread-safe)
-                    seg_cand_config = make_candidate_config()
+                    seg_cand_config = make_candidate_config(thinking_budget=args.keypoint_thinking_budget)
 
                     video_part = process_gcs_file_range(
                         args.gs_bucket_name, content_id, "video",
@@ -455,7 +448,6 @@ def main():
 
                 # Stage 2: 최종 선별
                 print(f"\n[Stage 2] 최종 Keypoint 선별 중... ({args.keypoint_model})")
-                selector_model = None  # 신 SDK에서는 model 객체 불필요
 
                 try:
                     time.sleep(2)

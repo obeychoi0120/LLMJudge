@@ -10,7 +10,8 @@ from gemini_api_utils import (
     create_client, make_generate_config,
     process_gcs_file, process_gcs_file_range,
     check_gcs_files_exist, load_config,
-    _retry_api_call, download_gcs_text
+    _retry_api_call, load_ref_scenes,
+    ensure_output_dir, preload_content_metadata,
 )
 
 # ============================================================
@@ -84,9 +85,9 @@ def make_generation_config(mode="full", thinking_budget=None):
     return make_generate_config(system_instruction=prompt, thinking_budget=thinking_budget)
 
 
-def make_reference_config():
+def make_reference_config(thinking_budget=None):
     """Reference Answer 생성용 config를 반환합니다."""
-    return make_generate_config(system_instruction=_REFERENCE_PROMPT)
+    return make_generate_config(system_instruction=_REFERENCE_PROMPT, thinking_budget=thinking_budget)
 
 
 def main():
@@ -96,14 +97,16 @@ def main():
     parser.add_argument("--reference_file", default="assets/uq_references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
-    parser.add_argument("--reference_model", default="gemini-2.5-pro", help="Reference Answer 생성 모델명")
-    parser.add_argument("--no-reference-ref", dest="reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
-    parser.set_defaults(reference_use_ref=True)
+    parser.add_argument("--uq_response_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
+    parser.add_argument("--uq_reference_model", default="gemini-2.5-pro", help="Reference Answer 생성 모델명")
+    parser.add_argument("--no-uq-reference-ref", dest="uq_reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
+    parser.set_defaults(uq_reference_use_ref=True)
     parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
-    parser.add_argument("--response_thinking_budget", type=int, default=-1,
-                        help="Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--uq_response_thinking_budget", type=int, default=-1,
+                        help="UQ Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--uq_reference_thinking_budget", type=int, default=4096,
+                        help="UQ Reference Answer 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -117,9 +120,7 @@ def main():
     
     # 출력 폴더 생성 (responses, references)
     for fpath in [args.output_file, args.reference_file]:
-        odir = os.path.dirname(fpath)
-        if odir and not os.path.exists(odir):
-            os.makedirs(odir)
+        ensure_output_dir(fpath)
 
     print("\n" + "=" * 50)
     print("Gemini Inference 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
@@ -212,9 +213,9 @@ def main():
                     print(f"- content_id '{c_id}':")
                     for q_item in q_items:
                         q_str = q_item["query"] if isinstance(q_item, dict) else q_item
-                    end_val = q_item.get("end_time") if isinstance(q_item, dict) else None
-                    end_str = f" [end={end_val:.1f}s]" if end_val is not None else ""
-                    print(f"    - query \"{q_str}\"{end_str}")
+                        end_val = q_item.get("end_time") if isinstance(q_item, dict) else None
+                        end_str = f" [end={end_val:.1f}s]" if end_val is not None else ""
+                        print(f"    - query \"{q_str}\"{end_str}")
                 print("-" * 50)
 
             file_write_lock = threading.Lock()
@@ -231,22 +232,21 @@ def main():
                 if not check_gcs_files_exist(args.gs_bucket_name, content_id):
                     return False
 
-                # Reference 메타데이터 로드 (start_time 백업용)
-                from gemini_api_utils import download_gcs_text
+                # Reference 메타데이터 프리로드 & Scene 로드
+                preload_content_metadata(args.gs_bucket_name, content_id)
                 try:
-                    ref_jsonl_content = download_gcs_text(args.gs_bucket_name, f"jsonl/{content_id}_Ref.jsonl")
-                    ref_scenes = [json.loads(l) for l in ref_jsonl_content.strip().split("\n")]
+                    ref_scenes = load_ref_scenes(args.gs_bucket_name, content_id)
                 except Exception as e:
                     print(f"[{content_id}] Warning: Reference JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
                     ref_scenes = []
 
-                print(f"[{content_id}] Initializing Generation configs ({args.response_gen_model})...")
+                print(f"[{content_id}] Initializing Generation configs ({args.uq_response_model})...")
                 gen_configs = {}
                 for mode in ["video", "full", "part"]:
-                    gen_configs[mode] = make_generation_config(mode=mode, thinking_budget=args.response_thinking_budget)
+                    gen_configs[mode] = make_generation_config(mode=mode, thinking_budget=args.uq_response_thinking_budget)
 
-                print(f"[{content_id}] Initializing Reference config ({args.reference_model}, Ref={'ON' if args.reference_use_ref else 'OFF'})...")
-                ref_config = make_reference_config()
+                print(f"[{content_id}] Initializing Reference config ({args.uq_reference_model}, Ref={'ON' if args.uq_reference_use_ref else 'OFF'})...")
+                ref_config = make_reference_config(thinking_budget=args.uq_reference_thinking_budget)
 
                 for q_item in pending_queries:
                     # 새 포맷(dict) / 구 포맷(str) 호환 처리
@@ -316,7 +316,7 @@ def main():
                         
                         response_text = _retry_api_call(
                             lambda: client.models.generate_content(
-                                model=args.reference_model,
+                                model=args.uq_reference_model,
                                 contents=[*ref_contents, user_prompt],
                                 config=ref_config
                             ).text,
@@ -337,16 +337,16 @@ def main():
                             time.sleep(1)
                             if has_end_time:
                                 mode_contents = [
-                                    "--- Past Information ---", past_parts["video"], past_parts[mode],
-                                    "--- Current Information ---", curr_parts["video"], curr_parts[mode]
+                                    "--- Past Information ---", past_parts[mode],
+                                    "--- Current Information ---", curr_parts[mode]
                                 ]
                             else:
-                                mode_contents = [curr_parts["video"], curr_parts[mode]]
+                                mode_contents = [curr_parts[mode]]
                                 
                             mode_contents_with_prompt = [*mode_contents, user_prompt]
                             answer_text = _retry_api_call(
                                 lambda: client.models.generate_content(
-                                    model=args.response_gen_model,
+                                    model=args.uq_response_model,
                                     contents=mode_contents_with_prompt,
                                     config=gen_configs[mode]
                                 ).text,

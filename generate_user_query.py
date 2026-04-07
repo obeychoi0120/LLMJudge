@@ -7,6 +7,8 @@ from gemini_api_utils import (
     process_gcs_file_range,
     check_gcs_files_exist,
     load_config, parse_json_response, _retry_api_call,
+    ensure_output_dir, load_processed_content_ids,
+    preload_content_metadata,
 )
 
 # ───────────────────────────────────────────────
@@ -78,7 +80,7 @@ def main():
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="global", help="GCP Location")
     
-    parser.add_argument("--query_gen_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
+    parser.add_argument("--uq_gen_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -146,20 +148,10 @@ def main():
                     pass
 
     # 출력 디렉토리 확인
-    odir = os.path.dirname(args.output_file)
-    if odir and not os.path.exists(odir):
-        os.makedirs(odir)
+    ensure_output_dir(args.output_file)
 
     # 기처리분 건너뛰기 로직
-    processed_ids = set()
-    if os.path.exists(args.output_file):
-        with open(args.output_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        processed_ids.add(json.loads(line)["content_id"])
-                    except: pass
-                    
+    processed_ids = load_processed_content_ids(args.output_file)
     if processed_ids:
         print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 {args.output_file}에 존재하여 건너뜁니다.")
 
@@ -180,6 +172,9 @@ def main():
 
             if not check_gcs_files_exist(args.gs_bucket_name, content_id):
                 continue
+
+            # JSONL 메타데이터 프리로드 (캐시 워밍업)
+            preload_content_metadata(args.gs_bucket_name, content_id)
 
             all_user_queries = []
 
@@ -202,7 +197,7 @@ def main():
                     }
 
                     user_list = generate_user_query(
-                        client, args.query_gen_model, query_config,
+                        client, args.uq_gen_model, query_config,
                         past_parts, current_parts, end_time
                     )
                     

@@ -6,18 +6,20 @@ from google import genai
 from google.genai import types
 from google.cloud import storage
 
-
-
 # ============================================================
 # config.json 지원 키 목록
 # ============================================================
 
 _CONFIG_KEYS = [
-    "query_gen_model", "response_gen_model", "judge_model",
-    "location", "reference_model", "reference_use_ref",
-    "keypoint_model", "query_judge_model",
-    "summary_gen_model", "bubble_query_model", "user_query_model",
-    "bubble_thinking_budget", "response_thinking_budget"
+    # 공통
+    "location", "keypoint_model", "keypoint_thinking_budget",
+    # A-track: Bubble Query
+    "bq_gen_model", "bq_summary_model", "bq_judge_model",
+    "bq_thinking_budget", "bq_summary_thinking_budget", "bq_judge_thinking_budget",
+    # B-track: User Query
+    "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
+    "uq_response_thinking_budget", "uq_reference_thinking_budget", "uq_judge_thinking_budget",
+    "uq_reference_use_ref",
 ]
 
 
@@ -37,7 +39,7 @@ def load_config(args):
     args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
 
     _ARG_FLAG_MAP = {
-        "reference_use_ref": "--no-reference-ref"
+        "uq_reference_use_ref": "--no-uq-reference-ref"
     }
 
     for key in _CONFIG_KEYS:
@@ -105,6 +107,49 @@ def parse_json_response(text):
 
 
 # ============================================================
+# Common File / Progress Helpers
+# ============================================================
+
+def ensure_output_dir(file_path):
+    """파일 경로의 디렉토리가 없으면 생성합니다."""
+    odir = os.path.dirname(file_path)
+    if odir and not os.path.exists(odir):
+        os.makedirs(odir, exist_ok=True)
+
+
+def load_processed_content_ids(jsonl_path):
+    """JSONL 파일에서 이미 처리된 content_id 집합을 반환합니다."""
+    processed = set()
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        processed.add(json.loads(line)["content_id"])
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+    return processed
+
+
+def load_processed_pairs(jsonl_path, key_fields=("content_id", "query")):
+    """JSONL 파일에서 이미 처리된 (key1, key2) 쌍의 집합을 반환합니다."""
+    processed = set()
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                    values = tuple(obj.get(k) for k in key_fields)
+                    if all(values):
+                        processed.add(values)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+    return processed
+
+
+# ============================================================
 # GCS File Helpers
 # ============================================================
 
@@ -138,26 +183,81 @@ _GCS_MODE_MAP = {
 }
 
 
+# ============================================================
+# GCS 캐시 레이어
+# ============================================================
+
+_gcs_text_cache: dict[str, str] = {}
+_gcs_part_cache: dict[str, types.Part] = {}
+
+
+def download_gcs_text(gs_bucket_name, blob_path):
+    """GCS 버킷에서 텍스트 파일 내용을 다운로드합니다 (캐시 적용)."""
+    cache_key = f"{gs_bucket_name}/{blob_path}"
+    if cache_key in _gcs_text_cache:
+        return _gcs_text_cache[cache_key]
+    print(f"  [GCS Download] {blob_path}")
+    client = storage.Client()
+    bucket = client.bucket(gs_bucket_name)
+    blob = bucket.blob(blob_path)
+    text = blob.download_as_text(encoding="utf-8")
+    _gcs_text_cache[cache_key] = text
+    return text
+
+
+def clear_gcs_cache():
+    """GCS 텍스트/Part 캐시를 초기화합니다 (메모리 관리용)."""
+    _gcs_text_cache.clear()
+    _gcs_part_cache.clear()
+
+
+def preload_content_metadata(gs_bucket_name, content_id):
+    """content_id에 해당하는 Ref/Full/Part JSONL을 한 번에 캐시에 로드합니다."""
+    modes = ["ref", "full", "part"]
+    to_download = []
+    for mode in modes:
+        path_template, _ = _GCS_MODE_MAP[mode]
+        blob_path = path_template.format(cid=content_id)
+        cache_key = f"{gs_bucket_name}/{blob_path}"
+        if cache_key not in _gcs_text_cache:
+            to_download.append((mode, blob_path))
+
+    if not to_download:
+        print(f"  [Preload] '{content_id}' - 메타데이터 3종 모두 캐시 사용 (skip download)")
+        return
+
+    print(f"  [Preload] '{content_id}' - 메타데이터 {len(to_download)}종 다운로드 시작: "
+          f"{[m for m, _ in to_download]}")
+    for mode, blob_path in to_download:
+        download_gcs_text(gs_bucket_name, blob_path)
+    print(f"  [Preload] '{content_id}' - 완료")
+
+
+def load_ref_scenes(gs_bucket_name, content_id):
+    """Ref JSONL을 파싱하여 Scene 리스트로 반환합니다 (캐시 자동 활용)."""
+    ref_text = download_gcs_text(gs_bucket_name, f"jsonl/{content_id}_Ref.jsonl")
+    return [json.loads(l) for l in ref_text.strip().split("\n") if l.strip()]
+
+
 def process_gcs_file(gs_bucket_name, content_id, mode="video"):
-    """GCS 파일 전체를 참조하는 Part를 반환합니다."""
+    """GCS 파일 전체를 참조하는 Part를 반환합니다 (캐시 적용)."""
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
+
+    cache_key = f"{gs_bucket_name}/{content_id}/{mode}/full"
+    if cache_key in _gcs_part_cache:
+        return _gcs_part_cache[cache_key]
+
     path_template, mime_type = _GCS_MODE_MAP[mode]
     file_uri = f"gs://{gs_bucket_name}/{path_template.format(cid=content_id)}"
-    return types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+    part = types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
+    _gcs_part_cache[cache_key] = part
+    return part
 
 
 # ============================================================
 # Truncation Helpers
 # ============================================================
-
-def download_gcs_text(gs_bucket_name, blob_path):
-    """GCS 버킷에서 텍스트 파일 내용을 다운로드합니다."""
-    client = storage.Client()
-    bucket = client.bucket(gs_bucket_name)
-    blob = bucket.blob(blob_path)
-    return blob.download_as_text(encoding="utf-8")
-
 
 def truncate_jsonl_range(jsonl_text, start_time, end_time):
     """JSONL 텍스트에서 [start_time, end_time] 구간의 Scene만 추출합니다."""
@@ -178,7 +278,7 @@ def truncate_jsonl_range(jsonl_text, start_time, end_time):
 def process_gcs_file_range(gs_bucket_name, content_id, mode, start_time, end_time):
     """[start_time, end_time] 구간 데이터 Part를 반환합니다.
 
-    - video 모드: VideoMetadata의 start_offset/end_offset으로 구간 클리핑
+    - video 모드: VideoMetadata의 start_offset/end_offset으로 구간 클리핑 (캐시 적용)
     - jsonl 모드: GCS에서 다운로드 후 해당 구간만 추출하여 인라인 Part 반환
     """
     if mode not in _GCS_MODE_MAP:
@@ -189,15 +289,21 @@ def process_gcs_file_range(gs_bucket_name, content_id, mode, start_time, end_tim
     file_uri = f"gs://{gs_bucket_name}/{blob_path}"
 
     if mode == "video":
-        return types.Part.from_uri(
-            file_uri=file_uri,
-            mime_type=mime_type,
+        # 비디오 Part 객체 캐시: 동일 범위의 Part 재생성 방지
+        cache_key = f"{gs_bucket_name}/{content_id}/video/{int(start_time)}-{int(end_time)}"
+        if cache_key in _gcs_part_cache:
+            return _gcs_part_cache[cache_key]
+        part = types.Part(
+            file_data=types.FileData(file_uri=file_uri, mime_type=mime_type),
             video_metadata=types.VideoMetadata(
                 start_offset=f"{int(start_time)}s",
                 end_offset=f"{int(end_time)}s",
             ),
         )
+        _gcs_part_cache[cache_key] = part
+        return part
     else:
+        # JSONL 텍스트 다운로드는 download_gcs_text 캐시가 자동 적용됨
         jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
         range_text = truncate_jsonl_range(jsonl_text, start_time, end_time)
         return types.Part.from_bytes(data=range_text.encode("utf-8"), mime_type="text/plain")

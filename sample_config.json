@@ -2,8 +2,9 @@
     "gcp_project_id": "your-gcp-project-id",
     "gs_bucket_name": "your-gcs-bucket-name",
     "location": "global",
-    "query_gen_model": "gemini-3.1-pro-preview",
-    "response_gen_model": "gemini-2.5-flash",
-    "judge_model": "gemini-3.1-pro-preview",
-    "reference_use_ref": true
+    "bq_gen_model": "gemini-2.5-flash",
+    "uq_gen_model": "gemini-3.1-pro-preview",
+    "uq_response_model": "gemini-2.5-flash",
+    "uq_judge_model": "gemini-3.1-pro-preview",
+    "uq_reference_use_ref": true
 }

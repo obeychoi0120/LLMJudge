@@ -26,21 +26,31 @@ def main():
     
     # Bubble Query 모델 설정
     parser.add_argument("--keypoint_model", default="gemini-2.5-flash", help="Keypoint Scene 식별에 사용할 Budget 모델명")
-    parser.add_argument("--bubble_query_model", default="gemini-2.5-flash", help="Bubble Query 생성에 사용할 Budget 모델명")
-    parser.add_argument("--summary_gen_model", default="gemini-2.5-pro", help="Detailed Summary 생성에 사용할 Premium 모델명")
-    parser.add_argument("--query_judge_model", default="gemini-2.5-pro", help="Bubble Query 질문 Judge에 사용할 Premium 모델명")
-    parser.add_argument("--bubble_thinking_budget", type=int, default=0,
+    parser.add_argument("--keypoint_thinking_budget", type=int, default=1024,
+                        help="Keypoint 식별 모델의 Thinking Budget")
+    parser.add_argument("--bq_gen_model", default="gemini-2.5-flash", help="Bubble Query 생성에 사용할 Budget 모델명")
+    parser.add_argument("--bq_summary_model", default="gemini-2.5-pro", help="Detailed Summary 생성에 사용할 Premium 모델명")
+    parser.add_argument("--bq_judge_model", default="gemini-2.5-pro", help="Bubble Query 질문 Judge에 사용할 Premium 모델명")
+    parser.add_argument("--bq_thinking_budget", type=int, default=0,
                         help="Bubble Query 모델의 Thinking Budget (0=비활성화, -1=동적)")
+    parser.add_argument("--bq_summary_thinking_budget", type=int, default=1024,
+                        help="BQ Summary 생성 모델의 Thinking Budget")
 
     # User Query 모델 설정
-    parser.add_argument("--user_query_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
-    parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="User Query 답변 생성 모델명")
-    parser.add_argument("--reference_model", default="gemini-2.5-pro", help="User Query Reference Answer 생성 모델명")
-    parser.add_argument("--no-reference-ref", dest="reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
-    parser.set_defaults(reference_use_ref=True)
-    parser.add_argument("--judge_model", default="gemini-2.5-pro", help="User Query 답변 평가 모델명")
-    parser.add_argument("--response_thinking_budget", type=int, default=-1,
-                        help="Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적)")
+    parser.add_argument("--uq_gen_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
+    parser.add_argument("--uq_response_model", default="gemini-2.5-flash", help="User Query 답변 생성 모델명")
+    parser.add_argument("--uq_reference_model", default="gemini-2.5-pro", help="User Query Reference Answer 생성 모델명")
+    parser.add_argument("--no-uq-reference-ref", dest="uq_reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
+    parser.set_defaults(uq_reference_use_ref=True)
+    parser.add_argument("--uq_judge_model", default="gemini-2.5-pro", help="User Query 답변 평가 모델명")
+    parser.add_argument("--uq_response_thinking_budget", type=int, default=-1,
+                        help="UQ Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적)")
+    parser.add_argument("--uq_reference_thinking_budget", type=int, default=4096,
+                        help="UQ Reference Answer 생성 모델의 Thinking Budget")
+    parser.add_argument("--bq_judge_thinking_budget", type=int, default=2048,
+                        help="Bubble Query Judge 모델의 Thinking Budget")
+    parser.add_argument("--uq_judge_thinking_budget", type=int, default=2048,
+                        help="UQ Response Judge 모델의 Thinking Budget")
     
     parser.add_argument("--skip-keypoint", action="store_true", help="A-1. Keypoint 식별을 건너뛰기")
     parser.add_argument("--skip-bubble-query-gen", action="store_true", help="A-2. Bubble Query 생성을 건너뛰기")
@@ -74,6 +84,7 @@ def main():
             "--input_file", args.input_file,
             "--output_file", args.keypoints_file,
             "--keypoint_model", args.keypoint_model,
+            "--keypoint_thinking_budget", str(args.keypoint_thinking_budget),
         ] + common_project_args
         subprocess.run(cmd_kp, check=True)
         print(f"-> Keypoint Scenes 저장 완료: {args.keypoints_file}")
@@ -91,9 +102,10 @@ def main():
             sys.executable, "generate_bubble_query.py",
             "--input_file", args.keypoints_file,
             "--output_file", args.bubble_queries_file,
-            "--query_gen_model", args.bubble_query_model,
-            "--summary_gen_model", args.summary_gen_model,
-            "--bubble_thinking_budget", str(args.bubble_thinking_budget),
+            "--bq_gen_model", args.bq_gen_model,
+            "--bq_summary_model", args.bq_summary_model,
+            "--bq_thinking_budget", str(args.bq_thinking_budget),
+            "--bq_summary_thinking_budget", str(args.bq_summary_thinking_budget),
         ] + common_project_args
         subprocess.run(cmd_bubble, check=True)
         print(f"-> Bubble Query 저장 완료: {args.bubble_queries_file}")
@@ -111,7 +123,8 @@ def main():
             sys.executable, "judge_bubble_query.py",
             "--input_file", args.bubble_queries_file,
             "--scores_file", args.bubble_query_scores_file,
-            "--query_judge_model", args.query_judge_model,
+            "--bq_judge_model", args.bq_judge_model,
+            "--bq_judge_thinking_budget", str(args.bq_judge_thinking_budget),
         ] + common_project_args
         subprocess.run(cmd, check=True)
         print(f"-> Bubble Query 평가 점수 저장 완료: {args.bubble_query_scores_file}")
@@ -129,7 +142,7 @@ def main():
             sys.executable, "generate_user_query.py",
             "--keypoints_file", args.keypoints_file,
             "--output_file", args.user_queries_file,
-            "--query_gen_model", args.user_query_model,
+            "--uq_gen_model", args.uq_gen_model,
         ] + common_project_args
         subprocess.run(cmd_user, check=True)
         print(f"-> User Query 저장 완료: {args.user_queries_file}")
@@ -148,12 +161,13 @@ def main():
             "--json_file", args.user_queries_file,
             "--output_file", args.responses_file,
             "--reference_file", args.references_file,
-            "--response_gen_model", args.response_gen_model,
-            "--reference_model", args.reference_model,
-            "--response_thinking_budget", str(args.response_thinking_budget),
+            "--uq_response_model", args.uq_response_model,
+            "--uq_reference_model", args.uq_reference_model,
+            "--uq_response_thinking_budget", str(args.uq_response_thinking_budget),
+            "--uq_reference_thinking_budget", str(args.uq_reference_thinking_budget),
         ]
-        if not args.reference_use_ref:
-            cmd.append("--no-reference-ref")
+        if not args.uq_reference_use_ref:
+            cmd.append("--no-uq-reference-ref")
         cmd += common_project_args
         subprocess.run(cmd, check=True)
     else:
@@ -171,7 +185,8 @@ def main():
             "--answers_file", args.responses_file,
             "--references_file", args.references_file,
             "--output_file", args.scores_file,
-            "--judge_model", args.judge_model,
+            "--uq_judge_model", args.uq_judge_model,
+            "--uq_judge_thinking_budget", str(args.uq_judge_thinking_budget),
         ] + common_project_args
         subprocess.run(cmd, check=True)
     else:

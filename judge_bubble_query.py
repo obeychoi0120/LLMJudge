@@ -7,7 +7,8 @@ import threading
 from gemini_api_utils import (
     create_client, make_generate_config,
     load_config, parse_json_response,
-    _retry_api_call, start_chat_session
+    _retry_api_call, start_chat_session,
+    ensure_output_dir, load_processed_pairs,
 )
 
 # ───────────────────────────────────────────────
@@ -56,8 +57,8 @@ _QUERY_JUDGE_FORMAT_PROMPT = """\
 """
 
 
-def make_query_judge_config():
-    return make_generate_config(system_instruction=_QUERY_JUDGE_PROMPT)
+def make_query_judge_config(thinking_budget=None):
+    return make_generate_config(system_instruction=_QUERY_JUDGE_PROMPT, thinking_budget=thinking_budget)
 
 
 def evaluate_query(client, model_name, judge_config, detailed_summary, query_text):
@@ -75,6 +76,56 @@ def evaluate_query(client, model_name, judge_config, detailed_summary, query_tex
         label="Query Judge API (Text)",
     )
 
+def judge_one(q_item):
+    query_text = q_item["query"]
+    detailed_summary = q_item.get("detailed_summary", "")
+    scene_idx = q_item.get("scene_idx", -1)
+
+    print(f"  Judging: \"{query_text[:40]}...\"")
+
+    if not detailed_summary:
+        print(f"    [Warning] 이 질문에는 detailed_summary가 없습니다. 스킵합니다.")
+        return
+
+    try:
+        time.sleep(1)
+
+        max_parse_retries = 3
+        score_dict = None
+        for attempt in range(max_parse_retries):
+            try:
+                score_text = evaluate_query(
+                    client, args.bq_judge_model, judge_config,
+                    detailed_summary, query_text
+                )
+                score_dict = parse_json_response(score_text)
+                break
+            except json.JSONDecodeError:
+                print(f"    [Warning] JSON 파싱 실패 ({attempt+1}/{max_parse_retries}), 재시도...")
+                time.sleep(2)
+            except Exception as e:
+                print(f"    [Error] Judge 실패: {e}")
+                break
+
+        total = score_dict.get("total_score", 0) if score_dict else 0
+
+        score_record = {
+            "content_id": content_id,
+            "query": query_text,
+            "scene_idx": scene_idx,
+            "start_time": q_item.get("start_time"),
+            "end_time": q_item.get("end_time"),
+            "judge": score_dict,
+        }
+
+        print(f"    -> Score: {total}/15 | {score_dict.get('rationale', '')[:100] if score_dict else 'N/A'}")
+
+        with file_write_lock:
+            with open(args.scores_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(score_record, ensure_ascii=False) + "\n")
+
+    except Exception as e:
+        print(f"    [Error] Judge 최종 실패: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Bubble Query 질문을 텍스트 요약 기반으로 품질 평가")
@@ -83,8 +134,10 @@ def main():
     
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--query_judge_model", default="gemini-2.5-pro", help="질문 평가에 사용할 Premium 모델명")
+    parser.add_argument("--bq_judge_model", default="gemini-2.5-pro", help="질문 평가에 사용할 Premium 모델명")
     parser.add_argument("--location", default="global", help="GCP Location")
+    parser.add_argument("--bq_judge_thinking_budget", type=int, default=2048,
+                        help="BQ Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -95,25 +148,12 @@ def main():
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
     client = create_client(args.gcp_project_id, args.location)
-    judge_config = make_query_judge_config()
+    judge_config = make_query_judge_config(thinking_budget=args.bq_judge_thinking_budget)
 
-    odir = os.path.dirname(args.scores_file)
-    if odir and not os.path.exists(odir):
-        os.makedirs(odir)
+    ensure_output_dir(args.scores_file)
 
-    processed_pairs = set()
-    if os.path.exists(args.scores_file):
-        with open(args.scores_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip(): continue
-                try:
-                    sc = json.loads(line)
-                    c_id = sc.get("content_id")
-                    query = sc.get("query")
-                    if c_id and query:
-                        processed_pairs.add((c_id, query))
-                except json.JSONDecodeError:
-                    pass
+    processed_pairs = load_processed_pairs(args.scores_file)
+    if processed_pairs:
         print(f"[{len(processed_pairs)}] 개의 (content_id, query) 쌍이 이미 처리됨.")
 
     if not os.path.exists(args.input_file):
@@ -151,59 +191,6 @@ def main():
                 continue
 
             print(f"  -> {len(pending)}개 질문 평가 예정")
-
-            judge_model = None  # 신 SDK: model 객체 불필요
-
-            def judge_one(q_item):
-                query_text = q_item["query"]
-                detailed_summary = q_item.get("detailed_summary", "")
-                scene_idx = q_item.get("scene_idx", -1)
-
-                print(f"  Judging: \"{query_text[:40]}...\"")
-
-                if not detailed_summary:
-                    print(f"    [Warning] 이 질문에는 detailed_summary가 없습니다. 스킵합니다.")
-                    return
-
-                try:
-                    time.sleep(1)
-
-                    max_parse_retries = 3
-                    score_dict = None
-                    for attempt in range(max_parse_retries):
-                        try:
-                            score_text = evaluate_query(
-                                client, args.query_judge_model, judge_config,
-                                detailed_summary, query_text
-                            )
-                            score_dict = parse_json_response(score_text)
-                            break
-                        except json.JSONDecodeError:
-                            print(f"    [Warning] JSON 파싱 실패 ({attempt+1}/{max_parse_retries}), 재시도...")
-                            time.sleep(2)
-                        except Exception as e:
-                            print(f"    [Error] Judge 실패: {e}")
-                            break
-
-                    total = score_dict.get("total_score", 0) if score_dict else 0
-
-                    score_record = {
-                        "content_id": content_id,
-                        "query": query_text,
-                        "scene_idx": scene_idx,
-                        "start_time": q_item.get("start_time"),
-                        "end_time": q_item.get("end_time"),
-                        "judge": score_dict,
-                    }
-
-                    print(f"    -> Score: {total}/15 | {score_dict.get('rationale', '')[:100] if score_dict else 'N/A'}")
-
-                    with file_write_lock:
-                        with open(args.scores_file, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(score_record, ensure_ascii=False) + "\n")
-
-                except Exception as e:
-                    print(f"    [Error] Judge 최종 실패: {e}")
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 futures = [executor.submit(judge_one, q) for q in pending]

@@ -172,9 +172,13 @@ LLMJudge/
 
 ## 🚀 설치 및 사전 준비
 
-1. **Python 패키지 설치**
+1. **Python 패키지 설치** 
    ```bash
    pip install google-cloud-aiplatform google-cloud-storage vertexai pandas openpyxl
+   ```
+   - Note: 최신 google-cloud-aiplatform SDK를 사용하세요. 코드 구현 방식이 업데이트되었습니다.
+   ```bash
+   pip install --upgrade google-cloud-aiplatform google-cloud-storage
    ```
 
 2. **GCP 인증 및 설정**

@@ -7,6 +7,8 @@ from gemini_api_utils import (
     create_client, make_generate_config,
     process_gcs_file_range, check_gcs_files_exist,
     load_config, parse_json_response, _retry_api_call,
+    ensure_output_dir, load_processed_content_ids,
+    preload_content_metadata,
 )
 
 # ───────────────────────────────────────────────
@@ -18,15 +20,13 @@ _BUBBLE_QUERY_BASE = """\
 시청자에게는 오직 **현재 정보 (Current Information)** (방금 본 Scene)만 제공됩니다.
 당신에게는 장면 설명이 담긴 Reference 메타데이터를 제공합니다.
 현재 장면의 구체적인 상황, 인물의 행동, 화면 속 디테일 등에 집중하여 시청자가 가질 수 있는 질문 3개를 생성하세요.
-과거의 맥락은 제공되지 않으므로, 철저하게 '이 장면에 보이는 것만'으로 만들어질 수 있는 질문이어야 합니다. 미래에 일어날 일을 짐작하지 마세요.
-반드시 아래와 같은 형태의 JSON 배열 안에 3개의 질문을 작성해야 합니다.
 
 [Reference 메타데이터의 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
-- speech: 등장인물들의 대사
+- speech: 등장인물들의 대사 (영어 또는 한국어)
 - texts: 화면 속 자막, 간판 정보 등
 - sounds: 환경음 및 효과음
 {description_field}
@@ -38,18 +38,21 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
 - sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
 
 [작성 규칙]
-- 어투: 인터넷 커뮤니티나 친구에게 물어보는 매우 캐주얼한 구어체 (반말 위주)
-- 단순히 구글링으로 해결되거나 너무 명백한 질문은 피하세요.
+- 장면을 통해 이미 명확하게 알 수 있는 내용을 질문하지 마세요.
+- 과거의 맥락은 제공되지 않으므로, 철저하게 '이 장면에 보이는 것만' 으로 만들어질 수 있는 질문이어야 합니다. 미래에 일어날 일을 짐작하지 마세요.
 
-[출력 형식 예시]
+[출력 형식]
+- 어투: 반말 위주, 인터넷 커뮤니티나 친구에게 물어보는 매우 캐주얼한 구어체
+- 언어: 반드시 **한국어**로 작성하세요. 영어 콘텐츠의 경우 고유명사는 원어 병기(예: 일각고래(narwhal))를 허용합니다.
+
+[예시]
 [
-    "방금 저 사람이 입고 있는 패딩이 어떤 거야?",
-    "여기서 주인공의 표정이 어두워진 이유가 뭘까?",
-    "화면에 잠시 보였던 저 파일에 뭐라고 적혀 있었지?"
-]\
-"""
+    "지금 저 여자가 입고 있는 패딩을 찾아줘.",
+    "여기서 저 남자가 왜 갑자기 저런 행동을 하는 거야?",
+    "아까 주인공이 먹었던 빵 은담베(Pain Ndambe)는 어떻게 만드는 거야?"
+]"""
 
-_DESCRIPTION_LINE = "- description: 해당 timestamp에서의 인물의 행동과 배경 장면 묘사\n"
+_DESCRIPTION_LINE = "- description: 해당 장면 속 인물의 행동과 배경 장면 묘사\n"
 
 _SUMMARY_GEN_PROMPT = """\
 당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 이를 상세하게 요약하는 전문가입니다.
@@ -64,7 +67,7 @@ _SUMMARY_GEN_PROMPT = """\
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
-- speech: 등장인물들의 대사
+- speech: 등장인물들의 대사 (영어 또는 한국어)
 - texts: 화면 속 자막, 간판 정보 등
 - sounds: 환경음 및 효과음
 
@@ -72,8 +75,11 @@ _SUMMARY_GEN_PROMPT = """\
 speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. **따라서, 당신이 자연스럽게 교정하여 답변을 생성해야 합니다.**
 - speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
 - texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.\
-"""
+- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
+
+[출력 형식]
+- 단 하나의 문자열(일반 텍스트)로 출력하되, 텍스트의 길이나 형식 제한 없이 최대한 핵심을 상세하게 묘사하세요.
+- 언어는 반드시 **한국어**로 작성하세요. 영어 콘텐츠의 경우 고유명사는 원어 병기(예: 일각고래(narwhal))를 허용합니다."""
 
 
 def make_bubble_query_config(mode="part", thinking_budget=0):
@@ -85,9 +91,9 @@ def make_bubble_query_config(mode="part", thinking_budget=0):
     return make_generate_config(system_instruction=prompt, thinking_budget=thinking_budget)
 
 
-def make_summary_config():
+def make_summary_config(thinking_budget=None):
     """Summary 생성용 GenerateContentConfig를 반환합니다."""
-    return make_generate_config(system_instruction=_SUMMARY_GEN_PROMPT)
+    return make_generate_config(system_instruction=_SUMMARY_GEN_PROMPT, thinking_budget=thinking_budget)
 
 
 def process_bubble_parallel(client, bubble_model_name, summary_model_name,
@@ -133,12 +139,14 @@ def process_bubble_parallel(client, bubble_model_name, summary_model_name,
                 "--- 요청 사항 ---",
                 "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요."
             ]
-        return _retry_api_call(
+        t0 = time.time()
+        text = _retry_api_call(
             lambda: client.models.generate_content(
                 model=summary_model_name, contents=contents, config=summary_config
             ).text,
             label=f"Summary 생성 (end={end_time:.1f}s)"
         )
+        return text, time.time() - t0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         f_full = executor.submit(generate_bubble_queries, "full")
@@ -146,9 +154,9 @@ def process_bubble_parallel(client, bubble_model_name, summary_model_name,
         f_sum  = executor.submit(generate_summary)
         bubble_full_list, bubble_full_elapsed = f_full.result()
         bubble_part_list, bubble_part_elapsed = f_part.result()
-        summary_text = f_sum.result()
+        summary_text, summary_elapsed = f_sum.result()
 
-    return bubble_full_list[:3], bubble_part_list[:3], summary_text, bubble_full_elapsed, bubble_part_elapsed
+    return bubble_full_list[:3], bubble_part_list[:3], summary_text, bubble_full_elapsed, bubble_part_elapsed, summary_elapsed
 
 
 # ───────────────────────────────────────────────
@@ -164,9 +172,11 @@ def main():
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="global", help="GCP Location")
 
-    parser.add_argument("--query_gen_model", default="gemini-2.5-flash", help="질문 생성에 사용할 Budget 모델명")
-    parser.add_argument("--summary_gen_model", default="gemini-2.5-pro", help="Summary 생성에 사용할 Premium 모델명")
-    parser.add_argument("--bubble_thinking_budget", type=int, default=0, help="Bubble Query 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--bq_gen_model", default="gemini-2.5-flash", help="질문 생성에 사용할 Budget 모델명")
+    parser.add_argument("--bq_summary_model", default="gemini-2.5-pro", help="Summary 생성에 사용할 Premium 모델명")
+    parser.add_argument("--bq_thinking_budget", type=int, default=0, help="Bubble Query 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--bq_summary_thinking_budget", type=int, default=1024,
+                        help="BQ Summary 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -178,9 +188,9 @@ def main():
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
     client = create_client(args.gcp_project_id, args.location)
 
-    bubble_config_full = make_bubble_query_config(mode="full", thinking_budget=args.bubble_thinking_budget)
-    bubble_config_part = make_bubble_query_config(mode="part", thinking_budget=args.bubble_thinking_budget)
-    summary_config = make_summary_config()
+    bubble_config_full = make_bubble_query_config(mode="full", thinking_budget=args.bq_thinking_budget)
+    bubble_config_part = make_bubble_query_config(mode="part", thinking_budget=args.bq_thinking_budget)
+    summary_config = make_summary_config(thinking_budget=args.bq_summary_thinking_budget)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")
@@ -205,20 +215,10 @@ def main():
         return
 
     # 출력 디렉토리 확인
-    odir = os.path.dirname(args.output_file)
-    if odir and not os.path.exists(odir):
-        os.makedirs(odir, exist_ok=True)
+    ensure_output_dir(args.output_file)
 
     # 기처리분 건너뛰기
-    processed_ids = set()
-    if os.path.exists(args.output_file):
-        with open(args.output_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        processed_ids.add(json.loads(line)["content_id"])
-                    except: pass
-
+    processed_ids = load_processed_content_ids(args.output_file)
     if processed_ids:
         print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 처리되어 건너뜁니다.")
 
@@ -238,6 +238,9 @@ def main():
 
             if not check_gcs_files_exist(args.gs_bucket_name, content_id):
                 continue
+
+            # JSONL 메타데이터 프리로드 (캐시 워밍업)
+            preload_content_metadata(args.gs_bucket_name, content_id)
 
             all_bubble_queries = []
 
@@ -263,13 +266,13 @@ def main():
                     }
                     return process_bubble_parallel(
                         client,
-                        args.query_gen_model, args.summary_gen_model,
+                        args.bq_gen_model, args.bq_summary_model,
                         bubble_config_full, bubble_config_part, summary_config,
                         past_parts, current_parts, end_time
                     )
 
                 try:
-                    bubble_full_list, bubble_part_list, summary_text, bubble_full_elapsed, bubble_part_elapsed = _retry_api_call(
+                    bubble_full_list, bubble_part_list, summary_text, bubble_full_elapsed, bubble_part_elapsed, summary_elapsed = _retry_api_call(
                         _run_keypoint,
                         label=f"Bubble+Summary (Scene {scene_idx})"
                     )
@@ -284,7 +287,7 @@ def main():
                             "detailed_summary": summary_text
                         })
                     for q in bubble_part_list:
-                        all_bubble_queries.append({
+                        all_bubble_queries.append({ 
                             "scene_idx": scene_idx,
                             "query": q,
                             "query_mode": "part",
@@ -293,13 +296,16 @@ def main():
                             "detailed_summary": summary_text
                         })
 
-                    print(f"    -> [Bubble Query - Full] {len(bubble_full_list)}개 ({bubble_full_elapsed:.1f}초)")
+                    print(f"    -> [Bubble Query - Full] {len(bubble_full_list)}개 ({bubble_full_elapsed:.2f}초)")
                     for qi, q in enumerate(bubble_full_list, 1):
                         print(f"       {qi}. {q}")
-                    print(f"    -> [Bubble Query - Part] {len(bubble_part_list)}개 ({bubble_part_elapsed:.1f}초)")
+                    print(f"    -> [Bubble Query - Part] {len(bubble_part_list)}개 ({bubble_part_elapsed:.2f}초)")
                     for qi, q in enumerate(bubble_part_list, 1):
                         print(f"       {qi}. {q}")
-                    print(f"    -> [Summary] 생성 완료 ({len(summary_text)}자)")
+                    print(f"    -> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
+                    print(f"-------------------- Summary 내용 --------------------")
+                    print(f"{summary_text}")
+                    print(f"------------------------------------------------------")
 
                 except Exception as e:
                     print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")

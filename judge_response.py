@@ -10,7 +10,8 @@ from gemini_api_utils import (
     create_client, make_generate_config,
     start_chat_session,
     load_config, parse_json_response,
-    _retry_api_call
+    _retry_api_call,
+    ensure_output_dir, load_processed_pairs,
 )
 
 # ============================================================
@@ -50,9 +51,8 @@ _JUDGE_FORMAT_PROMPT = """\
     "total_score": <세 항목 점수의 합계, 최대 15점>
 }"""
 
-
-def make_judge_config():
-    return make_generate_config(system_instruction=_JUDGE_PROMPT)
+def make_judge_config(thinking_budget=None):
+    return make_generate_config(system_instruction=_JUDGE_PROMPT, thinking_budget=thinking_budget)
 
 
 def evaluate_answer_session(client, model_name, judge_config, user_prompt, generated_answer, reference_answer):
@@ -80,9 +80,11 @@ def main():
     parser.add_argument("--output_file", default="assets/uq_response_scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
+    parser.add_argument("--uq_judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
     parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
+    parser.add_argument("--uq_judge_thinking_budget", type=int, default=2048,
+                        help="UQ Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
 
@@ -93,12 +95,10 @@ def main():
         return
 
     client = create_client(args.gcp_project_id, args.location)
-    judge_config = make_judge_config()
+    judge_config = make_judge_config(thinking_budget=args.uq_judge_thinking_budget)
     
     # 출력 폴더 생성
-    output_dir = os.path.dirname(args.output_file)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    ensure_output_dir(args.output_file)
 
     print("\n" + "=" * 50)
     print("Gemini Evaluation 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
@@ -109,19 +109,7 @@ def main():
     try:
         while True:
             # 1. Output (진행률) 읽기 - (content_id, query) 쌍 단위로 추적
-            processed_pairs = set()  # (content_id, query) 튜플
-            if os.path.exists(args.output_file):
-                with open(args.output_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if not line.strip(): continue
-                        try:
-                            sc = json.loads(line)
-                            c_id = sc.get("content_id")
-                            query = sc.get("query")
-                            if c_id and query:
-                                processed_pairs.add((c_id, query))
-                        except json.JSONDecodeError:
-                            pass
+            processed_pairs = load_processed_pairs(args.output_file)
 
             # 2-1. Reference 읽기
             reference_map = {} # (content_id, query) -> reference_text
@@ -257,7 +245,7 @@ def main():
                             try:
                                 score_text = evaluate_answer_session(
                                     client=client,
-                                    model_name=args.judge_model,
+                                    model_name=args.uq_judge_model,
                                     judge_config=judge_config,
                                     user_prompt=user_prompt, 
                                     generated_answer=generated_answer,
