@@ -2,14 +2,13 @@ import os
 import argparse
 import json
 import time
-import vertexai
 import concurrent.futures
 import threading
 from gemini_api_utils import (
+    create_client, make_generate_config,
     load_config, parse_json_response,
-    SAFETY_SETTINGS, _retry_api_call, start_chat_session
+    _retry_api_call, start_chat_session
 )
-from vertexai.generative_models import GenerativeModel
 
 # ───────────────────────────────────────────────
 # Bubble Query Judge 프롬프트 (Text-based)
@@ -57,15 +56,11 @@ _QUERY_JUDGE_FORMAT_PROMPT = """\
 """
 
 
-def init_query_judge_model(model_name="gemini-2.5-pro"):
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[_QUERY_JUDGE_PROMPT],
-        safety_settings=SAFETY_SETTINGS,
-    )
+def make_query_judge_config():
+    return make_generate_config(system_instruction=_QUERY_JUDGE_PROMPT)
 
 
-def evaluate_query(judge_model, detailed_summary, query_text):
+def evaluate_query(client, model_name, judge_config, detailed_summary, query_text):
     """생성된 질문 하나를 텍스트 요약본 기준으로 평가합니다."""
     user_content = (
         f"[평가 대상 질문]\n{query_text}\n\n"
@@ -74,7 +69,7 @@ def evaluate_query(judge_model, detailed_summary, query_text):
         f"{_QUERY_JUDGE_FORMAT_PROMPT}"
     )
 
-    judge_chat = start_chat_session(judge_model)
+    judge_chat = start_chat_session(client, model_name, judge_config)
     return _retry_api_call(
         lambda: judge_chat.send_message(user_content).text,
         label="Query Judge API (Text)",
@@ -99,7 +94,8 @@ def main():
         return
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
-    vertexai.init(project=args.gcp_project_id, location=args.location)
+    client = create_client(args.gcp_project_id, args.location)
+    judge_config = make_query_judge_config()
 
     odir = os.path.dirname(args.scores_file)
     if odir and not os.path.exists(odir):
@@ -156,7 +152,7 @@ def main():
 
             print(f"  -> {len(pending)}개 질문 평가 예정")
 
-            judge_model = init_query_judge_model(model_name=args.query_judge_model)
+            judge_model = None  # 신 SDK: model 객체 불필요
 
             def judge_one(q_item):
                 query_text = q_item["query"]
@@ -177,7 +173,8 @@ def main():
                     for attempt in range(max_parse_retries):
                         try:
                             score_text = evaluate_query(
-                                judge_model, detailed_summary, query_text
+                                client, args.query_judge_model, judge_config,
+                                detailed_summary, query_text
                             )
                             score_dict = parse_json_response(score_text)
                             break

@@ -196,34 +196,40 @@ LLMJudge/
 # 전체 파이프라인 실행
 python main.py --input_file content_list.json
 
-# Keypoint 식별만 대화형으로 실행
-python main.py --skip-query-gen --skip-query-judge --skip-response --skip-judge
+# Keypoint 식별만 대화형으로 실행 (A-1만)
+python main.py --skip-bubble-query-gen --skip-query-judge --skip-user-query-gen --skip-response --skip-judge
 
 # Keypoint 식별 결과가 있고 Query 생성부터 시작
 python main.py --skip-keypoint
 
+# A 트랙(Bubble Query)만 실행 (B 트랙 전체 건너뛰기)
+python main.py --skip-user-query-gen --skip-response --skip-judge
+
+# B 트랙(User Query)만 실행 (A 트랙 건너뛰기, Keypoint 결과 필요)
+python main.py --skip-keypoint --skip-bubble-query-gen --skip-query-judge
+
 # Query 생성 건너뛰고 이후 답변/평가만
-python main.py --skip-keypoint --skip-query-gen
+python main.py --skip-keypoint --skip-bubble-query-gen --skip-query-judge --skip-user-query-gen
 ```
 
 ### 각 모듈 개별 실행
 ```bash
-# Step 0-1: Keypoint Scene 식별
+# A-1: Keypoint Scene 식별
 python identify_keypoint.py
 
-# Step 0-2: Bubble Query 생성 (Keypoint 입력)
+# A-2: Bubble Query 생성 (Keypoint 입력)
 python generate_bubble_query.py
 
-# Step 0-3: User Query 생성 (Keypoint 입력)
-python generate_user_query.py
-
-# Step 1: Bubble Query 품질 Judge
+# A-3: Bubble Query 품질 Judge
 python judge_bubble_query.py
 
-# Step 2: User Query 답변 생성 (실시간 모니터링 모드 가능)
+# B-1: User Query 생성 (Keypoint 입력)
+python generate_user_query.py
+
+# B-2: User Query 답변 생성 (실시간 모니터링 모드 가능)
 python generate_response.py --continuous
 
-# Step 3: 답변 Judge (실시간 모니터링 모드 가능)
+# B-3: 답변 Judge (실시간 모니터링 모드 가능)
 python judge_response.py --continuous
 ```
 

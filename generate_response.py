@@ -4,15 +4,14 @@ import argparse
 import json
 import subprocess
 import sys
-import vertexai
 import concurrent.futures
 import threading
 from gemini_api_utils import (
-    process_gcs_file, process_gcs_file_range, process_gcs_file_truncated,
-    check_gcs_files_exist, load_config, generate_single_turn_response,
-    SAFETY_SETTINGS
+    create_client, make_generate_config,
+    process_gcs_file, process_gcs_file_range,
+    check_gcs_files_exist, load_config,
+    _retry_api_call, download_gcs_text
 )
-from vertexai.generative_models import GenerativeModel
 
 # ============================================================
 # System Prompts (Local)
@@ -72,7 +71,8 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
 외부 자료 검색은 금지합니다. 오직 제공된 영상과 메타데이터만 활용하세요."""
 
 
-def init_generation_model(mode="full", model_name='gemini-2.5-flash'):
+def make_generation_config(mode="full", thinking_budget=None):
+    """Response 생성용 GenerateContentConfig를 반환합니다."""
     if mode == "full":
         prompt = _JSONL_VIEWER_BASE.format(description_field=_DESCRIPTION_LINE)
     elif mode == "part":
@@ -81,21 +81,12 @@ def init_generation_model(mode="full", model_name='gemini-2.5-flash'):
         prompt = "당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다. 외부 정보를 절대 검색하지 말고, 제공된 영상 정보만을 사용하여 사용자 질문에 답변하세요."
     else:
         prompt = ""
-        
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[prompt],
-        safety_settings=SAFETY_SETTINGS,
-    )
+    return make_generate_config(system_instruction=prompt, thinking_budget=thinking_budget)
 
 
-def init_reference_model(model_name='gemini-2.5-pro'):
-    """Reference Answer 생성용 모델 초기화."""
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[_REFERENCE_PROMPT],
-        safety_settings=SAFETY_SETTINGS,
-    )
+def make_reference_config():
+    """Reference Answer 생성용 config를 반환합니다."""
+    return make_generate_config(system_instruction=_REFERENCE_PROMPT)
 
 
 def main():
@@ -111,6 +102,8 @@ def main():
     parser.set_defaults(reference_use_ref=True)
     parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
+    parser.add_argument("--response_thinking_budget", type=int, default=-1,
+                        help="Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -120,7 +113,7 @@ def main():
         return
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
-    vertexai.init(project=args.gcp_project_id, location=args.location)
+    client = create_client(args.gcp_project_id, args.location)
     
     # 출력 폴더 생성 (responses, references)
     for fpath in [args.output_file, args.reference_file]:
@@ -247,13 +240,13 @@ def main():
                     print(f"[{content_id}] Warning: Reference JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
                     ref_scenes = []
 
-                print(f"[{content_id}] Initializing Generation models ({args.response_gen_model})...")
-                gen_models = {}
+                print(f"[{content_id}] Initializing Generation configs ({args.response_gen_model})...")
+                gen_configs = {}
                 for mode in ["video", "full", "part"]:
-                    gen_models[mode] = init_generation_model(mode=mode, model_name=args.response_gen_model)
+                    gen_configs[mode] = make_generation_config(mode=mode, thinking_budget=args.response_thinking_budget)
 
-                print(f"[{content_id}] Initializing Reference model ({args.reference_model}, Ref={'ON' if args.reference_use_ref else 'OFF'})...")
-                ref_model = init_reference_model(model_name=args.reference_model)
+                print(f"[{content_id}] Initializing Reference config ({args.reference_model}, Ref={'ON' if args.reference_use_ref else 'OFF'})...")
+                ref_config = make_reference_config()
 
                 for q_item in pending_queries:
                     # 새 포맷(dict) / 구 포맷(str) 호환 처리
@@ -321,8 +314,15 @@ def main():
                         else:
                             ref_contents = [curr_parts["video"], curr_parts["ref"]]
                         
-                        response = generate_single_turn_response(ref_model, user_prompt, file_part=ref_contents)
-                        reference_answer = response.text
+                        response_text = _retry_api_call(
+                            lambda: client.models.generate_content(
+                                model=args.reference_model,
+                                contents=[*ref_contents, user_prompt],
+                                config=ref_config
+                            ).text,
+                            label=f"[{content_id}] Reference 생성"
+                        )
+                        reference_answer = response_text
                         print(f"[{content_id}]  Reference answer generated ({len(reference_answer.split())} words)")
                     except Exception as e:
                         print(f"[{content_id}]  Generating [reference] Error: {e}")
@@ -343,10 +343,16 @@ def main():
                             else:
                                 mode_contents = [curr_parts["video"], curr_parts[mode]]
                                 
-                            response = generate_single_turn_response(
-                                gen_models[mode], user_prompt, file_part=mode_contents
+                            mode_contents_with_prompt = [*mode_contents, user_prompt]
+                            answer_text = _retry_api_call(
+                                lambda: client.models.generate_content(
+                                    model=args.response_gen_model,
+                                    contents=mode_contents_with_prompt,
+                                    config=gen_configs[mode]
+                                ).text,
+                                label=f"[{content_id}] [{mode}] 생성"
                             )
-                            return mode, response.text
+                            return mode, answer_text
                         except Exception as e:
                             print(f"[{content_id}]  Generating [{mode}] Error: {e}")
                             return mode, f"Error: {str(e)}"

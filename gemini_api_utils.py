@@ -2,36 +2,22 @@ import os
 import sys
 import time
 import json
+from google import genai
+from google.genai import types
 from google.cloud import storage
-from vertexai.generative_models import (
-    GenerativeModel, Part, 
-    SafetySetting, HarmCategory, HarmBlockThreshold
-)
 
-SAFETY_SETTINGS = [
-    SafetySetting(
-        category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    ),
-    SafetySetting(
-        category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    ),
-    SafetySetting(
-        category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    ),
-    SafetySetting(
-        category=HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    ),
-]
 
-# config.json에서 CLI 인자보다 낮은 우선순위로 덮어쓸 수 있는 키 목록
+
+# ============================================================
+# config.json 지원 키 목록
+# ============================================================
+
 _CONFIG_KEYS = [
     "query_gen_model", "response_gen_model", "judge_model",
     "location", "reference_model", "reference_use_ref",
-    "keypoint_model", "query_judge_model"
+    "keypoint_model", "query_judge_model",
+    "summary_gen_model", "bubble_query_model", "user_query_model",
+    "bubble_thinking_budget", "response_thinking_budget"
 ]
 
 
@@ -50,8 +36,6 @@ def load_config(args):
     args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
     args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
 
-    # 선택 키: argparse 기본값이 세팅되어 있어도, CLI에서 명시하지 않았으면 config 값 사용
-    # reference_use_ref 는 --no-reference-ref 플래그와 연결됨
     _ARG_FLAG_MAP = {
         "reference_use_ref": "--no-reference-ref"
     }
@@ -64,6 +48,50 @@ def load_config(args):
     return args
 
 
+# ============================================================
+# Client Factory
+# ============================================================
+
+def create_client(project_id: str, location: str) -> genai.Client:
+    """Vertex AI 백엔드를 사용하는 genai.Client를 생성합니다."""
+    return genai.Client(
+        vertexai=True,
+        project=project_id,
+        location=location,
+    )
+
+
+# ============================================================
+# GenerateContentConfig Helpers
+# ============================================================
+
+def make_generate_config(
+    system_instruction: str = None,
+    thinking_budget: int = None,
+) -> types.GenerateContentConfig:
+    """GenerateContentConfig 객체를 생성합니다.
+
+    Args:
+        system_instruction: 시스템 프롬프트 문자열
+        thinking_budget: Thinking 토큰 수 (0=off, -1=dynamic, 양수=지정). None이면 미설정.
+    """
+    kwargs = {}
+
+    if system_instruction is not None:
+        kwargs["system_instruction"] = system_instruction
+
+    if thinking_budget is not None:
+        kwargs["thinking_config"] = types.ThinkingConfig(
+            thinking_budget=thinking_budget
+        )
+
+    return types.GenerateContentConfig(**kwargs)
+
+
+# ============================================================
+# JSON Parsing
+# ============================================================
+
 def parse_json_response(text):
     """마크다운 태그(```json ... ```)를 정제하고 JSON 객체로 파싱합니다."""
     clean_text = text.strip()
@@ -75,6 +103,10 @@ def parse_json_response(text):
         clean_text = clean_text[:-3]
     return json.loads(clean_text)
 
+
+# ============================================================
+# GCS File Helpers
+# ============================================================
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
     """GCS 버킷에 필수 파일 4종(1 video + 3 metadata jsonl)이 존재하는지 확인합니다."""
@@ -97,9 +129,6 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
         print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}")
         return False
 
-# ============================================================
-# GCS File Helpers
-# ============================================================
 
 _GCS_MODE_MAP = {
     "video": ("video_540p/{cid}_540p.mp4", "video/mp4"),
@@ -108,16 +137,18 @@ _GCS_MODE_MAP = {
     "ref":   ("jsonl/{cid}_Ref.jsonl",  "text/plain"),
 }
 
+
 def process_gcs_file(gs_bucket_name, content_id, mode="video"):
+    """GCS 파일 전체를 참조하는 Part를 반환합니다."""
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
     path_template, mime_type = _GCS_MODE_MAP[mode]
     file_uri = f"gs://{gs_bucket_name}/{path_template.format(cid=content_id)}"
-    return Part.from_uri(uri=file_uri, mime_type=mime_type)
+    return types.Part.from_uri(file_uri=file_uri, mime_type=mime_type)
 
 
 # ============================================================
-# Truncation Helpers (Keypoint 기반 파이프라인용)
+# Truncation Helpers
 # ============================================================
 
 def download_gcs_text(gs_bucket_name, blob_path):
@@ -129,19 +160,7 @@ def download_gcs_text(gs_bucket_name, blob_path):
 
 
 def truncate_jsonl_range(jsonl_text, start_time, end_time):
-    """JSONL 텍스트에서 [start_time, end_time] 구간의 Scene만 추출합니다.
-    
-    각 Scene의 end_time이 (start_time, end_time] 범위에 걸쳐 있는 라인만 유지합니다.
-    (정교한 분할을 위해 end_time 기준으로 판단)
-    
-    Args:
-        jsonl_text: JSONL 형식의 텍스트 문자열
-        start_time: 시작 시간 (초, float)
-        end_time: 종료 시간 (초, float)
-        
-    Returns:
-        구간 내의 JSONL 텍스트 문자열
-    """
+    """JSONL 텍스트에서 [start_time, end_time] 구간의 Scene만 추출합니다."""
     truncated_lines = []
     for line in jsonl_text.strip().split("\n"):
         if not line.strip():
@@ -158,52 +177,34 @@ def truncate_jsonl_range(jsonl_text, start_time, end_time):
 
 def process_gcs_file_range(gs_bucket_name, content_id, mode, start_time, end_time):
     """[start_time, end_time] 구간 데이터 Part를 반환합니다.
-    
-    - video 모드: VideoMetadata의 start_offset/end_offset을 사용하여 구간 클리핑
-    - jsonl 모드 (full/part/ref): GCS에서 다운로드 후 해당 구간만 추출하여 인라인 Part 반환
-    
-    Args:
-        gs_bucket_name: GCS 버킷 이름
-        content_id: 콘텐츠 ID
-        mode: "video", "full", "part", "ref" 중 하나
-        start_time: 시작 시각 (초, float)
-        end_time: 종료 시각 (초, float)
-        
-    Returns:
-        vertexai Part 객체
+
+    - video 모드: VideoMetadata의 start_offset/end_offset으로 구간 클리핑
+    - jsonl 모드: GCS에서 다운로드 후 해당 구간만 추출하여 인라인 Part 반환
     """
-    from google.cloud.aiplatform_v1beta1.types import content as gapic_content
-    
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
-    
+
     path_template, mime_type = _GCS_MODE_MAP[mode]
     blob_path = path_template.format(cid=content_id)
     file_uri = f"gs://{gs_bucket_name}/{blob_path}"
-    
+
     if mode == "video":
-        # VideoMetadata를 사용하여 구간 비디오 클리핑
-        video_meta = gapic_content.VideoMetadata(
-            start_offset=f"{int(start_time)}s",
-            end_offset=f"{int(end_time)}s"
-        )
-        raw_part = gapic_content.Part(
-            file_data=gapic_content.FileData(
-                file_uri=file_uri,
-                mime_type=mime_type
+        return types.Part.from_uri(
+            file_uri=file_uri,
+            mime_type=mime_type,
+            video_metadata=types.VideoMetadata(
+                start_offset=f"{int(start_time)}s",
+                end_offset=f"{int(end_time)}s",
             ),
-            video_metadata=video_meta
         )
-        return Part._from_gapic(raw_part)
     else:
-        # JSONL 텍스트를 다운로드 후 지정된 구간만 추출하여 인라인 Part로 반환
         jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
         range_text = truncate_jsonl_range(jsonl_text, start_time, end_time)
-        return Part.from_data(data=range_text.encode("utf-8"), mime_type="text/plain")
+        return types.Part.from_bytes(data=range_text.encode("utf-8"), mime_type="text/plain")
 
 
 def process_gcs_file_truncated(gs_bucket_name, content_id, mode, end_time):
-    """[0, end_time]까지 Truncation된 GCS 파일 Part를 반환합니다. (Scene 기반 파이프라인)"""
+    """[0, end_time]까지 Truncation된 GCS 파일 Part를 반환합니다."""
     return process_gcs_file_range(gs_bucket_name, content_id, mode, 0.0, end_time)
 
 
@@ -212,7 +213,11 @@ def process_gcs_file_truncated(gs_bucket_name, content_id, mode, end_time):
 # ============================================================
 
 def _retry_api_call(fn, label="API", delay=10):
-    """공통 재시도(Infinite Loop for 429/5xx) 래퍼."""
+    """공통 재시도(Infinite Loop for 429/5xx) 래퍼.
+
+    재시도 대상: 429 (Quota Exceeded), 500 / 503 / 504 (서버 일시 오류)
+    그 외 모든 오류는 즉시 raise.
+    """
     attempt = 0
     while True:
         attempt += 1
@@ -220,27 +225,24 @@ def _retry_api_call(fn, label="API", delay=10):
             return fn()
         except Exception as e:
             err_msg = str(e)
-            # Terminal Errors: 재시도해도 해결되지 않는 오류들
-            # 400 (Invalid Argument), 403 (Permission Denied), 404 (Not Found)
-            # Safety Rating/Block (차단됨)
-            is_terminal = any(code in err_msg for code in ["400", "401", "403", "404", "Safety"])
-            
-            if is_terminal:
+            is_retryable = any(code in err_msg for code in ["429", "500", "503", "504"])
+
+            if not is_retryable:
                 print(f"      [{label} 치명적 오류] {err_msg}")
                 raise
-            
-            # Retryable: 429 (Quota), 500, 503, 504 등
+
             print(f"      [{label} 오류] {err_msg}")
             print(f"      -> {delay}초 후 재시도합니다... (시도 횟수: {attempt})")
             time.sleep(delay)
 
 
 # ============================================================
-# API Interaction Helpers
+# API Interaction Helpers (신 SDK Chat 방식)
 # ============================================================
 
-def start_chat_session(model):
-    return model.start_chat()
+def start_chat_session(client: genai.Client, model: str, config: types.GenerateContentConfig):
+    """Chat 세션을 생성합니다."""
+    return client.chats.create(model=model, config=config)
 
 
 def send_chat_message(chat, user_prompt, file_parts=None):
@@ -251,25 +253,23 @@ def send_chat_message(chat, user_prompt, file_parts=None):
         contents = file_parts + [user_prompt]
     else:
         contents = [file_parts, user_prompt]
-        
+
     return _retry_api_call(
         lambda: chat.send_message(contents),
         label="Generation API (Multi-turn)",
     )
 
 
-def generate_single_turn_response(model, user_prompt, file_part=None):
-    """모델 직접 호출을 통한 Single-turn 응답 생성.
-    
-    file_part: Part 하나, Part의 리스트, 또는 None 모두 허용.
-    """
+def generate_single_turn_response(client: genai.Client, model: str, config: types.GenerateContentConfig, user_prompt, file_part=None):
+    """Single-turn 응답 생성."""
     if file_part is None:
         contents = [user_prompt]
     elif isinstance(file_part, list):
         contents = file_part + [user_prompt]
     else:
         contents = [file_part, user_prompt]
+
     return _retry_api_call(
-        lambda: model.generate_content(contents),
+        lambda: client.models.generate_content(model=model, contents=contents, config=config),
         label="Generation API (Single-turn)",
     )

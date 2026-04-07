@@ -2,11 +2,10 @@ import os
 import time
 import argparse
 import json
-import vertexai
-from vertexai.generative_models import GenerativeModel
 from gemini_api_utils import (
+    create_client, make_generate_config,
     process_gcs_file_range,
-    check_gcs_files_exist, SAFETY_SETTINGS,
+    check_gcs_files_exist,
     load_config, parse_json_response, _retry_api_call,
 )
 
@@ -48,14 +47,7 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
 ]\
 """
 
-def init_user_query_model(model_name):
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[_USER_QUERY_GENERATION_PROMPT],
-        safety_settings=SAFETY_SETTINGS
-    )
-
-def generate_user_query(query_model, past_parts, current_parts, end_time):
+def generate_user_query(client, model_name, query_config, past_parts, current_parts, end_time):
     contents = [
         "--- Past Information (Context) ---",
         past_parts["video"], past_parts["meta"],
@@ -64,7 +56,12 @@ def generate_user_query(query_model, past_parts, current_parts, end_time):
         "--- 요청 사항 ---",
         "과거와 현재 정보를 바탕으로 누적 맥락에서 질문 3개를 생성하세요."
     ]
-    text = _retry_api_call(lambda: query_model.generate_content(contents).text, label=f"User Query 생성 (end={end_time:.1f}s)")
+    text = _retry_api_call(
+        lambda: client.models.generate_content(
+            model=model_name, contents=contents, config=query_config
+        ).text,
+        label=f"User Query 생성 (end={end_time:.1f}s)"
+    )
     return parse_json_response(text)
 
 # ───────────────────────────────────────────────
@@ -91,9 +88,8 @@ def main():
         return
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
-    vertexai.init(project=args.gcp_project_id, location=args.location)
-
-    user_model = init_user_query_model(args.query_gen_model)
+    client = create_client(args.gcp_project_id, args.location)
+    query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_bubble_query.py를 실행하세요.")
@@ -206,7 +202,8 @@ def main():
                     }
 
                     user_list = generate_user_query(
-                        user_model, past_parts, current_parts, end_time
+                        client, args.query_gen_model, query_config,
+                        past_parts, current_parts, end_time
                     )
                     
                     for q in user_list[:3]:

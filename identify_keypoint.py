@@ -4,11 +4,10 @@ import math
 import concurrent.futures
 import argparse
 import json
-import vertexai
-from vertexai.generative_models import GenerativeModel
 from gemini_api_utils import (
+    create_client, make_generate_config,
     process_gcs_file, process_gcs_file_range, check_gcs_files_exist,
-    SAFETY_SETTINGS, load_config, parse_json_response,
+    load_config, parse_json_response,
     _retry_api_call, download_gcs_text
 )
 
@@ -162,38 +161,26 @@ def build_scene_list_text(scenes):
 # 모델 초기화
 # ============================================================
 
-def init_keypoint_model(model_name):
-    """단일 세션(9~24 Scene)용 모델"""
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[_KEYPOINT_SYSTEM_PROMPT],
-        safety_settings=SAFETY_SETTINGS
-    )
+def make_keypoint_config(model_name):
+    """단일 세션(9~24 Scene)용 config"""
+    return make_generate_config(system_instruction=_KEYPOINT_SYSTEM_PROMPT)
 
 
-def init_candidate_model(model_name):
-    """Stage 1: 세그먼트별 Candidate 생성용 모델"""
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[_CANDIDATE_SYSTEM_PROMPT],
-        safety_settings=SAFETY_SETTINGS
-    )
+def make_candidate_config():
+    """Stage 1: 세그먼트별 Candidate 생성용 config"""
+    return make_generate_config(system_instruction=_CANDIDATE_SYSTEM_PROMPT)
 
 
-def init_selector_model(model_name):
-    """Stage 2: 최종 Keypoint 선별용 모델"""
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[_SELECTOR_SYSTEM_PROMPT],
-        safety_settings=SAFETY_SETTINGS
-    )
+def make_selector_config():
+    """Stage 2: 최종 Keypoint 선별용 config"""
+    return make_generate_config(system_instruction=_SELECTOR_SYSTEM_PROMPT)
 
 
 # ============================================================
 # LLM 호출 함수
 # ============================================================
 
-def identify_keypoints_single(model, video_part, ref_part, scene_list_text):
+def identify_keypoints_single(client, model_name, keypoint_config, video_part, ref_part, scene_list_text):
     """단일 세션으로 Keypoint를 식별합니다 (Scene 9~24개)."""
     prompt = (
         "제공된 비디오, Reference 메타데이터와 아래 Scene List를 분석하여, "
@@ -203,12 +190,14 @@ def identify_keypoints_single(model, video_part, ref_part, scene_list_text):
         "반드시 지정된 JSON 배열 형식으로만 출력하세요 (scene_idx와 reason 필수)."
     )
     return _retry_api_call(
-        lambda: model.generate_content([video_part, ref_part, prompt]).text,
+        lambda: client.models.generate_content(
+            model=model_name, contents=[video_part, ref_part, prompt], config=keypoint_config
+        ).text,
         label="Keypoint 식별 (단일)",
     )
 
 
-def generate_candidates_for_segment(model, video_part, ref_part, scene_list_text, seg_label):
+def generate_candidates_for_segment(client, model_name, candidate_config, video_part, ref_part, scene_list_text, seg_label):
     """하나의 세그먼트에서 Candidate를 생성합니다 (Stage 1)."""
     prompt = (
         f"이 영상 구간({seg_label})의 비디오, Reference 메타데이터와 "
@@ -219,12 +208,14 @@ def generate_candidates_for_segment(model, video_part, ref_part, scene_list_text
         "반드시 지정된 JSON 배열 형식으로만 출력하세요 (scene_idx와 reason 필수)."
     )
     return _retry_api_call(
-        lambda: model.generate_content([video_part, ref_part, prompt]).text,
+        lambda: client.models.generate_content(
+            model=model_name, contents=[video_part, ref_part, prompt], config=candidate_config
+        ).text,
         label=f"Candidate 생성 ({seg_label})",
     )
 
 
-def select_keypoints_from_candidates(model, all_candidates, full_scene_list_text):
+def select_keypoints_from_candidates(client, model_name, selector_config, all_candidates, full_scene_list_text):
     """Candidate 목록에서 최종 Keypoint를 선별합니다 (Stage 2)."""
     candidates_json = json.dumps(all_candidates, ensure_ascii=False, indent=2)
     prompt = (
@@ -237,7 +228,9 @@ def select_keypoints_from_candidates(model, all_candidates, full_scene_list_text
         "반드시 지정된 JSON 배열 형식으로만 출력하세요 (scene_idx와 reason 필수)."
     )
     return _retry_api_call(
-        lambda: model.generate_content([prompt]).text,
+        lambda: client.models.generate_content(
+            model=model_name, contents=[prompt], config=selector_config
+        ).text,
         label="Keypoint 최종 선별",
     )
 
@@ -285,7 +278,10 @@ def main():
         return
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
-    vertexai.init(project=args.gcp_project_id, location=args.location)
+    client = create_client(args.gcp_project_id, args.location)
+    keypoint_config = make_keypoint_config(args.keypoint_model)
+    candidate_config = make_candidate_config()
+    selector_config = make_selector_config()
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
@@ -361,13 +357,16 @@ def main():
             # ======================================================
             elif total_scenes <= _SPLIT_THRESHOLD:
                 print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 이하이므로 단일 세션으로 식별합니다.")
-                model = init_keypoint_model(args.keypoint_model)
+                model = None  # 신 SDK에서는 model 객체 불필요
                 video_part = process_gcs_file(args.gs_bucket_name, content_id, mode="video")
                 ref_part = process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
 
                 try:
                     time.sleep(2)
-                    keypoint_text = identify_keypoints_single(model, video_part, ref_part, full_scene_list_text)
+                    keypoint_text = identify_keypoints_single(
+                    client, args.keypoint_model, keypoint_config,
+                    video_part, ref_part, full_scene_list_text
+                )
                     raw_keypoints = parse_json_response(keypoint_text)[:20]
                     keypoints = resolve_keypoints(raw_keypoints, ref_scenes)
                 except Exception as e:
@@ -405,8 +404,8 @@ def main():
                           f"Scene {seg[0].get('scene_idx')}~{seg[-1].get('scene_idx')} "
                           f"({seg_start_time:.1f}s ~ {seg_end_time:.1f}s)")
 
-                    # 각 스레드마다 독립 모델 인스턴스 생성 (thread-safety)
-                    seg_model = init_candidate_model(args.keypoint_model)
+                    # 각 스레드마다 독립 config 사용 (thread-safe)
+                    seg_cand_config = make_candidate_config()
 
                     video_part = process_gcs_file_range(
                         args.gs_bucket_name, content_id, "video",
@@ -418,7 +417,8 @@ def main():
                     )
 
                     cand_text = generate_candidates_for_segment(
-                        seg_model, video_part, ref_part,
+                        client, args.keypoint_model, seg_cand_config,
+                        video_part, ref_part,
                         seg_scene_text, seg_label
                     )
                     seg_candidates = parse_json_response(cand_text)
@@ -455,12 +455,13 @@ def main():
 
                 # Stage 2: 최종 선별
                 print(f"\n[Stage 2] 최종 Keypoint 선별 중... ({args.keypoint_model})")
-                selector_model = init_selector_model(args.keypoint_model)
+                selector_model = None  # 신 SDK에서는 model 객체 불필요
 
                 try:
                     time.sleep(2)
                     selection_text = select_keypoints_from_candidates(
-                        selector_model, all_candidates, full_scene_list_text
+                        client, args.keypoint_model, selector_config,
+                        all_candidates, full_scene_list_text
                     )
                     raw_keypoints = parse_json_response(selection_text)[:20]
                     keypoints = resolve_keypoints(raw_keypoints, ref_scenes)

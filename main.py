@@ -29,7 +29,9 @@ def main():
     parser.add_argument("--bubble_query_model", default="gemini-2.5-flash", help="Bubble Query 생성에 사용할 Budget 모델명")
     parser.add_argument("--summary_gen_model", default="gemini-2.5-pro", help="Detailed Summary 생성에 사용할 Premium 모델명")
     parser.add_argument("--query_judge_model", default="gemini-2.5-pro", help="Bubble Query 질문 Judge에 사용할 Premium 모델명")
-    
+    parser.add_argument("--bubble_thinking_budget", type=int, default=0,
+                        help="Bubble Query 모델의 Thinking Budget (0=비활성화, -1=동적)")
+
     # User Query 모델 설정
     parser.add_argument("--user_query_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
     parser.add_argument("--response_gen_model", default="gemini-2.5-flash", help="User Query 답변 생성 모델명")
@@ -37,12 +39,15 @@ def main():
     parser.add_argument("--no-reference-ref", dest="reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
     parser.set_defaults(reference_use_ref=True)
     parser.add_argument("--judge_model", default="gemini-2.5-pro", help="User Query 답변 평가 모델명")
+    parser.add_argument("--response_thinking_budget", type=int, default=-1,
+                        help="Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적)")
     
-    parser.add_argument("--skip-keypoint", action="store_true", help="Keypoint 식별를 건너뛰기")
-    parser.add_argument("--skip-query-gen", action="store_true", help="Bubble/User Query 생성을 건너뛰기")
-    parser.add_argument("--skip-query-judge", action="store_true", help="Bubble Query 품질 Judge를 건너뛰기")
-    parser.add_argument("--skip-response", action="store_true", help="User Query 답변 생성을 건너뛰기")
-    parser.add_argument("--skip-judge", action="store_true", help="User Query 답변 평가를 건너뛰기")
+    parser.add_argument("--skip-keypoint", action="store_true", help="A-1. Keypoint 식별을 건너뛰기")
+    parser.add_argument("--skip-bubble-query-gen", action="store_true", help="A-2. Bubble Query 생성을 건너뛰기")
+    parser.add_argument("--skip-query-judge", action="store_true", help="A-3. Bubble Query 품질 Judge를 건너뛰기")
+    parser.add_argument("--skip-user-query-gen", action="store_true", help="B-1. User Query 생성을 건너뛰기")
+    parser.add_argument("--skip-response", action="store_true", help="B-2. User Query 답변 생성을 건너뛰기")
+    parser.add_argument("--skip-judge", action="store_true", help="B-3. User Query 답변 평가를 건너뛰기")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -58,11 +63,11 @@ def main():
     ]
 
     # ───────────────────────────────────────────────
-    # Step 0-1: Keypoint Scene 식별 (identify_keypoint.py)
+    # A-1: Keypoint Scene 식별 (identify_keypoint.py)
     # ───────────────────────────────────────────────
     if not args.skip_keypoint:
         print("\n" + "="*60)
-        print(">>> 0-1. Keypoint Scene 식별 (identify_keypoint.py)")
+        print(">>> A-1. Keypoint Scene 식별 (identify_keypoint.py)")
         print("="*60)
         cmd_kp = [
             sys.executable, "identify_keypoint.py",
@@ -76,11 +81,11 @@ def main():
         print(f"\n[Skip] Keypoint 식별 건너뜀.")
 
     # ───────────────────────────────────────────────
-    # Step 0-2: Bubble Query 생성 (generate_bubble_query.py)
+    # A-2: Bubble Query 생성 (generate_bubble_query.py)
     # ───────────────────────────────────────────────
-    if not args.skip_query_gen:
+    if not args.skip_bubble_query_gen:
         print("\n" + "="*60)
-        print(">>> 0-2. Bubble Query 생성 (generate_bubble_query.py)")
+        print(">>> A-2. Bubble Query 생성 (generate_bubble_query.py)")
         print("="*60)
         cmd_bubble = [
             sys.executable, "generate_bubble_query.py",
@@ -88,34 +93,22 @@ def main():
             "--output_file", args.bubble_queries_file,
             "--query_gen_model", args.bubble_query_model,
             "--summary_gen_model", args.summary_gen_model,
+            "--bubble_thinking_budget", str(args.bubble_thinking_budget),
         ] + common_project_args
         subprocess.run(cmd_bubble, check=True)
         print(f"-> Bubble Query 저장 완료: {args.bubble_queries_file}")
-
-        print("\n" + "="*60)
-        print(">>> 0-3. User Query 생성 (generate_user_query.py)")
-        print("="*60)
-        cmd_user = [
-            sys.executable, "generate_user_query.py",
-            "--keypoints_file", args.keypoints_file,
-            "--input_file", args.bubble_queries_file,
-            "--output_file", args.user_queries_file,
-            "--query_gen_model", args.user_query_model,
-        ] + common_project_args
-        subprocess.run(cmd_user, check=True)
-        print(f"-> User Query 저장 완료: {args.user_queries_file}")
     else:
-        print(f"\n[Skip] Query 생성 건너뜀.")
+        print(f"\n[Skip] Bubble Query 생성 건너뜀.")
 
     # ───────────────────────────────────────────────
-    # Step 1: Bubble Query 질문 품질 Judge (judge_query.py)
+    # A-3: Bubble Query 질문 품질 Judge (judge_bubble_query.py)
     # ───────────────────────────────────────────────
     if not args.skip_query_judge:
         print("\n" + "="*60)
-        print(">>> 1. Bubble Query 질문 품질 평가 (judge_query.py)")
+        print(">>> A-3. Bubble Query 질문 품질 평가 (judge_bubble_query.py)")
         print("="*60)
         cmd = [
-            sys.executable, "judge_query.py",
+            sys.executable, "judge_bubble_query.py",
             "--input_file", args.bubble_queries_file,
             "--scores_file", args.bubble_query_scores_file,
             "--query_judge_model", args.query_judge_model,
@@ -126,13 +119,30 @@ def main():
         print(f"\n[Skip] Bubble Query 질문 평가 건너뜀.")
 
     # ───────────────────────────────────────────────
-    # Step 2: User Query 답변 생성 (generate_response.py)
+    # B-1: User Query 생성 (generate_user_query.py)
+    # ───────────────────────────────────────────────
+    if not args.skip_user_query_gen:
+        print("\n" + "="*60)
+        print(">>> B-1. User Query 생성 (generate_user_query.py)")
+        print("="*60)
+        cmd_user = [
+            sys.executable, "generate_user_query.py",
+            "--keypoints_file", args.keypoints_file,
+            "--output_file", args.user_queries_file,
+            "--query_gen_model", args.user_query_model,
+        ] + common_project_args
+        subprocess.run(cmd_user, check=True)
+        print(f"-> User Query 저장 완료: {args.user_queries_file}")
+    else:
+        print(f"\n[Skip] User Query 생성 건너뜀.")
+
+    # ───────────────────────────────────────────────
+    # B-2: User Query 답변 생성 (generate_response.py)
     # ───────────────────────────────────────────────
     if not args.skip_response:
         print("\n" + "="*60)
-        print(">>> 2. User Query 답변 생성 (generate_response.py)")
+        print(">>> B-2. User Query 답변 생성 (generate_response.py)")
         print("="*60)
-        # User Query의 쿼리를 입력으로 사용 (사전 Judge 없음)
         cmd = [
             sys.executable, "generate_response.py",
             "--json_file", args.user_queries_file,
@@ -140,6 +150,7 @@ def main():
             "--reference_file", args.references_file,
             "--response_gen_model", args.response_gen_model,
             "--reference_model", args.reference_model,
+            "--response_thinking_budget", str(args.response_thinking_budget),
         ]
         if not args.reference_use_ref:
             cmd.append("--no-reference-ref")
@@ -147,13 +158,13 @@ def main():
         subprocess.run(cmd, check=True)
     else:
         print(f"\n[Skip] User Query 답변 생성 건너뜀.")
- 
+
     # ───────────────────────────────────────────────
-    # Step 3: User Query 답변 Judge (judge_response.py)
+    # B-3: User Query 답변 Judge (judge_response.py)
     # ───────────────────────────────────────────────
     if not args.skip_judge:
         print("\n" + "="*60)
-        print(">>> 3. User Query 답변 Judge (judge_response.py)")
+        print(">>> B-3. User Query 답변 Judge (judge_response.py)")
         print("="*60)
         cmd = [
             sys.executable, "judge_response.py",
@@ -167,10 +178,10 @@ def main():
         print(f"\n[Skip] User Query 답변 Judge 건너뜀.")
 
     # ───────────────────────────────────────────────
-    # Step 4: JSONL → JSON 집계 + 엑셀 내보내기
+    # B-4: JSONL → JSON 집계 + 엑셀 내보내기
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> 4. JSONL 집계 및 엑셀 내보내기")
+    print(">>> B-4. JSONL 집계 및 엑셀 내보내기")
     print("="*60)
     output_dir = os.path.dirname(args.scores_file) or "assets"
     subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir], check=True)

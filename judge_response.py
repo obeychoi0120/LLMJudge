@@ -4,15 +4,14 @@ import json
 import time
 import subprocess
 import sys
-import vertexai
 import concurrent.futures
 import threading
 from gemini_api_utils import (
-    start_chat_session, 
+    create_client, make_generate_config,
+    start_chat_session,
     load_config, parse_json_response,
-    SAFETY_SETTINGS, _retry_api_call
+    _retry_api_call
 )
-from vertexai.generative_models import GenerativeModel
 
 # ============================================================
 # Judge Prompts
@@ -52,18 +51,13 @@ _JUDGE_FORMAT_PROMPT = """\
 }"""
 
 
-def init_judge_model(model_name="gemini-2.5-pro"):
-    return GenerativeModel(
-        model_name=model_name,
-        system_instruction=[_JUDGE_PROMPT],
-        safety_settings=SAFETY_SETTINGS,
-    )
+def make_judge_config():
+    return make_generate_config(system_instruction=_JUDGE_PROMPT)
 
 
-def evaluate_answer_session(judge_chat, user_prompt, generated_answer, reference_answer):
+def evaluate_answer_session(client, model_name, judge_config, user_prompt, generated_answer, reference_answer):
     """
     Judge 모델이 Reference Answer를 기준으로 generated_answer를 비교 평가합니다.
-    비디오/GT 파트 전송 없이 텍스트만으로 동작하여 토큰을 대폭 절감합니다.
     """
     user_content = (
         f"[사용자 질문]\n{user_prompt}\n\n"
@@ -72,6 +66,7 @@ def evaluate_answer_session(judge_chat, user_prompt, generated_answer, reference
         f"{_JUDGE_FORMAT_PROMPT}"
     )
 
+    judge_chat = start_chat_session(client, model_name, judge_config)
     return _retry_api_call(
         lambda: judge_chat.send_message([user_content]).text,
         label="Judge API",
@@ -97,7 +92,8 @@ def main():
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
         return
 
-    vertexai.init(project=args.gcp_project_id, location=args.location)
+    client = create_client(args.gcp_project_id, args.location)
+    judge_config = make_judge_config()
     
     # 출력 폴더 생성
     output_dir = os.path.dirname(args.output_file)
@@ -251,9 +247,7 @@ def main():
                         print(f"[{content_id}]  Evaluating [{mode}]...")
                         time.sleep(1)
                         
-                        # 독립 세션: (query, mode)별 완전 격리
-                        judge_model = init_judge_model(model_name=args.judge_model)
-                        judge_chat = start_chat_session(judge_model)
+                        # 독립 세션: evaluate_answer_session 내부에서 생성
                         
                         max_parse_retries = 3
                         parse_success = False
@@ -262,7 +256,9 @@ def main():
                         for attempt in range(max_parse_retries):
                             try:
                                 score_text = evaluate_answer_session(
-                                    judge_chat=judge_chat, 
+                                    client=client,
+                                    model_name=args.judge_model,
+                                    judge_config=judge_config,
                                     user_prompt=user_prompt, 
                                     generated_answer=generated_answer,
                                     reference_answer=reference_answer
