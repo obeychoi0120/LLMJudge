@@ -11,6 +11,7 @@ def main():
     
     # Bubble Query (현재 장면 관련 질문) 입출력
     parser.add_argument("--bubble_queries_file", default="assets/bubble_query.jsonl", help="Bubble Query 생성된 질문 목록 경로")
+    parser.add_argument("--bubble_summary_file", default="assets/bubble_summary.jsonl", help="Bubble Query Detailed Summary 별도 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 저장 경로")
     parser.add_argument("--bubble_query_scores_file", default="assets/bubble_query_scores.jsonl", help="Bubble Query 질문별 Judge 점수 파일 경로")
     
@@ -38,6 +39,8 @@ def main():
 
     # User Query 모델 설정
     parser.add_argument("--uq_gen_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
+    parser.add_argument("--uq_gen_thinking_budget", type=int, default=2048,
+                        help="UQ 생성 모델의 Thinking Budget")
     parser.add_argument("--uq_response_model", default="gemini-2.5-flash", help="User Query 답변 생성 모델명")
     parser.add_argument("--uq_reference_model", default="gemini-2.5-pro", help="User Query Reference Answer 생성 모델명")
     parser.add_argument("--no-uq-reference-ref", dest="uq_reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
@@ -102,6 +105,7 @@ def main():
             sys.executable, "generate_bubble_query.py",
             "--input_file", args.keypoints_file,
             "--output_file", args.bubble_queries_file,
+            "--summary_file", args.bubble_summary_file,
             "--bq_gen_model", args.bq_gen_model,
             "--bq_summary_model", args.bq_summary_model,
             "--bq_thinking_budget", str(args.bq_thinking_budget),
@@ -122,6 +126,7 @@ def main():
         cmd = [
             sys.executable, "judge_bubble_query.py",
             "--input_file", args.bubble_queries_file,
+            "--summary_file", args.bubble_summary_file,
             "--scores_file", args.bubble_query_scores_file,
             "--bq_judge_model", args.bq_judge_model,
             "--bq_judge_thinking_budget", str(args.bq_judge_thinking_budget),
@@ -143,6 +148,7 @@ def main():
             "--keypoints_file", args.keypoints_file,
             "--output_file", args.user_queries_file,
             "--uq_gen_model", args.uq_gen_model,
+            "--uq_gen_thinking_budget", str(args.uq_gen_thinking_budget),
         ] + common_project_args
         subprocess.run(cmd_user, check=True)
         print(f"-> User Query 저장 완료: {args.user_queries_file}")

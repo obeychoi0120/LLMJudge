@@ -18,7 +18,7 @@ _CONFIG_KEYS = [
     "bq_thinking_budget", "bq_summary_thinking_budget", "bq_judge_thinking_budget",
     # B-track: User Query
     "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
-    "uq_response_thinking_budget", "uq_reference_thinking_budget", "uq_judge_thinking_budget",
+    "uq_gen_thinking_budget", "uq_response_thinking_budget", "uq_reference_thinking_budget", "uq_judge_thinking_budget",
     "uq_reference_use_ref",
 ]
 
@@ -142,7 +142,7 @@ def load_processed_pairs(jsonl_path, key_fields=("content_id", "query")):
                 try:
                     obj = json.loads(line)
                     values = tuple(obj.get(k) for k in key_fields)
-                    if all(values):
+                    if all(v is not None for v in values):
                         processed.add(values)
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -223,14 +223,9 @@ def preload_content_metadata(gs_bucket_name, content_id):
             to_download.append((mode, blob_path))
 
     if not to_download:
-        print(f"  [Preload] '{content_id}' - 메타데이터 3종 모두 캐시 사용 (skip download)")
         return
-
-    print(f"  [Preload] '{content_id}' - 메타데이터 {len(to_download)}종 다운로드 시작: "
-          f"{[m for m, _ in to_download]}")
     for mode, blob_path in to_download:
         download_gcs_text(gs_bucket_name, blob_path)
-    print(f"  [Preload] '{content_id}' - 완료")
 
 
 def load_ref_scenes(gs_bucket_name, content_id):

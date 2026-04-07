@@ -81,6 +81,8 @@ def main():
     parser.add_argument("--location", default="global", help="GCP Location")
     
     parser.add_argument("--uq_gen_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
+    parser.add_argument("--uq_gen_thinking_budget", type=int, default=2048,
+                        help="UQ 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -91,7 +93,8 @@ def main():
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
     client = create_client(args.gcp_project_id, args.location)
-    query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT)
+    query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT,
+                                        thinking_budget=args.uq_gen_thinking_budget)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_bubble_query.py를 실행하세요.")

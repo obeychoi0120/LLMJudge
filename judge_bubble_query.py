@@ -76,15 +76,14 @@ def evaluate_query(client, model_name, judge_config, detailed_summary, query_tex
         label="Query Judge API (Text)",
     )
 
-def judge_one(q_item):
+def judge_one(q_item, content_id, scene_idx, detailed_summary,
+              client, args, judge_config, file_write_lock):
     query_text = q_item["query"]
-    detailed_summary = q_item.get("detailed_summary", "")
-    scene_idx = q_item.get("scene_idx", -1)
 
     print(f"  Judging: \"{query_text[:40]}...\"")
 
     if not detailed_summary:
-        print(f"    [Warning] 이 질문에는 detailed_summary가 없습니다. 스킵합니다.")
+        print(f"    [Warning] Scene {scene_idx}에 Summary가 없습니다. 스킵합니다.")
         return
 
     try:
@@ -111,10 +110,9 @@ def judge_one(q_item):
 
         score_record = {
             "content_id": content_id,
-            "query": query_text,
             "scene_idx": scene_idx,
-            "start_time": q_item.get("start_time"),
-            "end_time": q_item.get("end_time"),
+            "mode": q_item.get("mode"),
+            "query": query_text,
             "judge": score_dict,
         }
 
@@ -130,6 +128,7 @@ def judge_one(q_item):
 def main():
     parser = argparse.ArgumentParser(description="Bubble Query 질문을 텍스트 요약 기반으로 품질 평가")
     parser.add_argument("--input_file", default="assets/bubble_query.jsonl", help="Bubble Query 질문 목록 JSONL 경로")
+    parser.add_argument("--summary_file", default="assets/bubble_summary.jsonl", help="Detailed Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/bubble_query_scores.jsonl", help="Bubble Query 질문별 Judge 점수 저장 경로")
     
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
@@ -160,12 +159,30 @@ def main():
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_bubble_query.py를 실행하세요.")
         return
 
-    content_list = []
+    # Summary 맵 로드: (content_id, scene_idx) -> summary_text
+    summary_map = {}
+    if os.path.exists(args.summary_file):
+        with open(args.summary_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip(): continue
+                try:
+                    rec = json.loads(line)
+                    key = (rec.get("content_id"), rec.get("scene_idx"))
+                    if key[0] and key[1] is not None:
+                        summary_map[key] = rec.get("summary", "")
+                except json.JSONDecodeError:
+                    pass
+        print(f"[Summary] {len(summary_map)}개 Scene의 Summary 로드됨 ({args.summary_file})")
+    else:
+        print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.summary_file}")
+
+    # 입력: 각 줄이 scene 단위 레코드 {content_id, scene_idx, queries: [...]}
+    scene_list = []
     with open(args.input_file, "r", encoding="utf-8") as f:
         for line in f:
             if not line.strip(): continue
             try:
-                content_list.append(json.loads(line))
+                scene_list.append(json.loads(line))
             except json.JSONDecodeError:
                 pass
 
@@ -176,29 +193,41 @@ def main():
     file_write_lock = threading.Lock()
 
     try:
-        for content_item in content_list:
-            content_id = content_item.get("content_id")
-            queries = content_item.get("queries", [])
+        for scene_item in scene_list:
+            content_id = scene_item.get("content_id")
+            scene_idx  = scene_item.get("scene_idx")
+            query_groups = scene_item.get("queries", [])
 
-            if not content_id or not queries:
+            if not content_id or scene_idx is None or not query_groups:
                 continue
 
-            print(f"\nEvaluating Content: '{content_id}'")
+            detailed_summary = summary_map.get((content_id, scene_idx), "")
 
-            pending = [q for q in queries if isinstance(q, dict) and (content_id, q["query"]) not in processed_pairs]
+            # 그룹화된 포맷을 펼쳐서 (mode, query) 개별 항목 리스트로 변환
+            flat_queries = []
+            for group in query_groups:
+                mode = group.get("mode", "")
+                for q_text in group.get("queries", []):
+                    flat_queries.append({"mode": mode, "query": q_text})
+
+            pending = [q for q in flat_queries
+                       if (content_id, q["query"]) not in processed_pairs]
             if not pending:
-                print(f"  -> 모든 질문이 이미 평가됨. Skip.")
+                print(f"\n[Skip] '{content_id}' Scene {scene_idx}: 모든 질문 평가 완료")
                 continue
 
-            print(f"  -> {len(pending)}개 질문 평가 예정")
+            print(f"\nEvaluating '{content_id}' Scene {scene_idx} ({len(pending)}개 질문)")
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                futures = [executor.submit(judge_one, q) for q in pending]
+                futures = [
+                    executor.submit(
+                        judge_one, q, content_id, scene_idx, detailed_summary,
+                        client, args, judge_config, file_write_lock
+                    )
+                    for q in pending
+                ]
                 for future in concurrent.futures.as_completed(futures):
                     future.result()
-
-            scored_count = len([q for q in pending if (content_id, q["query"]) not in processed_pairs])
-            print(f"\n  -> '{content_id}': {scored_count}개 질문 평가 완료")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

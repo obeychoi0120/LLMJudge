@@ -7,7 +7,7 @@ from gemini_api_utils import (
     create_client, make_generate_config,
     process_gcs_file_range, check_gcs_files_exist,
     load_config, parse_json_response, _retry_api_call,
-    ensure_output_dir, load_processed_content_ids,
+    ensure_output_dir, load_processed_pairs,
     preload_content_metadata,
 )
 
@@ -34,21 +34,23 @@ _BUBBLE_QUERY_BASE = """\
 [메타데이터 사용 시 주의사항]
 speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. **따라서, 당신이 자연스럽게 교정하여 답변을 생성해야 합니다.**
 - speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
+- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식될 수 있습니다.
+- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 사자의 울음소리로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
 
 [작성 규칙]
-- 장면을 통해 이미 명확하게 알 수 있는 내용을 질문하지 마세요.
-- 과거의 맥락은 제공되지 않으므로, 철저하게 '이 장면에 보이는 것만' 으로 만들어질 수 있는 질문이어야 합니다. 미래에 일어날 일을 짐작하지 마세요.
+- (중요) 메타데이터를 통해 이미 명확하게 알 수 있는 내용은 질문하지 마세요.
+- 과거의 맥락은 제공되지 않으므로, 철저하게 '이 장면에 보이는 것만' 으로 만들어질 수 있는 질문이어야 합니다. 
+- 당신은 다음에 어떤 컨텐츠가 제공될 지 알 수 없습니다. 미래 시점에 대해서 질문하지 마세요.
 
 [출력 형식]
 - 어투: 반말 위주, 인터넷 커뮤니티나 친구에게 물어보는 매우 캐주얼한 구어체
 - 언어: 반드시 **한국어**로 작성하세요. 영어 콘텐츠의 경우 고유명사는 원어 병기(예: 일각고래(narwhal))를 허용합니다.
+- 형식: 아래의 [예시] 처럼 3개의 질문만 생성하세요. 다른 설명은 덧붙이지 마십시오.
 
-[예시]
+[출력 예시]
 [
-    "지금 저 여자가 입고 있는 패딩을 찾아줘.",
-    "여기서 저 남자가 왜 갑자기 저런 행동을 하는 거야?",
+    "지금 저 여자가 입고 있는 옷을 찾아줘.",
+    "여기서 저 남자가 왜 갑자기 저렇게 행동하는 거야?",
     "아까 주인공이 먹었던 빵 은담베(Pain Ndambe)는 어떻게 만드는 거야?"
 ]"""
 
@@ -74,12 +76,21 @@ _SUMMARY_GEN_PROMPT = """\
 [메타데이터 사용 시 주의사항]
 speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. **따라서, 당신이 자연스럽게 교정하여 답변을 생성해야 합니다.**
 - speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
+- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식될 수 있습니다.
+- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 사자의 울음소리로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
 
-[출력 형식]
-- 단 하나의 문자열(일반 텍스트)로 출력하되, 텍스트의 길이나 형식 제한 없이 최대한 핵심을 상세하게 묘사하세요.
-- 언어는 반드시 **한국어**로 작성하세요. 영어 콘텐츠의 경우 고유명사는 원어 병기(예: 일각고래(narwhal))를 허용합니다."""
+[작성 규칙]
+- 아래 출력 포맷에 맞게 두 파트로 나누어 작성하세요.
+- 과거 장면(Past Information)이 제공되지 않은 경우, "1. 과거 장면 요약" 항목은 "해당 없음"으로 표기하세요.
+- 언어는 반드시 **한국어**로 작성하세요. 영어 콘텐츠의 경우 고유명사는 원어 병기(예: 일각고래(narwhal))를 허용합니다.
+- 각각의 파트는 텍스트의 길이 제한 없이 최대한 핵심을 상세하게 묘사하세요.
+
+[출력 포맷]
+**1. 과거 장면 요약**
+(지금까지 발생한 주요 사건의 흐름, 등장인물 간의 대화와 관계, 인물의 목적이나 동기 등을 시간순으로 요약합니다.)
+
+**2. 현재 장면**
+(현재 장면에서 벌어지고 있는 구체적인 상황, 인물의 행동, 대화 내용, 감정 변화, 갈등 요소 등을 상세하게 묘사합니다.)"""
 
 
 def make_bubble_query_config(mode="part", thinking_budget=0):
@@ -120,7 +131,7 @@ def process_bubble_parallel(client, bubble_model_name, summary_model_name,
             ).text,
             label=f"Bubble Query({mode}) 생성 (end={end_time:.1f}s)"
         )
-        return parse_json_response(text), time.time() - t0
+        return parse_json_response(text)[:3], time.time() - t0
 
     def generate_summary():
         if past_parts is not None:
@@ -167,6 +178,7 @@ def main():
     parser = argparse.ArgumentParser(description="Keypoint Scene 목록을 입력받아 Bubble Query & Detailed Summary를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/bubble_query.jsonl", help="Bubble Query 목록 저장 경로")
+    parser.add_argument("--summary_file", default="assets/bubble_summary.jsonl", help="Detailed Summary 별도 저장 경로")
 
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
@@ -216,11 +228,15 @@ def main():
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
+    ensure_output_dir(args.summary_file)
 
-    # 기처리분 건너뛰기
-    processed_ids = load_processed_content_ids(args.output_file)
-    if processed_ids:
-        print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 처리되어 건너뜁니다.")
+    # 각 파일에서 독립적으로 기처리분 로드
+    bq_pairs = load_processed_pairs(args.output_file,  key_fields=("content_id", "scene_idx"))
+    summary_pairs = load_processed_pairs(args.summary_file, key_fields=("content_id", "scene_idx"))
+    # API 호출 스킵 기준: 두 파일 모두 완료된 scene
+    fully_done_pairs = bq_pairs & summary_pairs
+    if fully_done_pairs:
+        print(f"[{len(fully_done_pairs)}]개의 Scene이 이미 처리되어 건너뜁니다.")
 
     print("\n" + "="*50)
     print("Bubble Query & Detailed Summary 생성 파이프라인을 시작합니다.")
@@ -228,12 +244,17 @@ def main():
 
     try:
         for content_id, keypoints in keypoints_by_content.items():
-            if content_id in processed_ids:
-                print(f"\n[Skip] '{content_id}': 이미 처리됨")
+            done_scenes = {s_idx for (c_id, s_idx) in fully_done_pairs if c_id == content_id}
+            remaining = [kp for kp in keypoints if kp.get("scene_idx") not in done_scenes]
+
+            if not remaining:
+                print(f"\n[Skip] '{content_id}': 모든 Scene 완료")
                 continue
+            if done_scenes:
+                print(f"\n[Resume] '{content_id}': {len(done_scenes)}/{len(keypoints)}개 Scene 기완료, {len(remaining)}개 재개")
 
             print(f"\n{'='*50}")
-            print(f"Processing Content: '{content_id}' ({len(keypoints)}개 Keypoint)")
+            print(f"Processing Content: '{content_id}' ({len(remaining)}/{len(keypoints)}개 Keypoint)")
             print(f"{'='*50}")
 
             if not check_gcs_files_exist(args.gs_bucket_name, content_id):
@@ -242,9 +263,7 @@ def main():
             # JSONL 메타데이터 프리로드 (캐시 워밍업)
             preload_content_metadata(args.gs_bucket_name, content_id)
 
-            all_bubble_queries = []
-
-            for idx, kp in enumerate(keypoints):
+            for idx, kp in enumerate(remaining):
                 scene_idx = kp.get("scene_idx", idx)
                 start_time = float(kp.get("start_time", 0.0))
                 end_time = float(kp.get("end_time", 0.0))
@@ -277,46 +296,58 @@ def main():
                         label=f"Bubble+Summary (Scene {scene_idx})"
                     )
 
-                    for q in bubble_full_list:
-                        all_bubble_queries.append({
-                            "scene_idx": scene_idx,
-                            "query": q,
-                            "query_mode": "full",
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "detailed_summary": summary_text
-                        })
-                    for q in bubble_part_list:
-                        all_bubble_queries.append({ 
-                            "scene_idx": scene_idx,
-                            "query": q,
-                            "query_mode": "part",
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "detailed_summary": summary_text
-                        })
+                    scene_key = (content_id, scene_idx)
 
-                    print(f"    -> [Bubble Query - Full] {len(bubble_full_list)}개 ({bubble_full_elapsed:.2f}초)")
+                    # bubble_query.jsonl: 해당 파일에 없는 경우에만 기록
+                    if scene_key not in bq_pairs:
+                        scene_queries = [
+                            {"mode": "full", "queries": bubble_full_list[:3]},
+                            {"mode": "part", "queries": bubble_part_list[:3]},
+                        ]
+                        scene_record = {
+                            "content_id": content_id,
+                            "scene_idx": scene_idx,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "queries": scene_queries,
+                        }
+                        with open(args.output_file, "a", encoding="utf-8") as f:
+                            f.write(json.dumps(scene_record, ensure_ascii=False) + "\n")
+                        bq_pairs.add(scene_key)
+                    else:
+                        print(f"-> [BQ] Scene {scene_idx} 이미 존재, 스킵")
+
+                    # bubble_summary.jsonl: 해당 파일에 없는 경우에만 기록
+                    if scene_key not in summary_pairs:
+                        summary_record = {
+                            "content_id": content_id,
+                            "scene_idx": scene_idx,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "summary": summary_text,
+                        }
+                        with open(args.summary_file, "a", encoding="utf-8") as f:
+                            f.write(json.dumps(summary_record, ensure_ascii=False) + "\n")
+                        summary_pairs.add(scene_key)
+                    else:
+                        print(f"-> [Summary] Scene {scene_idx} 이미 존재, 스킵")
+
+                    print(f"-> [BQ - Full] {len(bubble_full_list)}개 ({bubble_full_elapsed:.2f}초)")
                     for qi, q in enumerate(bubble_full_list, 1):
-                        print(f"       {qi}. {q}")
-                    print(f"    -> [Bubble Query - Part] {len(bubble_part_list)}개 ({bubble_part_elapsed:.2f}초)")
+                        print(f"    {qi}. {q}")
+                    print(f"-> [BQ - Part] {len(bubble_part_list)}개 ({bubble_part_elapsed:.2f}초)")
                     for qi, q in enumerate(bubble_part_list, 1):
-                        print(f"       {qi}. {q}")
-                    print(f"    -> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
-                    print(f"-------------------- Summary 내용 --------------------")
-                    print(f"{summary_text}")
+                        print(f"    {qi}. {q}")
+                    print(f"-> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
+                    print(f"\n{summary_text}")
                     print(f"------------------------------------------------------")
 
                 except Exception as e:
                     print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")
                     continue
 
-            if all_bubble_queries:
-                with open(args.output_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"content_id": content_id, "queries": all_bubble_queries}, ensure_ascii=False) + "\n")
-
-            processed_ids.add(content_id)
-            print(f"\n[OK] '{content_id}' - Bubble Query({len(all_bubble_queries)}개) 저장 완료")
+            done_count = len({s_idx for (c_id, s_idx) in (bq_pairs & summary_pairs) if c_id == content_id})
+            print(f"\n[OK] '{content_id}' - {done_count}개 Scene 완료")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
@@ -324,6 +355,7 @@ def main():
     print("\n" + "="*50)
     print(f"모든 작업이 완료되었습니다. 저장 위치: {args.output_file}")
     print("="*50)
+
 
 
 if __name__ == "__main__":
