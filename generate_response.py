@@ -10,7 +10,7 @@ from gemini_api_utils import (
     create_client, make_generate_config,
     process_gcs_file, process_gcs_file_range,
     check_gcs_files_exist, load_config,
-    _retry_api_call, load_ref_scenes,
+    _retry_api_call, load_scenes,
     ensure_output_dir, preload_content_metadata,
 )
 
@@ -25,28 +25,17 @@ _JSONL_VIEWER_BASE = """당신은 실시간으로 영상을 시청하고 분석�
 
 이 정보를 바탕으로 사용자 질문에 대해 가장 자연스럽고 정확한 한국어 답변을 제공해 주세요.
 
-[시청 기억의 필드 설명]
+[Description 메타데이터의 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
-- speech: 등장인물들의 대사
-- texts: 화면 속 자막, 간판 정보 등
-- sounds: 환경음 및 효과음
-{description_field}
-
-[메타데이터 정확도 주의사항]
-speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
-- speech: 음성 인식 오류로 인해 대사가 누락되거나 잘못 전사될 수 있습니다.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 보조 자료로만 활용하세요.
+- description: 해당 Scene의 시각적 상황, 인물 행동, 대사, 화면 자막, 환경음 등을 종합한 자세한 묘사
 
 [분석 및 지시사항]
 - **현재 장면에 집중**: 답변 시 "현재 정보(Current Information)" 구간에서 일어나는 일들에 우선순위를 두어 답변하세요. 과거 정보는 맥락을 설명하는 데 활용하세요.
 - **자연스러운 시청자 관점**: "JSON", "타임스탬프" 등 기계적인 용어 대신 "영상에서는~", "자막에 ~라고 나옵니다"와 같이 실제 시청자처럼 말하세요.
 - **외부 자료 검색 금지**: 오직 당신의 시청 기억(제공된 정보)에만 의존하세요."""
-
-_DESCRIPTION_LINE = "- description: 해당 timestamp에서의 인물의 행동과 배경 장면 묘사\n"
 
 _REFERENCE_PROMPT = """당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
 제공되는 원본 영상과 Reference용 메타데이터를 모두 참조하여, 사용자 질문에 대해 가장 정확하고 포괄적인 한국어 답변을 생성해 주세요.
@@ -72,12 +61,10 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
 외부 자료 검색은 금지합니다. 오직 제공된 영상과 메타데이터만 활용하세요."""
 
 
-def make_generation_config(mode="full", thinking_budget=None):
+def make_generation_config(mode="desc", thinking_budget=None):
     """Response 생성용 GenerateContentConfig를 반환합니다."""
-    if mode == "full":
-        prompt = _JSONL_VIEWER_BASE.format(description_field=_DESCRIPTION_LINE)
-    elif mode == "part":
-        prompt = _JSONL_VIEWER_BASE.format(description_field="")
+    if mode == "desc":
+        prompt = _JSONL_VIEWER_BASE
     elif mode == "video":
         prompt = "당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다. 외부 정보를 절대 검색하지 말고, 제공된 영상 정보만을 사용하여 사용자 질문에 답변하세요."
     else:
@@ -163,7 +150,7 @@ def main():
                                 answers = ans.get("answers", {})
                                 is_complete = all(
                                     answers.get(m) and not str(answers.get(m, "")).startswith("Error")
-                                    for m in ["video", "full", "part"]
+                                    for m in ["video", "desc"]
                                 )
                                 if is_complete:
                                     processed_pairs.add((c_id, query))
@@ -235,14 +222,14 @@ def main():
                 # Reference 메타데이터 프리로드 & Scene 로드
                 preload_content_metadata(args.gs_bucket_name, content_id)
                 try:
-                    ref_scenes = load_ref_scenes(args.gs_bucket_name, content_id)
+                    ref_scenes = load_scenes(args.gs_bucket_name, content_id, mode="desc")
                 except Exception as e:
-                    print(f"[{content_id}] Warning: Reference JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
+                    print(f"[{content_id}] Warning: Desc JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
                     ref_scenes = []
 
                 print(f"[{content_id}] Initializing Generation configs ({args.uq_response_model})...")
                 gen_configs = {}
-                for mode in ["video", "full", "part"]:
+                for mode in ["video", "desc"]:
                     gen_configs[mode] = make_generation_config(mode=mode, thinking_budget=args.uq_response_thinking_budget)
 
                 print(f"[{content_id}] Initializing Reference config ({args.uq_reference_model}, Ref={'ON' if args.uq_reference_use_ref else 'OFF'})...")
@@ -279,28 +266,25 @@ def main():
 
                     # Past/Current Parts 데이터 준비
                     if has_end_time:
-                        # 1. Past Data (0 ~ start_time)
+                        # 2. Past Data (0 ~ start_time)
                         past_parts = {
                             "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
-                            "full":  process_gcs_file_range(args.gs_bucket_name, content_id, "full",  0.0, start_time),
-                            "part":  process_gcs_file_range(args.gs_bucket_name, content_id, "part",  0.0, start_time),
-                            "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   0.0, start_time)
+                            "desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  0.0, start_time),
+                            "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   0.0, start_time),
                         }
-                        # 2. Current Data (start_time ~ end_time)
+                        # 3. Current Data (start_time ~ end_time)
                         curr_parts = {
                             "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
-                            "full":  process_gcs_file_range(args.gs_bucket_name, content_id, "full",  start_time, end_time),
-                            "part":  process_gcs_file_range(args.gs_bucket_name, content_id, "part",  start_time, end_time),
-                            "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time)
+                            "desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time),
+                            "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
                         }
                     else:
                         # 통 데이터 (하위 호환성)
-                        past_parts = {"video": None, "full": None, "part": None, "ref": None}
+                        past_parts = {"video": None, "desc": None, "ref": None}
                         curr_parts = {
                             "video": process_gcs_file(args.gs_bucket_name, content_id, mode="video"),
-                            "full":  process_gcs_file(args.gs_bucket_name, content_id, mode="full"),
-                            "part":  process_gcs_file(args.gs_bucket_name, content_id, mode="part"),
-                            "ref":   process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
+                            "desc":  process_gcs_file(args.gs_bucket_name, content_id, mode="desc"),
+                            "ref":   process_gcs_file(args.gs_bucket_name, content_id, mode="ref"),
                         }
 
                     # 1. Reference Answer 생성
@@ -357,13 +341,13 @@ def main():
                             print(f"[{content_id}]  Generating [{mode}] Error: {e}")
                             return mode, f"Error: {str(e)}"
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as mode_executor:
-                        futures_mode = [mode_executor.submit(generate_for_mode, m) for m in ["video", "full", "part"]]
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as mode_executor:
+                        futures_mode = [mode_executor.submit(generate_for_mode, m) for m in ["video", "desc"]]
                         for future in concurrent.futures.as_completed(futures_mode):
                             m, text = future.result()
                             answers_for_query[m] = text
 
-                    ordered_answers = {m: answers_for_query[m] for m in ["video", "full", "part"] if m in answers_for_query}
+                    ordered_answers = {m: answers_for_query[m] for m in ["video", "desc"] if m in answers_for_query}
 
                     ref_record = {
                         "content_id": content_id,

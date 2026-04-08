@@ -182,7 +182,7 @@ def main():
                     # 평가 가능한 유효 답변이 하나라도 있고, 아직 처리 안 된 쌍이면 pending
                     has_valid_answer = any(
                         answers.get(m) and not str(answers.get(m, "")).startswith("Error")
-                        for m in ["video", "full", "part"]
+                        for m in ["video", "desc"]
                     )
                     if has_valid_answer and (c_id, q_str) not in processed_pairs:
                         c_pending.append(q_str)
@@ -271,8 +271,8 @@ def main():
                             
                         return mode, score_dict
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as mode_executor:
-                        futures = [mode_executor.submit(judge_for_mode, m) for m in ["video", "full", "part"]]
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as mode_executor:
+                        futures = [mode_executor.submit(judge_for_mode, m) for m in ["video", "desc"]]
                         for future in concurrent.futures.as_completed(futures):
                             mode, score_dict = future.result()
                             if score_dict is not None:
@@ -280,8 +280,8 @@ def main():
                     
                     # 쿼리 한 개 평가가 끝나면 (content_id, query) 단위로 1줄 append
                     if judge_results:
-                        # mode 순서 정렬 (video, full, part)
-                        ordered_judge = {m: judge_results[m] for m in ["video", "full", "part"] if m in judge_results}
+                        # mode 순서 정렬 (video, desc)
+                        ordered_judge = {m: judge_results[m] for m in ["video", "desc"] if m in judge_results}
                         score_record = {
                             "content_id": content_id,
                             "query": user_prompt,

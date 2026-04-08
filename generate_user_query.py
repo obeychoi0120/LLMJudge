@@ -17,24 +17,16 @@ from gemini_api_utils import (
 
 _USER_QUERY_GENERATION_PROMPT = """\
 당신은 영상 콘텐츠의 전체적인 흐름을 바탕으로 질문을 생성하는 전문가입니다.
-사용자는 원본 비디오 프레임과 Reference 메타데이터(JSONL)를 함께 제공합니다.
+사용자는 원본 비디오 프레임과 Description 메타데이터(JSONL)를 함께 제공합니다.
 시청자는 **과거 정보 (Past Information)** 와 **현재 정보 (Current Information)** 를 모두 시청했습니다.
 두 정보를 모두 고려하여, 지금까지 누적해서 본 내용이나 전체 맥락 속에서 자연스럽게 가질 만한 종합적인 질문 3개를 생성하세요. 미래 내용은 절대 유추하지 마세요.
 
-[Reference 메타데이터의 필드 설명]
+[Description 메타데이터의 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
-- speech: 등장인물들의 대사
-- texts: 화면 속 자막, 간판 정보 등
-- sounds: 환경음 및 효과음
-
-[메타데이터 사용 시 주의사항]
-speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
-- speech: 음성 인식 오류로 인해 대사가 누락되거나 잘못 전사될 수 있습니다.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
+- description: 해당 Scene의 시각적 상황, 인물 행동, 대사, 화면 자막, 환경음 등을 종합한 자세한 묘사
 
 [작성 규칙]
 - 어투: 인터넷 커뮤니티나 친구에게 물어보는 매우 캐주얼한 구어체 (반말 위주)
@@ -192,11 +184,11 @@ def main():
                     time.sleep(2)
                     past_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   0.0, start_time)
+                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  0.0, start_time)
                     }
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time)
+                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time)
                     }
 
                     user_list = generate_user_query(

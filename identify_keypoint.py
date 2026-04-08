@@ -7,7 +7,7 @@ from gemini_api_utils import (
     create_client, make_generate_config,
     process_gcs_file, process_gcs_file_range, check_gcs_files_exist,
     load_config, parse_json_response,
-    _retry_api_call, load_ref_scenes,
+    _retry_api_call, load_scenes,
     ensure_output_dir, load_processed_content_ids,
     preload_content_metadata,
 )
@@ -25,13 +25,7 @@ _METADATA_FIELD_DESC = """\
 - duration: 영상 Scene의 길이 (초)
 - speech: 등장인물들의 대사
 - texts: 화면 속 자막, 간판 정보 등
-- sounds: 환경음 및 효과음
-
-[메타데이터 정확도 주의사항]
-speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
-- speech: 음성 인식 오류로 인해 대사가 누락되거나 잘못 전사될 수 있습니다.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식되거나, 의미 없는 워터마크/로고가 포함될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 고양이 골골송으로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요."""
+- sounds: 환경음 및 효과음"""
 
 _KEYPOINT_CRITERIA = """\
 [Keypoint Scene 선별 기준]
@@ -154,7 +148,7 @@ def build_scene_list_text(scenes):
         st = s.get("start_time", 0.0)
         et = s.get("end_time", 0.0)
         sp = s.get("speech", "")
-        lines.append(f"- Scene {idx}: {st:.1f}s ~ {et:.1f}s | {sp}...")
+        lines.append(f"- Scene {idx}: {st:.1f}s ~ {et:.1f}s | {sp}")
     return "\n".join(lines)
 
 
@@ -323,7 +317,7 @@ def main():
 
             # ---- JSONL 로드 & Scene List 구성 ----
             preload_content_metadata(args.gs_bucket_name, content_id)
-            ref_scenes = load_ref_scenes(args.gs_bucket_name, content_id)
+            ref_scenes = load_scenes(args.gs_bucket_name, content_id, mode="ref")
             total_scenes = len(ref_scenes)
             full_scene_list_text = build_scene_list_text(ref_scenes)
 

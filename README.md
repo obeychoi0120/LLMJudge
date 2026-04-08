@@ -9,7 +9,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 - **Bubble Query**: 현재 장면에 보이는 것만으로 생성되는 시청자의 즉각적인 궁금증 (장면 중심)
   - Keypoint 식별 → Bubble Query 생성 → Detailed Summary 기반 Query 품질 평가 (Scoring)
 - **User Query**: 지금까지 누적해서 본 전체 맥락에서 자연스럽게 발생하는 종합적인 질문 (맥락 중심)
-  - 식별된 Keypoint 재사용 → User Query 생성 → 3개 모드(Video/Full/Part) 답변 생성 → Reference 기반 답변 평가
+  - 식별된 Keypoint 재사용 → User Query 생성 → 2개 모드(Video/Desc) 답변 생성 → Reference 기반 답변 평가
 
 ## 🔄 파이프라인 흐름
 
@@ -73,7 +73,7 @@ flowchart TD
         direction TB
         R_SCRIPT["**generate_response.py**"]
         R_REF["**uq_references.jsonl**<br/>Pro 기준 답변"]
-        R_ANS["**uq_responses.jsonl**<br/>3개 모드 답변"]
+        R_ANS["**uq_responses.jsonl**<br/>2개 모드 답변"]
     end
 
     subgraph STEP5["Response Scoring"]
@@ -109,11 +109,11 @@ flowchart TD
 
 | Step | 스크립트 | Source | Output | 모델 |
 |------|----------|------|------|------|
-| A-1 | `identify_keypoint.py` | Video+Ref JSON | `keypoint_scenes.jsonl` | Flash |
-| A-2 | `generate_bubble_query.py` | Query: Full/Part JSON</br>Summary: Video+Ref JSON | `bubble_query.jsonl` | Flash (Query), Pro (Summary) |
-| A-3 | `judge_bubble_query.py` | Query, Summary+Ref JSON | `bubble_query_scores.jsonl` | Pro |
-| B-1 | `generate_user_query.py` | Video+Ref JSON | `user_query.jsonl` | Pro |
-| B-2 | `generate_response.py` | Video/Full/Part JSON | `uq_responses.jsonl`, `uq_references.jsonl` | Flash (Response), Pro (Reference) |
+| A-1 | `identify_keypoint.py` | Video+Ref JSONL | `keypoint_scenes.jsonl` | Flash |
+| A-2 | `generate_bubble_query.py` | Query: Desc JSONL</br>Summary: Video+Ref JSONL | `bubble_query.jsonl`, `bubble_summary.jsonl` | Flash (Query), Pro (Summary) |
+| A-3 | `judge_bubble_query.py` | Query, Summary(텍스트) | `bubble_query_scores.jsonl` | Pro |
+| B-1 | `generate_user_query.py` | Video+Desc JSONL | `user_query.jsonl` | Pro |
+| B-2 | `generate_response.py` | Response: Video / Desc JSONL</br>Reference: Video+Ref JSONL | `uq_responses.jsonl`, `uq_references.jsonl` | Flash (Response), Pro (Reference) |
 | B-3 | `judge_response.py` | Response, Reference | `uq_response_scores.jsonl` | Pro |
 | B-4 | `jsonl_to_json.py` / `export_to_excel.py` | `uq_response_scores.jsonl` | Excel 리포트 | — |
 
@@ -128,15 +128,17 @@ flowchart TD
 - **과거 정보 (Past Information)**: `[0s ~ 현재 Scene 시작]` 구간의 영상/메타데이터. 상황 맥락 파악용.
 - **현재 정보 (Current Information)**: `[현재 Scene 시작 ~ end_time]` 구간의 영상/메타데이터. 질문/답변의 직접적인 근거.
 
-### 3. 메타데이터 교차 검증 프롬프트
-Reference 메타데이터(speech, texts, sounds)는 자동 추출된 값으로 오류가 포함될 수 있습니다.
-모든 프롬프트에 **메타데이터 사용 시 주의사항**을 내장하여, 비디오 프레임의 시각 정보를 우선 참고하고 메타데이터는 보조 자료로만 활용하도록 유도합니다.
+### 3. 메타데이터 아키텍처 (Desc + Ref JSONL)
+영상에서 추출한 원본 메타데이터는 두 가지 JSONL 형식으로 관리됩니다:
+- **Desc JSONL** (`_Desc.jsonl`): VLM이 생성한 종합 서술(description 필드). 시각, 대사, 자막, 환경음을 하나의 텍스트로 통합. → 평가 대상 모드(desc), Bubble Query 생성, User Query 생성에 사용.
+- **Ref JSONL** (`_Ref.jsonl`): 자동 추출된 개별 필드(speech, texts, sounds). → Keypoint 식별, Summary 생성, Reference Answer 생성 등 ground truth 수준의 정보가 필요한 곳에 사용.
+
+모든 Ref JSONL 사용 프롬프트에 **메타데이터 사용 시 주의사항**을 내장하여, 비디오 프레임의 시각 정보를 우선 참고하고 메타데이터는 보조 자료로만 활용하도록 유도합니다.
 
 ### 4. 다중 모드(Multi-mode) 추론 및 평가
-- `Video`: 원본 비디오 파일(.mp4)만 제공
-- `Full`: 오디오 분류 + ASR + OCR + 행동 묘사(Description) 포함 JSONL
-- `Part`: Full에서 행동 묘사를 제외한 JSONL
-- **Reference 기반 독립 평가**: Pro 모델이 생성한 기준 정답(텍스트)만으로 비교 평가하여 Judge 단계의 비용과 속도를 최적화했습니다.
+- `Video`: 원본 비디오 파일(.mp4)만 제공 — 메타데이터 없이 영상만으로 답변
+- `Desc`: VLM이 생성한 Description JSONL 제공 — 영상 없이 텍스트 메타데이터만으로 답변
+- **Reference 기반 독립 평가**: Pro 모델이 Video+Ref JSONL을 기반으로 생성한 기준 정답(텍스트)만으로 비교 평가하여 Judge 단계의 비용과 속도를 최적화했습니다.
 
 ### 5. 운영 안정성 및 효율성
 - **쿼리 단위 Resume**: (content_id, query) 단위로 실시간 저장. 중단 후 재실행 시 잔여 작업만 처리.
@@ -151,8 +153,8 @@ LLMJudge/
 ├── identify_keypoint.py          # Keypoint Scene 식별 (사용자 Y/N 확인 후 저장)
 ├── generate_bubble_query.py      # Keypoint 입력 → Bubble Query & Summary 생성
 ├── generate_user_query.py        # Keypoint 입력 → User Query 생성
-├── judge_query.py                # Bubble Query 품질 평가 (Scoring)
-├── generate_response.py          # User Query → Reference + 3모드 답변 생성
+├── judge_bubble_query.py         # Bubble Query 품질 평가 (Scoring)
+├── generate_response.py          # User Query → Reference + 2모드 답변 생성
 ├── judge_response.py             # User Query 답변에 대한 품질 평가 (Scoring)
 ├── gemini_api_utils.py           # Gemini SDK, GCS 검증, 재시도 등 공통 유틸
 ├── jsonl_to_json.py              # JSONL → 분석용 JSON 변환
@@ -190,7 +192,8 @@ LLMJudge/
 3. **GCS 데이터 구조**
    ```text
    gs://{bucket}/video_540p/{content_id}_540p.mp4
-   gs://{bucket}/jsonl/{content_id}_15s_Full.jsonl  # 또는 _Ref.jsonl
+   gs://{bucket}/jsonl/{content_id}_Desc.jsonl
+   gs://{bucket}/jsonl/{content_id}_Ref.jsonl
    ```
 
 ## 🎯 실행 방법
@@ -243,15 +246,10 @@ python judge_response.py --continuous
 ```json
 {
   "content_id": "v001",
-  "queries": [
-    {
-      "scene_idx": 5,
-      "query": "방금 저 사람이 들고 있던 게 뭐야?",
-      "start_time": 120.0,
-      "end_time": 135.2,
-      "detailed_summary": "영상은 주인공이 시장에 도착하여..."
-    }
-  ]
+  "scene_idx": 5,
+  "start_time": 120.0,
+  "end_time": 135.2,
+  "queries": [{"mode": "desc", "queries": ["방금 저 사람이 들고 있던 게 뭐야?", ...]}]
 }
 ```
 
@@ -278,7 +276,7 @@ python judge_response.py --continuous
   "scene_idx": 5,
   "start_time": 120.0,
   "end_time": 135.2,
-  "answers": { "video": "...", "full": "...", "part": "..." }
+  "answers": { "video": "...", "desc": "..." }
 }
 ```
 

@@ -18,28 +18,19 @@ from gemini_api_utils import (
 _BUBBLE_QUERY_BASE = """\
 당신은 현재 시청 중인 방금 본 장면에서 자연스러운 궁금증을 유도하는 데이터 생성 전문가입니다.
 시청자에게는 오직 **현재 정보 (Current Information)** (방금 본 Scene)만 제공됩니다.
-당신에게는 장면 설명이 담긴 Reference 메타데이터를 제공합니다.
+당신에게는 장면 설명이 담긴 Description 메타데이터를 제공합니다.
 현재 장면의 구체적인 상황, 인물의 행동, 화면 속 디테일 등에 집중하여 시청자가 가질 수 있는 질문 3개를 생성하세요.
 
-[Reference 메타데이터의 필드 설명]
+[Description 메타데이터의 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
-- speech: 등장인물들의 대사 (영어 또는 한국어)
-- texts: 화면 속 자막, 간판 정보 등
-- sounds: 환경음 및 효과음
-{description_field}
-
-[메타데이터 사용 시 주의사항]
-speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. **따라서, 당신이 자연스럽게 교정하여 답변을 생성해야 합니다.**
-- speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 사자의 울음소리로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
+- description: 해당 Scene의 시각적 상황, 인물 행동, 대사, 화면 자막, 환경음 등을 종합한 자세한 묘사
 
 [작성 규칙]
-- (중요) 메타데이터를 통해 이미 명확하게 알 수 있는 내용은 질문하지 마세요.
-- 과거의 맥락은 제공되지 않으므로, 철저하게 '이 장면에 보이는 것만' 으로 만들어질 수 있는 질문이어야 합니다. 
+- (중요) description을 통해 이미 명확하게 알 수 있는 내용은 질문하지 마세요.
+- 과거의 맥락은 제공되지 않으므로, 철저하게 '이 장면에 보이는 것만' 으로 만들어질 수 있는 질문이어야 합니다.
 - 당신은 다음에 어떤 컨텐츠가 제공될 지 알 수 없습니다. 미래 시점에 대해서 질문하지 마세요.
 
 [출력 형식]
@@ -54,7 +45,7 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
     "아까 주인공이 먹었던 빵 은담베(Pain Ndambe)는 어떻게 만드는 거야?"
 ]"""
 
-_DESCRIPTION_LINE = "- description: 해당 장면 속 인물의 행동과 배경 장면 묘사\n"
+
 
 _SUMMARY_GEN_PROMPT = """\
 당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 이를 상세하게 요약하는 전문가입니다.
@@ -74,10 +65,10 @@ _SUMMARY_GEN_PROMPT = """\
 - sounds: 환경음 및 효과음
 
 [메타데이터 사용 시 주의사항]
-speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. **따라서, 당신이 자연스럽게 교정하여 답변을 생성해야 합니다.**
+speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
 - speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
 - texts: OCR 오류로 인해 화면 텍스트가 잘못 인식될 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다 (예: 괴물 소리를 사자의 울음소리로 인식하는 등). 반드시 비디오 프레임의 시각 정보를 우선적으로 참고하고, 메타데이터는 보조 자료로만 활용하세요.
+- sounds: 효과음 분류 오류가 빈번합니다. 반드시 비디오 프레임의 시각 정보를 우선 참고하세요.
 
 [작성 규칙]
 - 아래 출력 포맷에 맞게 두 파트로 나누어 작성하세요.
@@ -93,13 +84,9 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
 (현재 장면에서 벌어지고 있는 구체적인 상황, 인물의 행동, 대화 내용, 감정 변화, 갈등 요소 등을 상세하게 묘사합니다.)"""
 
 
-def make_bubble_query_config(mode="part", thinking_budget=0):
-    """Bubble Query 생성용 GenerateContentConfig를 반환합니다."""
-    if mode == "full":
-        prompt = _BUBBLE_QUERY_BASE.format(description_field=_DESCRIPTION_LINE)
-    else:  # part
-        prompt = _BUBBLE_QUERY_BASE.format(description_field="")
-    return make_generate_config(system_instruction=prompt, thinking_budget=thinking_budget)
+def make_bubble_query_config(thinking_budget=0):
+    """Bubble Query 생성용 GenerateContentConfig를 반환합니다 (desc 단일 모드)."""
+    return make_generate_config(system_instruction=_BUBBLE_QUERY_BASE, thinking_budget=thinking_budget)
 
 
 def make_summary_config(thinking_budget=None):
@@ -108,28 +95,22 @@ def make_summary_config(thinking_budget=None):
 
 
 def process_bubble_parallel(client, bubble_model_name, summary_model_name,
-                            bubble_config_full, bubble_config_part, summary_config,
+                            bubble_config, summary_config,
                             past_parts, current_parts, end_time):
-    """하나의 Keypoint에 대해 Bubble Query(Full/Part) 및 Summary를 병렬로 수행합니다."""
-    def generate_bubble_queries(mode):
-        if mode == "full":
-            data = current_parts["full"]
-            config = bubble_config_full
-        else:
-            data = current_parts["part"]
-            config = bubble_config_part
+    """하나의 Keypoint에 대해 Bubble Query(desc 단일 모드) 및 Summary를 병렬로 수행합니다."""
+    def generate_bubble_queries():
         contents = [
             "--- Current Information (Focus Zone) ---",
-            data,
+            current_parts["desc"],
             "--- 요청 사항 ---",
             "제공된 현재 장면(Current Information)만을 기반으로 시청자가 자연스럽게 가질 수 있는 질문 3개를 생성하세요."
         ]
         t0 = time.time()
         text = _retry_api_call(
             lambda: client.models.generate_content(
-                model=bubble_model_name, contents=contents, config=config
+                model=bubble_model_name, contents=contents, config=bubble_config
             ).text,
-            label=f"Bubble Query({mode}) 생성 (end={end_time:.1f}s)"
+            label=f"Bubble Query(desc) 생성 (end={end_time:.1f}s)"
         )
         return parse_json_response(text)[:3], time.time() - t0
 
@@ -159,15 +140,13 @@ def process_bubble_parallel(client, bubble_model_name, summary_model_name,
         )
         return text, time.time() - t0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        f_full = executor.submit(generate_bubble_queries, "full")
-        f_part = executor.submit(generate_bubble_queries, "part")
-        f_sum  = executor.submit(generate_summary)
-        bubble_full_list, bubble_full_elapsed = f_full.result()
-        bubble_part_list, bubble_part_elapsed = f_part.result()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f_bq  = executor.submit(generate_bubble_queries)
+        f_sum = executor.submit(generate_summary)
+        bubble_list, bubble_elapsed = f_bq.result()
         summary_text, summary_elapsed = f_sum.result()
 
-    return bubble_full_list[:3], bubble_part_list[:3], summary_text, bubble_full_elapsed, bubble_part_elapsed, summary_elapsed
+    return bubble_list[:3], summary_text, bubble_elapsed, summary_elapsed
 
 
 # ───────────────────────────────────────────────
@@ -200,8 +179,7 @@ def main():
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
     client = create_client(args.gcp_project_id, args.location)
 
-    bubble_config_full = make_bubble_query_config(mode="full", thinking_budget=args.bq_thinking_budget)
-    bubble_config_part = make_bubble_query_config(mode="part", thinking_budget=args.bq_thinking_budget)
+    bubble_config = make_bubble_query_config(thinking_budget=args.bq_thinking_budget)
     summary_config = make_summary_config(thinking_budget=args.bq_summary_thinking_budget)
 
     if not os.path.exists(args.input_file):
@@ -275,23 +253,22 @@ def main():
                 def _run_keypoint():
                     past_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
-                        "ref":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   0.0, start_time)
+                        "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   0.0, start_time),
                     } if start_time > 0.0 else None
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
-                        "ref":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
-                        "full":  process_gcs_file_range(args.gs_bucket_name, content_id, "full",  start_time, end_time),
-                        "part":  process_gcs_file_range(args.gs_bucket_name, content_id, "part",  start_time, end_time),
+                        "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
+                        "desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time),
                     }
                     return process_bubble_parallel(
                         client,
                         args.bq_gen_model, args.bq_summary_model,
-                        bubble_config_full, bubble_config_part, summary_config,
+                        bubble_config, summary_config,
                         past_parts, current_parts, end_time
                     )
 
                 try:
-                    bubble_full_list, bubble_part_list, summary_text, bubble_full_elapsed, bubble_part_elapsed, summary_elapsed = _retry_api_call(
+                    bubble_list, summary_text, bubble_elapsed, summary_elapsed = _retry_api_call(
                         _run_keypoint,
                         label=f"Bubble+Summary (Scene {scene_idx})"
                     )
@@ -300,16 +277,12 @@ def main():
 
                     # bubble_query.jsonl: 해당 파일에 없는 경우에만 기록
                     if scene_key not in bq_pairs:
-                        scene_queries = [
-                            {"mode": "full", "queries": bubble_full_list[:3]},
-                            {"mode": "part", "queries": bubble_part_list[:3]},
-                        ]
                         scene_record = {
                             "content_id": content_id,
                             "scene_idx": scene_idx,
                             "start_time": start_time,
                             "end_time": end_time,
-                            "queries": scene_queries,
+                            "queries": [{"mode": "desc", "queries": bubble_list[:3]}],
                         }
                         with open(args.output_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(scene_record, ensure_ascii=False) + "\n")
@@ -332,11 +305,8 @@ def main():
                     else:
                         print(f"-> [Summary] Scene {scene_idx} 이미 존재, 스킵")
 
-                    print(f"-> [BQ - Full] {len(bubble_full_list)}개 ({bubble_full_elapsed:.2f}초)")
-                    for qi, q in enumerate(bubble_full_list, 1):
-                        print(f"    {qi}. {q}")
-                    print(f"-> [BQ - Part] {len(bubble_part_list)}개 ({bubble_part_elapsed:.2f}초)")
-                    for qi, q in enumerate(bubble_part_list, 1):
+                    print(f"-> [BQ - Desc] {len(bubble_list)}개 ({bubble_elapsed:.2f}초)")
+                    for qi, q in enumerate(bubble_list, 1):
                         print(f"    {qi}. {q}")
                     print(f"-> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
                     print(f"\n{summary_text}")

@@ -154,21 +154,20 @@ def load_processed_pairs(jsonl_path, key_fields=("content_id", "query")):
 # ============================================================
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
-    """GCS 버킷에 필수 파일 4종(1 video + 3 metadata jsonl)이 존재하는지 확인합니다."""
+    """GCS 버킷에 필수 파일 3종(video + Desc + Ref jsonl)이 존재하는지 확인합니다."""
     client = storage.Client()
     bucket = client.bucket(gs_bucket_name)
 
     required_files = [
         f"video_540p/{content_id}_540p.mp4",
-        f"jsonl/{content_id}_Full.jsonl",
-        f"jsonl/{content_id}_Part.jsonl",
+        f"jsonl/{content_id}_Desc.jsonl",
         f"jsonl/{content_id}_Ref.jsonl",
     ]
 
     missing = [f for f in required_files if not bucket.blob(f).exists()]
 
     if not missing:
-        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 4종이 모두 GCS에 존재합니다.")
+        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 3종이 모두 GCS에 존재합니다.")
         return True
     else:
         print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}")
@@ -177,9 +176,8 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 
 _GCS_MODE_MAP = {
     "video": ("video_540p/{cid}_540p.mp4", "video/mp4"),
-    "full":  ("jsonl/{cid}_Full.jsonl", "text/plain"),
-    "part":  ("jsonl/{cid}_Part.jsonl", "text/plain"),
-    "ref":   ("jsonl/{cid}_Ref.jsonl",  "text/plain"),
+    "desc":  ("jsonl/{cid}_Desc.jsonl",  "text/plain"),
+    "ref":   ("jsonl/{cid}_Ref.jsonl",   "text/plain"),
 }
 
 
@@ -212,8 +210,8 @@ def clear_gcs_cache():
 
 
 def preload_content_metadata(gs_bucket_name, content_id):
-    """content_id에 해당하는 Ref/Full/Part JSONL을 한 번에 캐시에 로드합니다."""
-    modes = ["ref", "full", "part"]
+    """content_id에 해당하는 Ref/Desc JSONL을 한 번에 캐시에 로드합니다."""
+    modes = ["ref", "desc"]
     to_download = []
     for mode in modes:
         path_template, _ = _GCS_MODE_MAP[mode]
@@ -228,10 +226,18 @@ def preload_content_metadata(gs_bucket_name, content_id):
         download_gcs_text(gs_bucket_name, blob_path)
 
 
-def load_ref_scenes(gs_bucket_name, content_id):
-    """Ref JSONL을 파싱하여 Scene 리스트로 반환합니다 (캐시 자동 활용)."""
-    ref_text = download_gcs_text(gs_bucket_name, f"jsonl/{content_id}_Ref.jsonl")
-    return [json.loads(l) for l in ref_text.strip().split("\n") if l.strip()]
+def load_scenes(gs_bucket_name, content_id, mode="ref"):
+    """지정한 mode의 JSONL을 파싱하여 Scene 리스트로 반환합니다 (캐시 자동 활용).
+
+    Args:
+        mode: 'ref' 또는 'desc'
+    """
+    if mode not in _GCS_MODE_MAP:
+        raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
+    path_template, _ = _GCS_MODE_MAP[mode]
+    blob_path = path_template.format(cid=content_id)
+    text = download_gcs_text(gs_bucket_name, blob_path)
+    return [json.loads(l) for l in text.strip().split("\n") if l.strip()]
 
 
 def process_gcs_file(gs_bucket_name, content_id, mode="video"):
