@@ -13,13 +13,14 @@ from google.cloud import storage
 _CONFIG_KEYS = [
     # 공통
     "location", "keypoint_model", "keypoint_thinking_budget",
-    # A-track: Bubble Query
-    "bq_gen_model", "bq_summary_model", "bq_judge_model",
-    "bq_thinking_budget", "bq_summary_thinking_budget", "bq_judge_thinking_budget",
+    # A-track: Voice Hint
+    "vh_gen_model", "vh_summary_model", "vh_judge_model",
+    "vh_thinking_budget", "vh_summary_thinking_budget", "vh_judge_thinking_budget",
+    "use_ref_for_vh_summary",
     # B-track: User Query
     "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
     "uq_gen_thinking_budget", "uq_response_thinking_budget", "uq_reference_thinking_budget", "uq_judge_thinking_budget",
-    "uq_reference_use_ref",
+    "use_ref_for_uq_reference",
 ]
 
 
@@ -38,12 +39,8 @@ def load_config(args):
     args.gcp_project_id = args.gcp_project_id or config.get("gcp_project_id")
     args.gs_bucket_name = args.gs_bucket_name or config.get("gs_bucket_name")
 
-    _ARG_FLAG_MAP = {
-        "uq_reference_use_ref": "--no-uq-reference-ref"
-    }
-
     for key in _CONFIG_KEYS:
-        flag = _ARG_FLAG_MAP.get(key, f"--{key}")
+        flag = f"--{key}"
         if hasattr(args, key) and key in config and flag not in sys.argv:
             setattr(args, key, config[key])
 

@@ -12,10 +12,10 @@ from gemini_api_utils import (
 )
 
 # ───────────────────────────────────────────────
-# Bubble Query 생성 모델 프롬프트
+# Voice Hint 생성 모델 프롬프트
 # ───────────────────────────────────────────────
 
-_BUBBLE_QUERY_BASE = """\
+_VOICE_HINT_BASE = """\
 당신은 현재 시청 중인 방금 본 장면에서 자연스러운 궁금증을 유도하는 데이터 생성 전문가입니다.
 시청자에게는 오직 **현재 정보 (Current Information)** (방금 본 Scene)만 제공됩니다.
 당신에게는 장면 설명이 담긴 Description 메타데이터를 제공합니다.
@@ -85,9 +85,9 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
 (현재 장면에서 벌어지고 있는 구체적인 상황, 인물의 행동, 대화 내용, 감정 변화, 갈등 요소 등을 상세하게 묘사합니다.)"""
 
 
-def make_bubble_query_config(thinking_budget=0):
-    """Bubble Query 생성용 GenerateContentConfig를 반환합니다 (desc 단일 모드)."""
-    return make_generate_config(system_instruction=_BUBBLE_QUERY_BASE, thinking_budget=thinking_budget)
+def make_voice_hint_config(thinking_budget=0):
+    """Voice Hint 생성용 GenerateContentConfig를 반환합니다 (desc 단일 모드)."""
+    return make_generate_config(system_instruction=_VOICE_HINT_BASE, thinking_budget=thinking_budget)
 
 
 def make_summary_config(thinking_budget=None):
@@ -95,11 +95,11 @@ def make_summary_config(thinking_budget=None):
     return make_generate_config(system_instruction=_SUMMARY_GEN_PROMPT, thinking_budget=thinking_budget)
 
 
-def process_bubble_parallel(client, bubble_model_name, summary_model_name,
-                            bubble_config, summary_config,
-                            past_parts, current_parts, end_time):
-    """하나의 Keypoint에 대해 Bubble Query(desc 단일 모드) 및 Summary를 병렬로 수행합니다."""
-    def generate_bubble_queries():
+def process_vh_parallel(client, vh_model_name, summary_model_name,
+                            vh_config, summary_config,
+                            past_parts, current_parts, end_time, use_ref=False):
+    """하나의 Keypoint에 대해 Voice Hint(desc 단일 모드) 및 Summary를 병렬로 수행합니다."""
+    def generate_voice_hints():
         contents = [
             "--- Current Information (Focus Zone) ---",
             current_parts["desc"],
@@ -109,29 +109,47 @@ def process_bubble_parallel(client, bubble_model_name, summary_model_name,
         t0 = time.time()
         text = _retry_api_call(
             lambda: client.models.generate_content(
-                model=bubble_model_name, contents=contents, config=bubble_config
+                model=vh_model_name, contents=contents, config=vh_config
             ).text,
-            label=f"Bubble Query(desc) 생성 (end={end_time:.1f}s)"
+            label=f"Voice Hint(desc) 생성 (end={end_time:.1f}s)"
         )
         return parse_json_response(text)[:3], time.time() - t0
 
     def generate_summary():
         if past_parts is not None:
-            contents = [
-                "--- Past Information (Context) ---",
-                past_parts["video"], past_parts["ref"],
-                "--- Current Information (Focus Zone) ---",
-                current_parts["video"], current_parts["ref"],
-                "--- 요청 사항 ---",
-                "제공된 과거(Past Information)와 현재(Current Information) 영상 전체를 바탕으로 상세 요약을 작성하세요."
-            ]
+            if use_ref:
+                contents = [
+                    "--- Past Information (Context) ---",
+                    past_parts["video"], past_parts["ref"],
+                    "--- Current Information (Focus Zone) ---",
+                    current_parts["video"], current_parts["ref"],
+                    "--- 요청 사항 ---",
+                    "제공된 과거(Past Information)와 현재(Current Information) 영상 전체를 바탕으로 상세 요약을 작성하세요."
+                ]
+            else:
+                contents = [
+                    "--- Past Information (Context) ---",
+                    past_parts["video"],
+                    "--- Current Information (Focus Zone) ---",
+                    current_parts["video"],
+                    "--- 요청 사항 ---",
+                    "제공된 과거(Past Information)와 현재(Current Information) 영상 전체를 바탕으로 상세 요약을 작성하세요."
+                ]
         else:
-            contents = [
-                "--- Current Information (Focus Zone) ---",
-                current_parts["video"], current_parts["ref"],
-                "--- 요청 사항 ---",
-                "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요."
-            ]
+            if use_ref:
+                contents = [
+                    "--- Current Information (Focus Zone) ---",
+                    current_parts["video"], current_parts["ref"],
+                    "--- 요청 사항 ---",
+                    "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요."
+                ]
+            else:
+                contents = [
+                    "--- Current Information (Focus Zone) ---",
+                    current_parts["video"],
+                    "--- 요청 사항 ---",
+                    "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요."
+                ]
         t0 = time.time()
         text = _retry_api_call(
             lambda: client.models.generate_content(
@@ -142,12 +160,12 @@ def process_bubble_parallel(client, bubble_model_name, summary_model_name,
         return text, time.time() - t0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        f_bq  = executor.submit(generate_bubble_queries)
+        f_vh  = executor.submit(generate_voice_hints)
         f_sum = executor.submit(generate_summary)
-        bubble_list, bubble_elapsed = f_bq.result()
+        vh_list, vh_elapsed = f_vh.result()
         summary_text, summary_elapsed = f_sum.result()
 
-    return bubble_list[:3], summary_text, bubble_elapsed, summary_elapsed
+    return vh_list[:3], summary_text, vh_elapsed, summary_elapsed
 
 
 # ───────────────────────────────────────────────
@@ -155,20 +173,21 @@ def process_bubble_parallel(client, bubble_model_name, summary_model_name,
 # ───────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Keypoint Scene 목록을 입력받아 Bubble Query & Detailed Summary를 생성합니다.")
+    parser = argparse.ArgumentParser(description="Keypoint Scene 목록을 입력받아 Voice Hint & Detailed Summary를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
-    parser.add_argument("--output_file", default="assets/bubble_query.jsonl", help="Bubble Query 목록 저장 경로")
-    parser.add_argument("--summary_file", default="assets/bubble_summary.jsonl", help="Detailed Summary 별도 저장 경로")
+    parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
+    parser.add_argument("--summary_file", default="assets/vh_summary.jsonl", help="Detailed Summary 별도 저장 경로")
 
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--location", default="global", help="GCP Location")
 
-    parser.add_argument("--bq_gen_model", default="gemini-2.5-flash", help="질문 생성에 사용할 Budget 모델명")
-    parser.add_argument("--bq_summary_model", default="gemini-2.5-pro", help="Summary 생성에 사용할 Premium 모델명")
-    parser.add_argument("--bq_thinking_budget", type=int, default=0, help="Bubble Query 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
-    parser.add_argument("--bq_summary_thinking_budget", type=int, default=1024,
-                        help="BQ Summary 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--vh_gen_model", default="gemini-2.5-flash", help="질문 생성에 사용할 Budget 모델명")
+    parser.add_argument("--vh_summary_model", default="gemini-2.5-pro", help="Summary 생성에 사용할 Premium 모델명")
+    parser.add_argument("--vh_thinking_budget", type=int, default=0, help="Voice Hint 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--vh_summary_thinking_budget", type=int, default=1024,
+                        help="VH Summary 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--use_ref_for_vh_summary", type=lambda x: str(x).lower() == 'true', default=False, help="Summary 생성 시 Ref JSONL 참조 여부")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -180,8 +199,8 @@ def main():
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
     client = create_client(args.gcp_project_id, args.location)
 
-    bubble_config = make_bubble_query_config(thinking_budget=args.bq_thinking_budget)
-    summary_config = make_summary_config(thinking_budget=args.bq_summary_thinking_budget)
+    vh_config = make_voice_hint_config(thinking_budget=args.vh_thinking_budget)
+    summary_config = make_summary_config(thinking_budget=args.vh_summary_thinking_budget)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")
@@ -210,15 +229,15 @@ def main():
     ensure_output_dir(args.summary_file)
 
     # 각 파일에서 독립적으로 기처리분 로드
-    bq_pairs = load_processed_pairs(args.output_file,  key_fields=("content_id", "scene_idx"))
+    vh_pairs = load_processed_pairs(args.output_file,  key_fields=("content_id", "scene_idx"))
     summary_pairs = load_processed_pairs(args.summary_file, key_fields=("content_id", "scene_idx"))
     # API 호출 스킵 기준: 두 파일 모두 완료된 scene
-    fully_done_pairs = bq_pairs & summary_pairs
+    fully_done_pairs = vh_pairs & summary_pairs
     if fully_done_pairs:
         print(f"[{len(fully_done_pairs)}]개의 Scene이 이미 처리되어 건너뜁니다.")
 
     print("\n" + "="*50)
-    print("Bubble Query & Detailed Summary 생성 파이프라인을 시작합니다.")
+    print("Voice Hint & Detailed Summary 생성 파이프라인을 시작합니다.")
     print("="*50)
 
     try:
@@ -268,38 +287,39 @@ def main():
                         "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
                         "desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time),
                     }
-                    bubble_list, summary_text, bubble_elapsed, summary_elapsed = process_bubble_parallel(
+                    vh_list, summary_text, vh_elapsed, summary_elapsed = process_vh_parallel(
                         client,
-                        args.bq_gen_model, args.bq_summary_model,
-                        bubble_config, summary_config,
-                        past_parts, current_parts, end_time
+                        args.vh_gen_model, args.vh_summary_model,
+                        vh_config, summary_config,
+                        past_parts, current_parts, end_time,
+                        use_ref=args.use_ref_for_vh_summary
                     )
-                    return bubble_list, summary_text, bubble_elapsed, summary_elapsed
+                    return vh_list, summary_text, vh_elapsed, summary_elapsed
 
                 try:
-                    bubble_list, summary_text, bubble_elapsed, summary_elapsed = _retry_api_call(
+                    vh_list, summary_text, vh_elapsed, summary_elapsed = _retry_api_call(
                         _run_keypoint,
-                        label=f"Bubble+Summary (Scene {scene_idx})"
+                        label=f"Voice Hint+Summary (Scene {scene_idx})"
                     )
 
                     scene_key = (content_id, scene_idx)
 
-                    # bubble_query.jsonl: 해당 파일에 없는 경우에만 기록
-                    if scene_key not in bq_pairs:
+                    # voice_hint.jsonl: 해당 파일에 없는 경우에만 기록
+                    if scene_key not in vh_pairs:
                         scene_record = {
                             "content_id": content_id,
                             "scene_idx": scene_idx,
                             "start_time": start_time,
                             "end_time": end_time,
-                            "queries": [{"mode": "desc", "queries": bubble_list[:3]}],
+                            "queries": [{"mode": "desc", "queries": vh_list[:3]}],
                         }
                         with open(args.output_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(scene_record, ensure_ascii=False) + "\n")
-                        bq_pairs.add(scene_key)
+                        vh_pairs.add(scene_key)
                     else:
-                        print(f"-> [BQ] Scene {scene_idx} 이미 존재, 스킵")
+                        print(f"-> [VH] Scene {scene_idx} 이미 존재, 스킵")
 
-                    # bubble_summary.jsonl: 해당 파일에 없는 경우에만 기록
+                    # vh_summary.jsonl: 해당 파일에 없는 경우에만 기록
                     if scene_key not in summary_pairs:
                         summary_record = {
                             "content_id": content_id,
@@ -314,8 +334,8 @@ def main():
                     else:
                         print(f"-> [Summary] Scene {scene_idx} 이미 존재, 스킵")
 
-                    print(f"-> [BQ - Desc] {len(bubble_list)}개 ({bubble_elapsed:.2f}초)")
-                    for qi, q in enumerate(bubble_list, 1):
+                    print(f"-> [VH - Desc] {len(vh_list)}개 ({vh_elapsed:.2f}초)")
+                    for qi, q in enumerate(vh_list, 1):
                         print(f"    {qi}. {q}")
                     print(f"\n-> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
                     print(f"\n{summary_text}")
@@ -325,7 +345,7 @@ def main():
                     print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")
                     continue
 
-            done_count = len({s_idx for (c_id, s_idx) in (bq_pairs & summary_pairs) if c_id == content_id})
+            done_count = len({s_idx for (c_id, s_idx) in (vh_pairs & summary_pairs) if c_id == content_id})
             print(f"\n[OK] '{content_id}' - {done_count}개 Scene 완료")
 
     except KeyboardInterrupt:

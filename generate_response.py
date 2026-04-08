@@ -85,8 +85,7 @@ def main():
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
     parser.add_argument("--uq_response_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
     parser.add_argument("--uq_reference_model", default="gemini-2.5-pro", help="Reference Answer 생성 모델명")
-    parser.add_argument("--no-uq-reference-ref", dest="uq_reference_use_ref", action="store_false", help="Reference 생성 시 Ref JSONL 미참조 (Video만 사용)")
-    parser.set_defaults(uq_reference_use_ref=True)
+    parser.add_argument("--use_ref_for_uq_reference", type=lambda x: str(x).lower() == 'true', default=False, help="Reference 생성 시 Ref JSONL 참조 여부")
     parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
     parser.add_argument("--uq_response_thinking_budget", type=int, default=-1,
@@ -231,7 +230,7 @@ def main():
                 for mode in ["video", "desc"]:
                     gen_configs[mode] = make_generation_config(mode=mode, thinking_budget=args.uq_response_thinking_budget)
 
-                print(f"[{content_id}] Initializing Reference config ({args.uq_reference_model}, Ref={'ON' if args.uq_reference_use_ref else 'OFF'})...")
+                print(f"[{content_id}] Initializing Reference config ({args.uq_reference_model}, Ref={'ON' if args.use_ref_for_uq_reference else 'OFF'})...")
                 ref_config = make_reference_config(thinking_budget=args.uq_reference_thinking_budget)
 
                 for q_item in pending_queries:
@@ -290,12 +289,21 @@ def main():
                     print(f"[{content_id}]  Generating [reference]...")
                     try:
                         if has_end_time:
-                            ref_contents = [
-                                "--- Past Information ---", past_parts["video"], past_parts["ref"],
-                                "--- Current Information ---", curr_parts["video"], curr_parts["ref"]
-                            ]
+                            if args.use_ref_for_uq_reference:
+                                ref_contents = [
+                                    "--- Past Information ---", past_parts["video"], past_parts["ref"],
+                                    "--- Current Information ---", curr_parts["video"], curr_parts["ref"]
+                                ]
+                            else:
+                                ref_contents = [
+                                    "--- Past Information ---", past_parts["video"],
+                                    "--- Current Information ---", curr_parts["video"]
+                                ]
                         else:
-                            ref_contents = [curr_parts["video"], curr_parts["ref"]]
+                            if args.use_ref_for_uq_reference:
+                                ref_contents = [curr_parts["video"], curr_parts["ref"]]
+                            else:
+                                ref_contents = [curr_parts["video"]]
                         
                         response_text = _retry_api_call(
                             lambda: client.models.generate_content(

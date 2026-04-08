@@ -64,7 +64,7 @@ def generate_user_query(client, model_name, query_config, past_parts, current_pa
 
 def main():
     parser = argparse.ArgumentParser(description="Keypoint 기반 User 파이프라인 (User Query) 자동 생성")
-    parser.add_argument("--input_file", default="assets/bubble_query.jsonl", help="Bubble Query 생성된 JSONL 파일 (Keypoint 추출용, keypoints_file 없을 시 폴백)")
+    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 생성된 JSONL 파일 (Keypoint 추출용, keypoints_file 없을 시 폴백)")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL (우선 사용, 없으면 input_file에서 추출)")
     parser.add_argument("--output_file", default="assets/user_query.jsonl", help="User Query 목록 저장 경로")
     
@@ -89,10 +89,10 @@ def main():
                                         thinking_budget=args.uq_gen_thinking_budget)
 
     if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_bubble_query.py를 실행하세요.")
+        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")
         return
 
-    # Keypoint 정보 로드: keypoints_file 우선, 없으면 bubble_query.jsonl에서 추출
+    # Keypoint 정보 로드: keypoints_file 우선, 없으면 voice_hint.jsonl에서 추출
     content_keypoints_map = {}
 
     if os.path.exists(args.keypoints_file):
@@ -119,7 +119,7 @@ def main():
     if not content_keypoints_map:
         print(f"keypoint_scenes.jsonl 없음 → {args.input_file} 에서 Keypoint 추출")
         if not os.path.exists(args.input_file):
-            print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_bubble_query.py를 실행하세요.")
+            print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")
             return
         with open(args.input_file, "r", encoding="utf-8") as f:
             for line in f:

@@ -1,10 +1,23 @@
 {
-    "gcp_project_id": "your-gcp-project-id",
-    "gs_bucket_name": "your-gcs-bucket-name",
+    "gcp_project_id": "insight-dev-490002",
+    "gs_bucket_name": "insight-youtubevideodataset",
     "location": "global",
-    "bq_gen_model": "gemini-2.5-flash",
+    "keypoint_model": "gemini-2.5-flash",
+    "vh_gen_model": "gemini-2.5-flash",
+    "vh_summary_model": "gemini-2.5-flash",
+    "vh_judge_model": "gemini-3.1-pro-preview",
     "uq_gen_model": "gemini-3.1-pro-preview",
     "uq_response_model": "gemini-2.5-flash",
+    "uq_reference_model": "gemini-3.1-pro-preview",
     "uq_judge_model": "gemini-3.1-pro-preview",
-    "uq_reference_use_ref": true
+    "use_ref_for_vh_summary": false,
+    "use_ref_for_uq_reference": false,
+    "keypoint_thinking_budget": 1024,
+    "vh_thinking_budget": 0,
+    "vh_summary_thinking_budget": 512,
+    "vh_judge_thinking_budget": 2048,
+    "uq_gen_thinking_budget": 2048,
+    "uq_response_thinking_budget": -1,
+    "uq_reference_thinking_budget": 4096,
+    "uq_judge_thinking_budget": 2048
 }

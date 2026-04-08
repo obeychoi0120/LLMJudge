@@ -12,7 +12,7 @@ from gemini_api_utils import (
 )
 
 # ───────────────────────────────────────────────
-# Bubble Query Judge 프롬프트 (Text-based)
+# Voice Hint Judge 프롬프트 (Text-based)
 # ───────────────────────────────────────────────
 
 _QUERY_JUDGE_PROMPT = """\
@@ -94,7 +94,7 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
         for attempt in range(max_parse_retries):
             try:
                 score_text = evaluate_query(
-                    client, args.bq_judge_model, judge_config,
+                    client, args.vh_judge_model, judge_config,
                     detailed_summary, query_text
                 )
                 score_dict = parse_json_response(score_text)
@@ -126,17 +126,16 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
         print(f"    [Error] Judge 최종 실패: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Bubble Query 질문을 텍스트 요약 기반으로 품질 평가")
-    parser.add_argument("--input_file", default="assets/bubble_query.jsonl", help="Bubble Query 질문 목록 JSONL 경로")
-    parser.add_argument("--summary_file", default="assets/bubble_summary.jsonl", help="Detailed Summary JSONL 경로")
-    parser.add_argument("--scores_file", default="assets/bubble_query_scores.jsonl", help="Bubble Query 질문별 Judge 점수 저장 경로")
+    parser = argparse.ArgumentParser(description="Voice Hint 질문을 텍스트 요약 기반으로 품질 평가")
+    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
+    parser.add_argument("--summary_file", default="assets/vh_summary.jsonl", help="Detailed Summary JSONL 경로")
+    parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
     
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--bq_judge_model", default="gemini-2.5-pro", help="질문 평가에 사용할 Premium 모델명")
+    parser.add_argument("--vh_judge_model", default="gemini-2.5-pro", help="질문 평가에 사용할 Premium 모델명")
     parser.add_argument("--location", default="global", help="GCP Location")
-    parser.add_argument("--bq_judge_thinking_budget", type=int, default=2048,
-                        help="BQ Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
+    parser.add_argument("--vh_judge_thinking_budget", type=int, default=2048, help="Voice Hint Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -147,7 +146,7 @@ def main():
 
     print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
     client = create_client(args.gcp_project_id, args.location)
-    judge_config = make_query_judge_config(thinking_budget=args.bq_judge_thinking_budget)
+    judge_config = make_query_judge_config(thinking_budget=args.vh_judge_thinking_budget)
 
     ensure_output_dir(args.scores_file)
 
@@ -156,7 +155,7 @@ def main():
         print(f"[{len(processed_pairs)}] 개의 (content_id, query) 쌍이 이미 처리됨.")
 
     if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_bubble_query.py를 실행하세요.")
+        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")
         return
 
     # Summary 맵 로드: (content_id, scene_idx) -> summary_text
@@ -187,7 +186,7 @@ def main():
                 pass
 
     print(f"\n{'='*50}")
-    print(f"Bubble Query 질문 품질 평가 프로세스 (Text-only) 시작")
+    print(f"Voice Hint 질문 품질 평가 프로세스 (Text-only) 시작")
     print(f"{'='*50}")
 
     file_write_lock = threading.Lock()
@@ -234,7 +233,7 @@ def main():
         os._exit(1)
 
     print(f"\n{'='*50}")
-    print(f"Bubble Query 질문 평가 완료. 점수 기록: {args.scores_file}")
+    print(f"Voice Hint 질문 평가 완료. 점수 기록: {args.scores_file}")
     print(f"{'='*50}")
 
 if __name__ == "__main__":
