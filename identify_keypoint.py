@@ -474,6 +474,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
+        os._exit(1)
 
     print("\n" + "="*50)
     print(f"Keypoint 식별 완료. 저장 위치: {args.output_file}")

@@ -8,7 +8,7 @@ from gemini_api_utils import (
     process_gcs_file_range, check_gcs_files_exist,
     load_config, parse_json_response, _retry_api_call,
     ensure_output_dir, load_processed_pairs,
-    preload_content_metadata,
+    preload_content_metadata, download_gcs_text, truncate_jsonl_range,
 )
 
 # ───────────────────────────────────────────────
@@ -60,15 +60,16 @@ _SUMMARY_GEN_PROMPT = """\
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
-- speech: 등장인물들의 대사 (영어 또는 한국어)
-- texts: 화면 속 자막, 간판 정보 등
 - sounds: 환경음 및 효과음
+- texts: 화면 속 자막, 간판 정보 등
+- speech: 등장인물들의 대사 (영어 또는 한국어)
 
 [메타데이터 사용 시 주의사항]
 speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
-- speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식될 수 있습니다.
 - sounds: 효과음 분류 오류가 빈번합니다. 반드시 비디오 프레임의 시각 정보를 우선 참고하세요.
+- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식될 수 있습니다.
+- speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
+
 
 [작성 규칙]
 - 아래 출력 포맷에 맞게 두 파트로 나누어 작성하세요.
@@ -241,13 +242,20 @@ def main():
             # JSONL 메타데이터 프리로드 (캐시 워밍업)
             preload_content_metadata(args.gs_bucket_name, content_id)
 
-            for idx, kp in enumerate(remaining):
-                scene_idx = kp.get("scene_idx", idx)
+            for kp in remaining:
+                real_idx = keypoints.index(kp)
+                scene_idx = kp.get("scene_idx", real_idx)
                 start_time = float(kp.get("start_time", 0.0))
                 end_time = float(kp.get("end_time", 0.0))
                 reason = kp.get("reason", "")
 
-                print(f"\n  [{idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
+                print(f"[{real_idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
+                
+                # 로깅용 Desc 텍스트 추출 및 즉시 출력
+                jsonl_text = download_gcs_text(args.gs_bucket_name, f"jsonl/{content_id}_Desc.jsonl")
+                desc_text = truncate_jsonl_range(jsonl_text, start_time, end_time)
+                print(f"\n[Desc]\n{desc_text}\n")
+                
                 kp_start = time.time()
 
                 def _run_keypoint():
@@ -260,12 +268,13 @@ def main():
                         "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
                         "desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time),
                     }
-                    return process_bubble_parallel(
+                    bubble_list, summary_text, bubble_elapsed, summary_elapsed = process_bubble_parallel(
                         client,
                         args.bq_gen_model, args.bq_summary_model,
                         bubble_config, summary_config,
                         past_parts, current_parts, end_time
                     )
+                    return bubble_list, summary_text, bubble_elapsed, summary_elapsed
 
                 try:
                     bubble_list, summary_text, bubble_elapsed, summary_elapsed = _retry_api_call(
@@ -298,7 +307,7 @@ def main():
                             "start_time": start_time,
                             "end_time": end_time,
                             "summary": summary_text,
-                        }
+                        }   
                         with open(args.summary_file, "a", encoding="utf-8") as f:
                             f.write(json.dumps(summary_record, ensure_ascii=False) + "\n")
                         summary_pairs.add(scene_key)
@@ -308,9 +317,9 @@ def main():
                     print(f"-> [BQ - Desc] {len(bubble_list)}개 ({bubble_elapsed:.2f}초)")
                     for qi, q in enumerate(bubble_list, 1):
                         print(f"    {qi}. {q}")
-                    print(f"-> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
+                    print(f"\n-> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
                     print(f"\n{summary_text}")
-                    print(f"------------------------------------------------------")
+                    print(f"------------------------------------------------------\n")
 
                 except Exception as e:
                     print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")
@@ -321,6 +330,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
+        os._exit(1)
 
     print("\n" + "="*50)
     print(f"모든 작업이 완료되었습니다. 저장 위치: {args.output_file}")

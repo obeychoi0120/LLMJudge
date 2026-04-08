@@ -231,6 +231,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
+        os._exit(1)
 
     print(f"\n{'='*50}")
     print(f"Bubble Query 질문 평가 완료. 점수 기록: {args.scores_file}")

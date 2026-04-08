@@ -194,7 +194,6 @@ def download_gcs_text(gs_bucket_name, blob_path):
     cache_key = f"{gs_bucket_name}/{blob_path}"
     if cache_key in _gcs_text_cache:
         return _gcs_text_cache[cache_key]
-    print(f"  [GCS Download] {blob_path}")
     client = storage.Client()
     bucket = client.bucket(gs_bucket_name)
     blob = bucket.blob(blob_path)

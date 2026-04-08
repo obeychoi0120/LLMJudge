@@ -309,6 +309,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 모니터링 루프가 중단되었습니다.")
+        os._exit(1)
         
     if not args.continuous:
         print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")

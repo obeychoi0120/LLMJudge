@@ -215,4 +215,9 @@ def main():
     print("\n\nEnd-to-End Pipeline Completed Successfully!")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[Ctrl+C] 파이프라인이 즉시 강제 종료됩니다.")
+        import os
+        os._exit(1)
