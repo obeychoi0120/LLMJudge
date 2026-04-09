@@ -43,14 +43,21 @@ _USER_QUERY_GENERATION_PROMPT = """\
 """
 
 def generate_user_query(client, model_name, query_config, past_parts, current_parts, end_time):
-    contents = [
-        "--- Past Information (Context) ---",
-        past_parts["video"], past_parts["meta"],
+    contents = []
+    if past_parts is not None:
+        contents += [
+            "--- Past Information (Context) ---",
+            past_parts["video"], past_parts["meta"],
+        ]
+    contents += [
         "--- Current Information (Focus Zone) ---",
         current_parts["video"], current_parts["meta"],
         "--- 요청 사항 ---",
-        "과거와 현재 정보를 바탕으로 누적 맥락에서 질문 3개를 생성하세요."
     ]
+    if past_parts is not None:
+        contents.append("과거와 현재 정보를 바탕으로 누적 맥락에서 질문 3개를 생성하세요.")
+    else:
+        contents.append("현재 정보를 바탕으로 시청자가 자연스럽게 가질 만한 질문 3개를 생성하세요.")
     text = _retry_api_call(
         lambda: client.models.generate_content(
             model=model_name, contents=contents, config=query_config
@@ -178,7 +185,7 @@ def main():
                     past_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
                         "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  0.0, start_time)
-                    }
+                    } if start_time > 0.0 else None
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
                         "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time)
