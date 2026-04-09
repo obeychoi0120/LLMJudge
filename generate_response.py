@@ -61,9 +61,9 @@ speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있
 외부 자료 검색은 금지합니다. 오직 제공된 영상과 메타데이터만 활용하세요."""
 
 
-def make_generation_config(mode="desc", thinking_budget=None):
+def make_generation_config(mode="img_desc", thinking_budget=None):
     """Response 생성용 GenerateContentConfig를 반환합니다."""
-    if mode == "desc":
+    if mode in ["raw", "img_desc", "mm_desc"]:
         prompt = _JSONL_VIEWER_BASE
     elif mode == "video":
         prompt = "당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다. 외부 정보를 절대 검색하지 말고, 제공된 영상 정보만을 사용하여 사용자 질문에 답변하세요."
@@ -129,7 +129,7 @@ def _load_completed_pairs(responses_path, references_path):
             answers = ans.get("answers", {})
             is_complete = all(
                 answers.get(m) and not str(answers.get(m, "")).startswith("Error")
-                for m in ["video", "desc"]
+                for m in ["video", "raw", "img_desc", "mm_desc"]
             )
             if is_complete:
                 completed.add((c_id, query))
@@ -139,15 +139,16 @@ def _load_completed_pairs(responses_path, references_path):
 
 def _build_parts(gs_bucket_name, content_id, start_time, end_time, has_end_time):
     """Past/Current Parts를 빌드합니다."""
+    modes_to_fetch = ["video", "raw", "img_desc", "mm_desc", "ref"]
     if has_end_time:
         past_parts = {m: process_gcs_file_range(gs_bucket_name, content_id, m, 0.0, start_time)
-                      for m in ["video", "desc", "ref"]}
+                      for m in modes_to_fetch}
         curr_parts = {m: process_gcs_file_range(gs_bucket_name, content_id, m, start_time, end_time)
-                      for m in ["video", "desc", "ref"]}
+                      for m in modes_to_fetch}
     else:
-        past_parts = {"video": None, "desc": None, "ref": None}
+        past_parts = {m: None for m in modes_to_fetch}
         curr_parts = {m: process_gcs_file(gs_bucket_name, content_id, mode=m)
-                      for m in ["video", "desc", "ref"]}
+                      for m in modes_to_fetch}
     return past_parts, curr_parts
 
 
@@ -263,14 +264,14 @@ def main():
                 # Reference 메타데이터 프리로드 & Scene 로드
                 preload_content_metadata(args.gs_bucket_name, content_id)
                 try:
-                    ref_scenes = load_scenes(args.gs_bucket_name, content_id, mode="desc")
+                    ref_scenes = load_scenes(args.gs_bucket_name, content_id, mode="img_desc")
                 except Exception as e:
-                    print(f"[{content_id}] Warning: Desc JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
+                    print(f"[{content_id}] Warning: JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
                     ref_scenes = []
 
                 print(f"[{content_id}] Initializing Generation configs ({args.uq_response_model})...")
                 gen_configs = {mode: make_generation_config(mode=mode, thinking_budget=args.uq_response_thinking_budget)
-                               for mode in ["video", "desc"]}
+                               for mode in ["video", "raw", "img_desc", "mm_desc"]}
 
                 print(f"[{content_id}] Initializing Reference config ({args.uq_reference_model}, Ref={'ON' if args.use_ref_for_uq_reference else 'OFF'})...")
                 ref_config = make_reference_config(thinking_budget=args.uq_reference_thinking_budget)
@@ -340,13 +341,13 @@ def main():
                             print(f"[{content_id}]  Generating [{mode}] Error: {e}")
                             return mode, f"Error: {str(e)}"
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as mode_executor:
-                        futures_mode = [mode_executor.submit(generate_for_mode, m) for m in ["video", "desc"]]
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as mode_executor:
+                        futures_mode = [mode_executor.submit(generate_for_mode, m) for m in ["video", "raw", "img_desc", "mm_desc"]]
                         for future in concurrent.futures.as_completed(futures_mode):
                             m, text = future.result()
                             answers_for_query[m] = text
 
-                    ordered_answers = {m: answers_for_query[m] for m in ["video", "desc"] if m in answers_for_query}
+                    ordered_answers = {m: answers_for_query[m] for m in ["video", "raw", "img_desc", "mm_desc"] if m in answers_for_query}
 
                     time_ctx = {
                         "scene_idx": scene_idx if has_end_time else None,

@@ -21,7 +21,7 @@ def export_details(input_dir, output_dir):
     with open(scores_path, "r", encoding="utf-8") as f:
         scores = json.load(f)
 
-    modes = ["video", "desc"]
+    modes = ["video", "raw", "img_desc", "mm_desc"]
 
     # 2. 데이터 매핑용 딕셔너리 생성
     data_map = {}

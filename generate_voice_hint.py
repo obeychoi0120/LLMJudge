@@ -99,11 +99,11 @@ def make_summary_config(thinking_budget=None):
 def process_vh_parallel(client, vh_model_name, summary_model_name,
                             vh_config, summary_config,
                             past_parts, current_parts, end_time, use_ref=False):
-    """하나의 Keypoint에 대해 Voice Hint(desc 단일 모드) 및 Summary를 병렬로 수행합니다."""
-    def generate_voice_hints():
+    """하나의 Keypoint에 대해 Voice Hint(img_desc, mm_desc 2개 모드) 및 Summary를 병렬로 수행합니다."""
+    def generate_voice_hints(mode):
         contents = [
             "--- Current Information (Focus Zone) ---",
-            current_parts["desc"],
+            current_parts[mode],
             "--- 요청 사항 ---",
             "제공된 현재 장면(Current Information)만을 기반으로 시청자가 자연스럽게 가질 수 있는 질문 3개를 생성하세요."
         ]
@@ -112,7 +112,7 @@ def process_vh_parallel(client, vh_model_name, summary_model_name,
             lambda: client.models.generate_content(
                 model=vh_model_name, contents=contents, config=vh_config
             ).text,
-            label=f"Voice Hint(desc) 생성 (end={end_time:.1f}s)"
+            label=f"Voice Hint({mode}) 생성 (end={end_time:.1f}s)"
         )
         return parse_json_response(text)[:3], time.time() - t0
 
@@ -127,7 +127,7 @@ def process_vh_parallel(client, vh_model_name, summary_model_name,
             contents.append(current_parts["ref"])
         request_msg = ("제공된 과거(Past Information)와 현재(Current Information) 영상 전체를 바탕으로 상세 요약을 작성하세요."
                        if past_parts is not None else
-                       "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요.")
+                       "제공된 현재(Current 정보) 영상을 바탕으로 상세 요약을 작성하세요.")
         contents += ["--- 요청 사항 ---", request_msg]
         t0 = time.time()
         text = _retry_api_call(
@@ -138,13 +138,18 @@ def process_vh_parallel(client, vh_model_name, summary_model_name,
         )
         return text, time.time() - t0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        f_vh  = executor.submit(generate_voice_hints)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        f_vh_img  = executor.submit(generate_voice_hints, "img_desc")
+        f_vh_mm  = executor.submit(generate_voice_hints, "mm_desc")
         f_sum = executor.submit(generate_summary)
-        vh_list, vh_elapsed = f_vh.result()
+        
+        vh_list_img, elapsed_img = f_vh_img.result()
+        vh_list_mm, elapsed_mm = f_vh_mm.result()
         summary_text, summary_elapsed = f_sum.result()
 
-    return vh_list[:3], summary_text, vh_elapsed, summary_elapsed
+    return {"img_desc": vh_list_img[:3], "mm_desc": vh_list_mm[:3]}, summary_text, {"img_desc": elapsed_img, "mm_desc": elapsed_mm}, summary_elapsed
+
+    return {"img_desc": vh_list_img[:3], "mm_desc": vh_list_mm[:3]}, summary_text, {"img_desc": elapsed_img, "mm_desc": elapsed_mm}, summary_elapsed
 
 
 # ───────────────────────────────────────────────
@@ -235,10 +240,10 @@ def main():
 
                 print(f"[{real_idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
                 
-                # 로깅용 Desc 텍스트 추출 및 즉시 출력
-                jsonl_text = download_gcs_text(args.gs_bucket_name, f"jsonl/{content_id}_Desc.jsonl")
+                # 로깅용 Desc 텍스트 추출 및 즉시 출력 (mm_desc 기준)
+                jsonl_text = download_gcs_text(args.gs_bucket_name, f"jsonl/{content_id}_mmdesc.jsonl")
                 desc_text = truncate_jsonl_range(jsonl_text, start_time, end_time)
-                print(f"\n[Desc]\n{desc_text}\n")
+                print(f"\n[Desc (mm_desc)]\n{desc_text}\n")
                 
                 kp_start = time.time()
 
@@ -250,19 +255,20 @@ def main():
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
                         "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
-                        "desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time),
+                        "img_desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "img_desc",  start_time, end_time),
+                        "mm_desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "mm_desc",  start_time, end_time),
                     }
-                    vh_list, summary_text, vh_elapsed, summary_elapsed = process_vh_parallel(
+                    vh_dict, summary_text, vh_elapsed_dict, summary_elapsed = process_vh_parallel(
                         client,
                         args.vh_gen_model, args.vh_summary_model,
                         vh_config, summary_config,
                         past_parts, current_parts, end_time,
                         use_ref=args.use_ref_for_vh_summary
                     )
-                    return vh_list, summary_text, vh_elapsed, summary_elapsed
+                    return vh_dict, summary_text, vh_elapsed_dict, summary_elapsed
 
                 try:
-                    vh_list, summary_text, vh_elapsed, summary_elapsed = _retry_api_call(
+                    vh_dict, summary_text, vh_elapsed_dict, summary_elapsed = _retry_api_call(
                         _run_keypoint,
                         label=f"Voice Hint+Summary (Scene {scene_idx})"
                     )
@@ -276,7 +282,10 @@ def main():
                             "scene_idx": scene_idx,
                             "start_time": start_time,
                             "end_time": end_time,
-                            "queries": [{"mode": "desc", "queries": vh_list[:3]}],
+                            "queries": [
+                                {"mode": "img_desc", "queries": vh_dict["img_desc"]},
+                                {"mode": "mm_desc", "queries": vh_dict["mm_desc"]}
+                            ],
                         }
                         append_jsonl(args.output_file, scene_record)
                         vh_pairs.add(scene_key)
@@ -297,8 +306,9 @@ def main():
                     else:
                         print(f"-> [Summary] Scene {scene_idx} 이미 존재, 스킵")
 
-                    print(f"-> [VH - Desc] {len(vh_list)}개 ({vh_elapsed:.2f}초)")
-                    for qi, q in enumerate(vh_list, 1):
+                    print(f"-> [VH - img_desc] {len(vh_dict['img_desc'])}개 ({vh_elapsed_dict['img_desc']:.2f}초)")
+                    print(f"-> [VH - mm_desc] {len(vh_dict['mm_desc'])}개 ({vh_elapsed_dict['mm_desc']:.2f}초)")
+                    for qi, q in enumerate(vh_dict["mm_desc"], 1):
                         print(f"    {qi}. {q}")
                     print(f"\n-> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
                     print(f"\n{summary_text}")

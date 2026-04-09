@@ -21,9 +21,9 @@ def main():
             return
 
     # metrics: accuracy, completeness, helpfulness, total_score
-    # modes: video, full, part
+    # modes: video, raw, img_desc, mm_desc
     metrics = ["accuracy", "completeness", "helpfulness", "total_score"]
-    modes = ["video", "desc"]
+    modes = ["video", "raw", "img_desc", "mm_desc"]
 
     results_by_video = {}
     overall_raw = {m: {met: [] for met in metrics} for m in modes}

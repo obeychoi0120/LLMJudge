@@ -241,14 +241,16 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 
     required_files = [
         f"video_540p/{content_id}_540p.mp4",
-        f"jsonl/{content_id}_Desc.jsonl",
-        f"jsonl/{content_id}_Ref.jsonl",
+        f"jsonl/{content_id}_raw.jsonl",
+        f"jsonl/{content_id}_imgdesc.jsonl",
+        f"jsonl/{content_id}_mmdesc.jsonl",
+        f"jsonl/{content_id}_ref.jsonl",
     ]
 
     missing = [f for f in required_files if not bucket.blob(f).exists()]
 
     if not missing:
-        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 3종이 모두 GCS에 존재합니다.")
+        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 5종이 모두 GCS에 존재합니다.")
         return True
     else:
         print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}")
@@ -257,8 +259,10 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 
 _GCS_MODE_MAP = {
     "video": ("video_540p/{cid}_540p.mp4", "video/mp4"),
-    "desc":  ("jsonl/{cid}_Desc.jsonl",  "text/plain"),
-    "ref":   ("jsonl/{cid}_Ref.jsonl",   "text/plain"),
+    "raw": ("jsonl/{cid}_raw.jsonl", "text/plain"),
+    "img_desc": ("jsonl/{cid}_imgdesc.jsonl", "text/plain"),
+    "mm_desc": ("jsonl/{cid}_mmdesc.jsonl", "text/plain"),
+    "ref": ("jsonl/{cid}_ref.jsonl", "text/plain"),
 }
 
 
@@ -290,8 +294,8 @@ def clear_gcs_cache():
 
 
 def preload_content_metadata(gs_bucket_name, content_id):
-    """content_id에 해당하는 Ref/Desc JSONL을 한 번에 캐시에 로드합니다."""
-    modes = ["ref", "desc"]
+    """content_id에 해당하는 메타데이터 JSONL을 한 번에 캐시에 로드합니다."""
+    modes = ["raw", "img_desc", "mm_desc", "ref"]
     to_download = []
     for mode in modes:
         path_template, _ = _GCS_MODE_MAP[mode]
@@ -310,7 +314,7 @@ def load_scenes(gs_bucket_name, content_id, mode="ref"):
     """지정한 mode의 JSONL을 파싱하여 Scene 리스트로 반환합니다 (캐시 자동 활용).
 
     Args:
-        mode: 'ref' 또는 'desc'
+        mode: 'ref', 'img_desc', 'mm_desc', 'raw' 중 하나
     """
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
