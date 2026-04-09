@@ -118,7 +118,7 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
 def main():
     parser = argparse.ArgumentParser(description="Voice Hint 질문을 텍스트 요약 기반으로 품질 평가")
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
-    parser.add_argument("--summary_file", default="assets/vh_summary.jsonl", help="Detailed Summary JSONL 경로")
+    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
     
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
@@ -142,16 +142,16 @@ def main():
 
     # Summary 맵 로드: (content_id, scene_idx) -> summary_text
     summary_map = {}
-    for rec in load_jsonl(args.summary_file):
+    for rec in load_jsonl(args.keyscene_summary_file):
         key = (rec.get("content_id"), rec.get("scene_idx"))
         if key[0] and key[1] is not None:
             summary_map[key] = rec.get("summary", "")
     if summary_map:
-        print(f"[Summary] {len(summary_map)}개 Scene의 Summary 로드됨 ({args.summary_file})")
-    elif os.path.exists(args.summary_file):
+        print(f"[Summary] {len(summary_map)}개 Scene의 Summary 로드됨 ({args.keyscene_summary_file})")
+    elif os.path.exists(args.keyscene_summary_file):
         pass  # 파일은 있지만 비어 있음
     else:
-        print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.summary_file}")
+        print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.keyscene_summary_file}")
 
     # 입력: 각 줄이 scene 단위 레코드 {content_id, scene_idx, queries: [...]}
     scene_list = load_jsonl(args.input_file)

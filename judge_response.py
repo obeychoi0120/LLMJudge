@@ -81,14 +81,15 @@ def main():
     parser.add_argument("--output_file", default="assets/uq_response_scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--uq_judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
+    parser.add_argument("--uq_response_judge_model", default="gemini-2.5-pro", help="사용할 평가 모델명")
     parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
-    parser.add_argument("--uq_judge_thinking_budget", type=int, default=2048,
+    parser.add_argument("--skip_aggregate", action="store_true", help="수행 완료 후 자동 집계 로직을 건너뜁니다.")
+    parser.add_argument("--uq_response_judge_thinking_budget", type=int, default=2048,
                         help="UQ Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args, client = init_pipeline(parser.parse_args())
-    judge_config = make_judge_config(thinking_budget=args.uq_judge_thinking_budget)
+    judge_config = make_judge_config(thinking_budget=args.uq_response_judge_thinking_budget)
     
     # 출력 폴더 생성
     ensure_output_dir(args.output_file)
@@ -208,7 +209,7 @@ def main():
                         score_dict = retry_parse_json(
                             lambda: evaluate_answer_session(
                                 client=client,
-                                model_name=args.uq_judge_model,
+                                model_name=args.uq_response_judge_model,
                                 judge_config=judge_config,
                                 user_prompt=user_prompt,
                                 generated_answer=generated_answer,
@@ -257,16 +258,17 @@ def main():
         os._exit(1)
         
     if not args.continuous:
-        print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
-        output_dir = os.path.dirname(args.output_file) or "assets"
-        subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
-        
-        # 추가 집계: aggregate_scores.py 호출
-        scores_json = os.path.join(output_dir, "scores.json")
-        if os.path.exists(scores_json):
-            subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
-            # 엑셀 변환 추가
-            subprocess.run([sys.executable, "export_to_excel.py"])
+        if not args.skip_aggregate:
+            print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
+            output_dir = os.path.dirname(args.output_file) or "assets"
+            subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
+            
+            # 추가 집계: aggregate_scores.py 호출
+            scores_json = os.path.join(output_dir, "scores.json")
+            if os.path.exists(scores_json):
+                subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
+                # 엑셀 변환 추가
+                subprocess.run([sys.executable, "export_to_excel.py"])
 
     print("\n모든 평가 처리가 완료/종료되었습니다.\n" + "=" * 50)
 

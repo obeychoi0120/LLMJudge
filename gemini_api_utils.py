@@ -250,7 +250,7 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
     missing = [f for f in required_files if not bucket.blob(f).exists()]
 
     if not missing:
-        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 5종이 모두 GCS에 존재합니다.")
+        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 4종이 모두 GCS에 존재합니다.")
         return True
     else:
         print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}")
@@ -360,6 +360,16 @@ def truncate_jsonl_range(jsonl_text, start_time, end_time):
     return "\n".join(truncated_lines)
 
 
+def get_gcs_text_range(gs_bucket_name, content_id, mode, start_time, end_time):
+    """지정된 mode의 JSONL 파일에서 [start_time, end_time] 구간의 텍스트를 반환합니다."""
+    if mode not in _GCS_MODE_MAP:
+        raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
+    path_template, _ = _GCS_MODE_MAP[mode]
+    blob_path = path_template.format(cid=content_id)
+    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
+    return truncate_jsonl_range(jsonl_text, start_time, end_time)
+
+
 def process_gcs_file_range(gs_bucket_name, content_id, mode, start_time, end_time):
     """[start_time, end_time] 구간 데이터 Part를 반환합니다.
 
@@ -389,8 +399,7 @@ def process_gcs_file_range(gs_bucket_name, content_id, mode, start_time, end_tim
         return part
     else:
         # JSONL 텍스트 다운로드는 download_gcs_text 캐시가 자동 적용됨
-        jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
-        range_text = truncate_jsonl_range(jsonl_text, start_time, end_time)
+        range_text = get_gcs_text_range(gs_bucket_name, content_id, mode, start_time, end_time)
         return types.Part.from_bytes(data=range_text.encode("utf-8"), mime_type="text/plain")
 
 

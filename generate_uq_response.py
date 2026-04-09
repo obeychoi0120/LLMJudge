@@ -38,29 +38,6 @@ _JSONL_VIEWER_BASE = """당신은 실시간으로 영상을 시청하고 분석�
 - **자연스러운 시청자 관점**: "JSON", "타임스탬프" 등 기계적인 용어 대신 "영상에서는~", "자막에 ~라고 나옵니다"와 같이 실제 시청자처럼 말하세요.
 - **외부 자료 검색 금지**: 오직 당신의 시청 기억(제공된 정보)에만 의존하세요."""
 
-_REFERENCE_PROMPT = """당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다.
-제공되는 원본 영상과 Reference용 메타데이터를 모두 참조하여, 사용자 질문에 대해 가장 정확하고 포괄적인 한국어 답변을 생성해 주세요.
-
-[Reference 메타데이터의 필드 설명]
-- scene_idx: 영상 Scene 인덱스
-- start_time: 영상 Scene 시작 시간 (초)
-- end_time: 영상 Scene 종료 시간 (초)
-- duration: 영상 Scene의 길이 (초)
-- sounds: 환경음 및 효과음
-- texts: 화면 속 자막, 간판 정보 등
-- speech: 등장인물들의 대사 (영어 또는 한국어)
-
-[메타데이터 사용 시 주의사항]
-speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다.
-- sounds: 효과음 분류 오류가 빈번합니다. 반드시 비디오 프레임의 시각 정보를 우선 참고하세요.
-- texts: OCR 오류로 인해 화면 텍스트가 잘못 인식될 수 있습니다.
-- speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
-
-이 답변은 다른 AI 모델의 답변을 평가하기 위한 '기준 답변(Reference Answer)'으로 사용됩니다.
-따라서 핵심 사실, 대사, 행동, 맥락을 빠짐없이 포함하되 자연스럽고 읽기 쉽게 작성해 주세요.
-외부 자료 검색은 금지합니다. 오직 제공된 영상과 메타데이터만 활용하세요."""
-
-
 def make_generation_config(mode="img_desc", thinking_budget=None):
     """Response 생성용 GenerateContentConfig를 반환합니다."""
     if mode in ["raw", "img_desc", "mm_desc"]:
@@ -71,10 +48,6 @@ def make_generation_config(mode="img_desc", thinking_budget=None):
         prompt = ""
     return make_generate_config(system_instruction=prompt, thinking_budget=thinking_budget)
 
-
-def make_reference_config(thinking_budget=None):
-    """Reference Answer 생성용 config를 반환합니다."""
-    return make_generate_config(system_instruction=_REFERENCE_PROMPT, thinking_budget=thinking_budget)
 
 
 # ============================================================
@@ -109,23 +82,13 @@ def _load_query_items(json_file):
     return list(query_dict.values())
 
 
-def _load_completed_pairs(responses_path, references_path):
-    """responses/references 파일로부터 완료된 (content_id, query) 쌍을 반환합니다."""
-    # 유효한 Reference 수집
-    valid_references = set()
-    for ref in load_jsonl(references_path):
-        c_id = ref.get("content_id")
-        query = ref.get("query")
-        ref_text = ref.get("reference", "")
-        if c_id and query and not str(ref_text).startswith("Error"):
-            valid_references.add((c_id, query))
-
-    # Responses 중 유효 Reference가 있고 모든 모드 답변이 완료된 것만 완료로 간주
+def _load_completed_pairs(responses_path):
+    """responses 파일로부터 완료된 (content_id, query) 쌍을 반환합니다."""
     completed = set()
     for ans in load_jsonl(responses_path):
         c_id = ans.get("content_id")
         query = ans.get("query")
-        if c_id and query and (c_id, query) in valid_references:
+        if c_id and query:
             answers = ans.get("answers", {})
             is_complete = all(
                 answers.get(m) and not str(answers.get(m, "")).startswith("Error")
@@ -139,7 +102,7 @@ def _load_completed_pairs(responses_path, references_path):
 
 def _build_parts(gs_bucket_name, content_id, start_time, end_time, has_end_time):
     """Past/Current Parts를 빌드합니다."""
-    modes_to_fetch = ["video", "raw", "img_desc", "mm_desc", "ref"]
+    modes_to_fetch = ["video", "raw", "img_desc", "mm_desc"]
     if has_end_time:
         past_parts = {m: process_gcs_file_range(gs_bucket_name, content_id, m, 0.0, start_time)
                       for m in modes_to_fetch}
@@ -163,21 +126,6 @@ def _build_mode_contents(past_parts, curr_parts, mode, has_end_time):
         return [curr_parts[mode]]
 
 
-def _build_ref_contents(past_parts, curr_parts, has_end_time, use_ref):
-    """Reference Answer 생성용 contents 리스트를 빌드합니다."""
-    if has_end_time:
-        contents = ["--- Past Information ---", past_parts["video"]]
-        if use_ref:
-            contents.append(past_parts["ref"])
-        contents += ["--- Current Information ---", curr_parts["video"]]
-        if use_ref:
-            contents.append(curr_parts["ref"])
-    else:
-        contents = [curr_parts["video"]]
-        if use_ref:
-            contents.append(curr_parts["ref"])
-    return contents
-
 
 # ============================================================
 # Main
@@ -187,23 +135,19 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
     parser.add_argument("--json_file", default="assets/user_query.jsonl", help="질문 목록 JSONL 파일 경로 (generate_user_query.py 출력)")
     parser.add_argument("--output_file", default="assets/uq_responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
-    parser.add_argument("--reference_file", default="assets/uq_references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
     parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
     parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--uq_response_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
-    parser.add_argument("--uq_reference_model", default="gemini-2.5-pro", help="Reference Answer 생성 모델명")
-    parser.add_argument("--use_ref_for_uq_reference", type=lambda x: str(x).lower() == 'true', default=False, help="Reference 생성 시 Ref JSONL 참조 여부")
+    parser.add_argument("--uq_response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
     parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
-    parser.add_argument("--uq_response_thinking_budget", type=int, default=-1,
+    parser.add_argument("--skip_aggregate", action="store_true", help="수행 완료 후 자동 집계 로직을 건너뜁니다.")
+    parser.add_argument("--uq_response_gen_thinking_budget", type=int, default=-1,
                         help="UQ Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
-    parser.add_argument("--uq_reference_thinking_budget", type=int, default=4096,
-                        help="UQ Reference Answer 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args, client = init_pipeline(parser.parse_args())
 
-    # 출력 폴더 생성 (responses, references)
-    for fpath in [args.output_file, args.reference_file]:
+    # 출력 폴더 생성
+    for fpath in [args.output_file]:
         ensure_output_dir(fpath)
 
     print("\n" + "=" * 50)
@@ -215,7 +159,7 @@ def main():
     try:
         while True:
             # 1. 진행률 읽기
-            processed_pairs = _load_completed_pairs(args.output_file, args.reference_file)
+            processed_pairs = _load_completed_pairs(args.output_file)
 
             # 2. Input 읽기
             query_list = _load_query_items(args.json_file)
@@ -269,12 +213,9 @@ def main():
                     print(f"[{content_id}] Warning: JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
                     ref_scenes = []
 
-                print(f"[{content_id}] Initializing Generation configs ({args.uq_response_model})...")
-                gen_configs = {mode: make_generation_config(mode=mode, thinking_budget=args.uq_response_thinking_budget)
+                print(f"[{content_id}] Initializing Generation configs ({args.uq_response_gen_model})...")
+                gen_configs = {mode: make_generation_config(mode=mode, thinking_budget=args.uq_response_gen_thinking_budget)
                                for mode in ["video", "raw", "img_desc", "mm_desc"]}
-
-                print(f"[{content_id}] Initializing Reference config ({args.uq_reference_model}, Ref={'ON' if args.use_ref_for_uq_reference else 'OFF'})...")
-                ref_config = make_reference_config(thinking_budget=args.uq_reference_thinking_budget)
 
                 for q_item in pending_queries:
                     user_prompt = q_item["query"]
@@ -300,26 +241,7 @@ def main():
                     past_parts, curr_parts = _build_parts(
                         args.gs_bucket_name, content_id, start_time, end_time, has_end_time)
 
-                    # 1. Reference Answer 생성
-                    print(f"[{content_id}]  Generating [reference]...")
-                    try:
-                        ref_contents = _build_ref_contents(
-                            past_parts, curr_parts, has_end_time, args.use_ref_for_uq_reference)
-
-                        reference_answer = _retry_api_call(
-                            lambda: client.models.generate_content(
-                                model=args.uq_reference_model,
-                                contents=[*ref_contents, user_prompt],
-                                config=ref_config
-                            ).text,
-                            label=f"[{content_id}] Reference 생성"
-                        )
-                        print(f"[{content_id}]  Reference answer generated ({len(reference_answer.split())} words)")
-                    except Exception as e:
-                        print(f"[{content_id}]  Generating [reference] Error: {e}")
-                        reference_answer = f"Error: {str(e)}"
-
-                    # 2. 2개 Mode 답변 생성
+                    # 1. 2개 Mode 답변 생성
                     answers_for_query = {}
 
                     def generate_for_mode(mode):
@@ -330,7 +252,7 @@ def main():
                                 past_parts, curr_parts, mode, has_end_time)
                             answer_text = _retry_api_call(
                                 lambda: client.models.generate_content(
-                                    model=args.uq_response_model,
+                                    model=args.uq_response_gen_model,
                                     contents=[*mode_contents, user_prompt],
                                     config=gen_configs[mode]
                                 ).text,
@@ -355,14 +277,12 @@ def main():
                         "end_time": end_time if has_end_time else None,
                     }
 
-                    ref_record = {"content_id": content_id, **time_ctx, "query": user_prompt, "reference": reference_answer}
                     response_record = {"content_id": content_id, **time_ctx, "query": user_prompt, "answers": ordered_answers}
 
-                    append_jsonl(args.reference_file, ref_record, lock=file_write_lock)
                     append_jsonl(args.output_file, response_record, lock=file_write_lock)
 
                     processed_pairs.add((content_id, user_prompt))
-                    print(f"[{content_id}]  -> Reference/Response 저장 완료")
+                    print(f"[{content_id}]  -> Response 저장 완료")
                     print("-" * 50)
 
                 return True
@@ -383,9 +303,10 @@ def main():
         os._exit(1)
 
     if not args.continuous:
-        print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
-        output_dir = os.path.dirname(args.output_file) or "assets"
-        subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
+        if not args.skip_aggregate:
+            print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
+            output_dir = os.path.dirname(args.output_file) or "assets"
+            subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
 
     print("\n생성 프로세스가 완료/종료되었습니다.\n" + "=" * 50)
 

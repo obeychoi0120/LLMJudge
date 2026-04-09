@@ -184,11 +184,11 @@ def main():
                     time.sleep(2)
                     past_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  0.0, start_time)
+                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "mm_desc",  0.0, start_time)
                     } if start_time > 0.0 else None
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time)
+                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "mm_desc",  start_time, end_time)
                     }
 
                     user_query_list = generate_user_query(
