@@ -77,8 +77,10 @@ def main():
                                 if query:
                                     data_dict[(c_id, query)] = obj
                             else:
-                                # 일반 JSONL (query_generated 등): content_id 단위로 덮어쓰기
-                                data_dict[c_id] = obj
+                                # 일반 JSONL (scene 단위 분할 기록): content_id 기준으로 모두 수집
+                                if c_id not in data_dict:
+                                    data_dict[c_id] = {"content_id": c_id, "items": []}
+                                data_dict[c_id]["items"].append(obj)
                     except json.JSONDecodeError:
                         error_count += 1
             
