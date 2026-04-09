@@ -4,11 +4,12 @@ import argparse
 import json
 import concurrent.futures
 from gemini_api_utils import (
-    create_client, make_generate_config,
+    make_generate_config,
     process_gcs_file_range, check_gcs_files_exist,
-    load_config, parse_json_response, _retry_api_call,
+    parse_json_response, _retry_api_call,
     ensure_output_dir, load_processed_pairs,
     preload_content_metadata, download_gcs_text, truncate_jsonl_range,
+    init_pipeline, load_jsonl, append_jsonl,
 )
 
 # ───────────────────────────────────────────────
@@ -116,40 +117,18 @@ def process_vh_parallel(client, vh_model_name, summary_model_name,
         return parse_json_response(text)[:3], time.time() - t0
 
     def generate_summary():
+        contents = []
         if past_parts is not None:
+            contents += ["--- Past Information (Context) ---", past_parts["video"]]
             if use_ref:
-                contents = [
-                    "--- Past Information (Context) ---",
-                    past_parts["video"], past_parts["ref"],
-                    "--- Current Information (Focus Zone) ---",
-                    current_parts["video"], current_parts["ref"],
-                    "--- 요청 사항 ---",
-                    "제공된 과거(Past Information)와 현재(Current Information) 영상 전체를 바탕으로 상세 요약을 작성하세요."
-                ]
-            else:
-                contents = [
-                    "--- Past Information (Context) ---",
-                    past_parts["video"],
-                    "--- Current Information (Focus Zone) ---",
-                    current_parts["video"],
-                    "--- 요청 사항 ---",
-                    "제공된 과거(Past Information)와 현재(Current Information) 영상 전체를 바탕으로 상세 요약을 작성하세요."
-                ]
-        else:
-            if use_ref:
-                contents = [
-                    "--- Current Information (Focus Zone) ---",
-                    current_parts["video"], current_parts["ref"],
-                    "--- 요청 사항 ---",
-                    "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요."
-                ]
-            else:
-                contents = [
-                    "--- Current Information (Focus Zone) ---",
-                    current_parts["video"],
-                    "--- 요청 사항 ---",
-                    "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요."
-                ]
+                contents.append(past_parts["ref"])
+        contents += ["--- Current Information (Focus Zone) ---", current_parts["video"]]
+        if use_ref:
+            contents.append(current_parts["ref"])
+        request_msg = ("제공된 과거(Past Information)와 현재(Current Information) 영상 전체를 바탕으로 상세 요약을 작성하세요."
+                       if past_parts is not None else
+                       "제공된 현재(Current Information) 영상을 바탕으로 상세 요약을 작성하세요.")
+        contents += ["--- 요청 사항 ---", request_msg]
         t0 = time.time()
         text = _retry_api_call(
             lambda: client.models.generate_content(
@@ -189,15 +168,7 @@ def main():
                         help="VH Summary 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
     parser.add_argument("--use_ref_for_vh_summary", type=lambda x: str(x).lower() == 'true', default=False, help="Summary 생성 시 Ref JSONL 참조 여부")
 
-    args = parser.parse_args()
-    args = load_config(args)
-
-    if not args.gcp_project_id or not args.gs_bucket_name:
-        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (config.json을 생성하세요)")
-        return
-
-    print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
-    client = create_client(args.gcp_project_id, args.location)
+    args, client = init_pipeline(parser.parse_args())
 
     vh_config = make_voice_hint_config(thinking_budget=args.vh_thinking_budget)
     summary_config = make_summary_config(thinking_budget=args.vh_summary_thinking_budget)
@@ -208,17 +179,11 @@ def main():
 
     # Keypoint 목록 로드
     keypoints_by_content = {}
-    with open(args.input_file, "r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip(): continue
-            try:
-                data = json.loads(line)
-                c_id = data.get("content_id")
-                kps = data.get("keypoints", [])
-                if c_id and kps:
-                    keypoints_by_content[c_id] = kps
-            except json.JSONDecodeError:
-                pass
+    for data in load_jsonl(args.input_file):
+        c_id = data.get("content_id")
+        kps = data.get("keypoints", [])
+        if c_id and kps:
+            keypoints_by_content[c_id] = kps
 
     if not keypoints_by_content:
         print(f"Error: {args.input_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
@@ -313,8 +278,7 @@ def main():
                             "end_time": end_time,
                             "queries": [{"mode": "desc", "queries": vh_list[:3]}],
                         }
-                        with open(args.output_file, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(scene_record, ensure_ascii=False) + "\n")
+                        append_jsonl(args.output_file, scene_record)
                         vh_pairs.add(scene_key)
                     else:
                         print(f"-> [VH] Scene {scene_idx} 이미 존재, 스킵")
@@ -327,9 +291,8 @@ def main():
                             "start_time": start_time,
                             "end_time": end_time,
                             "summary": summary_text,
-                        }   
-                        with open(args.summary_file, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(summary_record, ensure_ascii=False) + "\n")
+                        }
+                        append_jsonl(args.summary_file, summary_record)
                         summary_pairs.add(scene_key)
                     else:
                         print(f"-> [Summary] Scene {scene_idx} 이미 존재, 스킵")

@@ -72,28 +72,10 @@ def main():
                         c_id = obj.get("content_id")
                         if c_id:
                             if is_flat_format:
-                                # 새 포맷: 키 = (content_id, query)
+                                # 현재 포맷: 키 = (content_id, query)
                                 query = obj.get("query")
                                 if query:
                                     data_dict[(c_id, query)] = obj
-                                elif is_scores_file:
-                                    # 구 포맷(scores content_id 단위) 마이그레이션 보조
-                                    for entry in obj.get("scores", []):
-                                        q = entry.get("query")
-                                        m = entry.get("mode")
-                                        j = entry.get("judge")
-                                        if q and m and j:
-                                            key = (c_id, q)
-                                            if key not in data_dict:
-                                                data_dict[key] = {"content_id": c_id, "query": q, "judge": {}}
-                                            data_dict[key]["judge"][m] = j
-                                elif is_responses_file:
-                                    # 구 포맷(responses content_id 단위) 마이그레이션 보조
-                                    for q_entry in obj.get("queries", []):
-                                        q = q_entry.get("query")
-                                        ans = q_entry.get("answers")
-                                        if q and ans:
-                                            data_dict[(c_id, q)] = {"content_id": c_id, "query": q, "answers": ans}
                             else:
                                 # 일반 JSONL (query_generated 등): content_id 단위로 덮어쓰기
                                 data_dict[c_id] = obj
@@ -127,7 +109,7 @@ def main():
                         content_query_map[c_id].append(query)
                     content_data_map[c_id][query] = item.get(data_key, {})
                 
-                desired_mode_order = ["video", "full", "part"]
+                desired_mode_order = ["video", "desc"]
                 reformatted_data = []
                 for c_id in content_query_map:
                     queries_list = []

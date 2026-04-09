@@ -146,6 +146,90 @@ def load_processed_pairs(jsonl_path, key_fields=("content_id", "query")):
     return processed
 
 
+def load_jsonl(path):
+    """JSONL 파일을 읽어 딕셔너리 리스트로 반환합니다 (빈줄/파싱 에러 무시)."""
+    records = []
+    if not os.path.exists(path):
+        return records
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return records
+
+
+def append_jsonl(path, record, lock=None):
+    """JSONL 파일에 레코드 1건을 append합니다 (thread-safe).
+
+    Args:
+        path: 출력 파일 경로
+        record: JSON 직렬화 가능한 딕셔너리
+        lock: threading.Lock 객체 (멀티스레드 환경에서 사용)
+    """
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    if lock:
+        with lock:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line)
+    else:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+
+
+def init_pipeline(args):
+    """CLI 초기화를 일괄 수행합니다: config 병합 → 필수 인자 검증 → client 생성.
+
+    Returns:
+        (args, client) 튜플. 검증 실패 시 SystemExit을 raise합니다.
+    """
+    args = load_config(args)
+
+    if not getattr(args, "gcp_project_id", None) or not getattr(args, "gs_bucket_name", None):
+        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. "
+              "(--gcp_project_id 인자를 주입하거나 config.json을 생성하세요)")
+        sys.exit(1)
+
+    location = getattr(args, "location", "global")
+    print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {location}...")
+    client = create_client(args.gcp_project_id, location)
+
+    return args, client
+
+
+def retry_parse_json(fn, label="API", max_retries=3):
+    """API 호출 함수 fn()을 실행하고 JSON 파싱까지 수행합니다.
+
+    JSON 파싱 실패 시 최대 max_retries회 재시도합니다.
+
+    Args:
+        fn: 호출 시 텍스트를 반환하는 callable
+        label: 로깅용 라벨
+        max_retries: JSON 파싱 재시도 횟수
+
+    Returns:
+        파싱된 딕셔너리. 최종 실패 시 {"raw_response": ...} fallback을 반환합니다.
+    """
+    score_text = None
+    for attempt in range(max_retries):
+        try:
+            score_text = fn()
+            return parse_json_response(score_text)
+        except json.JSONDecodeError:
+            print(f"      [{label}] JSON 파싱 실패 ({attempt+1}/{max_retries}), 재시도...")
+            if score_text:
+                print(f"      [{label}] [Raw]: {score_text[:100]}...")
+            time.sleep(2)
+        except Exception as e:
+            print(f"      [{label}] 오류: {e}")
+            raise
+    print(f"      [{label}] JSON 파싱 최종 실패.")
+    return {"raw_response": score_text if score_text else "Error"}
+
+
 # ============================================================
 # GCS File Helpers
 # ============================================================

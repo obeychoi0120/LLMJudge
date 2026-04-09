@@ -4,12 +4,12 @@ import concurrent.futures
 import argparse
 import json
 from gemini_api_utils import (
-    create_client, make_generate_config,
+    make_generate_config,
     process_gcs_file, process_gcs_file_range, check_gcs_files_exist,
-    load_config, parse_json_response,
+    parse_json_response,
     _retry_api_call, load_scenes,
     ensure_output_dir, load_processed_content_ids,
-    preload_content_metadata,
+    preload_content_metadata, init_pipeline, append_jsonl,
 )
 
 # ============================================================
@@ -267,15 +267,8 @@ def main():
     parser.add_argument("--keypoint_thinking_budget", type=int, default=1024,
                         help="Keypoint 식별 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
-    args = parser.parse_args()
-    args = load_config(args)
+    args, client = init_pipeline(parser.parse_args())
 
-    if not args.gcp_project_id or not args.gs_bucket_name:
-        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (config.json을 생성하세요)")
-        return
-
-    print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
-    client = create_client(args.gcp_project_id, args.location)
     keypoint_config = make_keypoint_config(args.keypoint_model, thinking_budget=args.keypoint_thinking_budget)
     candidate_config = make_candidate_config(thinking_budget=args.keypoint_thinking_budget)
     selector_config = make_selector_config(thinking_budget=args.keypoint_thinking_budget)
@@ -466,8 +459,7 @@ def main():
                 "content_id": content_id,
                 "keypoints": keypoints
             }
-            with open(args.output_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(kp_record, ensure_ascii=False) + "\n")
+            append_jsonl(args.output_file, kp_record)
 
             processed_ids.add(content_id)
             print(f"[OK] '{content_id}' - {len(keypoints)}개 Keypoint 저장 완료: {args.output_file}")

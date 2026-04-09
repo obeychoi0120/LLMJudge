@@ -3,12 +3,13 @@ import time
 import argparse
 import json
 from gemini_api_utils import (
-    create_client, make_generate_config,
+    make_generate_config,
     process_gcs_file_range,
     check_gcs_files_exist,
-    load_config, parse_json_response, _retry_api_call,
-    ensure_output_dir, load_processed_content_ids,
+    parse_json_response, _retry_api_call,
+    ensure_output_dir,
     preload_content_metadata,
+    init_pipeline, load_jsonl, append_jsonl,
 )
 
 # ───────────────────────────────────────────────
@@ -76,15 +77,7 @@ def main():
     parser.add_argument("--uq_gen_thinking_budget", type=int, default=2048,
                         help="UQ 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
-    args = parser.parse_args()
-    args = load_config(args)
-
-    if not args.gcp_project_id or not args.gs_bucket_name:
-        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (config.json을 생성하세요)")
-        return
-
-    print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}...")
-    client = create_client(args.gcp_project_id, args.location)
+    args, client = init_pipeline(parser.parse_args())
     query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT,
                                         thinking_budget=args.uq_gen_thinking_budget)
 
@@ -97,58 +90,55 @@ def main():
 
     if os.path.exists(args.keypoints_file):
         print(f"️  keypoint_scenes.jsonl 보존 파일을 사용: {args.keypoints_file}")
-        with open(args.keypoints_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip(): continue
-                try:
-                    data = json.loads(line)
-                    c_id = data.get("content_id")
-                    keypoints = data.get("keypoints", [])
-                    if c_id and keypoints:
-                        content_keypoints_map[c_id] = [
-                            {
-                                "scene_idx": kp.get("scene_idx"),
-                                "start_time": kp.get("start_time", 0.0),
-                                "end_time": kp.get("end_time", 0.0)
-                            }
-                            for kp in keypoints
-                        ]
-                except json.JSONDecodeError:
-                    pass
+        for data in load_jsonl(args.keypoints_file):
+            c_id = data.get("content_id")
+            keypoints = data.get("keypoints", [])
+            if c_id and keypoints:
+                content_keypoints_map[c_id] = [
+                    {
+                        "scene_idx": kp.get("scene_idx"),
+                        "start_time": kp.get("start_time", 0.0),
+                        "end_time": kp.get("end_time", 0.0)
+                    }
+                    for kp in keypoints
+                ]
     
     if not content_keypoints_map:
         print(f"keypoint_scenes.jsonl 없음 → {args.input_file} 에서 Keypoint 추출")
         if not os.path.exists(args.input_file):
             print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")
             return
-        with open(args.input_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip(): continue
-                try:
-                    data = json.loads(line)
-                    c_id = data.get("content_id")
-                    queries = data.get("queries", [])
-                    kp_dict = {}
-                    for q in queries:
-                        s_idx = q.get("scene_idx")
-                        if s_idx not in kp_dict:
-                            kp_dict[s_idx] = {
-                                "scene_idx": s_idx,
-                                "start_time": q.get("start_time", 0.0),
-                                "end_time": q.get("end_time", 0.0)
-                            }
-                    if c_id and kp_dict:
-                        content_keypoints_map[c_id] = list(kp_dict.values())
-                except json.JSONDecodeError:
-                    pass
+        for data in load_jsonl(args.input_file):
+            c_id = data.get("content_id")
+            queries = data.get("queries", [])
+            kp_dict = {}
+            for q in queries:
+                s_idx = q.get("scene_idx")
+                if s_idx not in kp_dict:
+                    kp_dict[s_idx] = {
+                        "scene_idx": s_idx,
+                        "start_time": q.get("start_time", 0.0),
+                        "end_time": q.get("end_time", 0.0)
+                    }
+            if c_id and kp_dict:
+                content_keypoints_map[c_id] = list(kp_dict.values())
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
     # 기처리분 건너뛰기 로직
-    processed_ids = load_processed_content_ids(args.output_file)
-    if processed_ids:
-        print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 {args.output_file}에 존재하여 건너뜁니다.")
+    processed_scenes = set()
+    for data in load_jsonl(args.output_file):
+        c_id = data.get("content_id")
+        if c_id:
+            for q in data.get("queries", []):
+                s_idx = q.get("scene_idx")
+                if s_idx is not None:
+                    processed_scenes.add((c_id, s_idx))
+                    
+    if processed_scenes:
+        processed_contents = set([c_id for c_id, _ in processed_scenes])
+        print(f"[{len(processed_contents)}] 개의 콘텐츠(씬 부분 완료 포함)가 이미 {args.output_file}에 존재하여 건너뜁니다.")
 
     print("\n" + "="*50)
     print("User Query 생성 파이프라인을 시작합니다.")
@@ -156,8 +146,9 @@ def main():
 
     try:
         for content_id, keypoints in content_keypoints_map.items():
-            if content_id in processed_ids:
-                print(f"\n[Skip] '{content_id}': 이미 처리됨")
+            all_scenes_done = all((content_id, kp["scene_idx"]) in processed_scenes for kp in keypoints)
+            if all_scenes_done and len(keypoints) > 0:
+                print(f"\n[Skip] '{content_id}': 모든 Scene 이미 처리됨")
                 continue
 
             print(f"\n{'='*50}")
@@ -171,14 +162,16 @@ def main():
             # JSONL 메타데이터 프리로드 (캐시 워밍업)
             preload_content_metadata(args.gs_bucket_name, content_id)
 
-            all_user_queries = []
-
             for idx, kp in enumerate(keypoints):
                 scene_idx = kp["scene_idx"]
                 start_time = float(kp["start_time"])
                 end_time = float(kp["end_time"])
 
-                print(f"\n  [{idx+1}/{len(keypoints)}] Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
+                if (content_id, scene_idx) in processed_scenes:
+                    print(f"\n[{idx+1}/{len(keypoints)}] Range=[{start_time:.1f}s ~ {end_time:.1f}s] - [Skip] 이미 처리됨")
+                    continue
+
+                print(f"\n[{idx+1}/{len(keypoints)}] Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
 
                 try:
                     time.sleep(2)
@@ -191,31 +184,31 @@ def main():
                         "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "desc",  start_time, end_time)
                     }
 
-                    user_list = generate_user_query(
+                    user_query_list = generate_user_query(
                         client, args.uq_gen_model, query_config,
                         past_parts, current_parts, end_time
                     )
                     
-                    for q in user_list[:3]:
-                        all_user_queries.append({
-                            "scene_idx": scene_idx,
-                            "query": q,
-                            "start_time": start_time,
-                            "end_time": end_time
-                        })
+                    scene_queries = user_query_list[:3]
+                    for q in scene_queries:
+                        print(f"Q: {q}")
 
-                    print(f"    -> [User Query] 생성 완료: {len(user_list[:3])}개")
+                    with open(args.output_file, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({
+                            "content_id": content_id,
+                            "scene_idx": scene_idx,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "queries": scene_queries
+                        }, ensure_ascii=False) + "\n")
+
+                    processed_scenes.add((content_id, scene_idx))
 
                 except Exception as e:
-                    print(f"    [ERROR] 질문 생성 실패 (end={end_time:.1f}s): {e}")
+                    print(f"[ERROR] 질문 생성 실패 (end={end_time:.1f}s): {e}")
                     continue
 
-            if all_user_queries:
-                with open(args.output_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"content_id": content_id, "queries": all_user_queries}, ensure_ascii=False) + "\n")
-
-            processed_ids.add(content_id)
-            print(f"\n[OK] '{content_id}' - User Query({len(all_user_queries)}개) 저장 완료")
+            print(f"\n[OK] '{content_id}' - User Query 생성 세션 완료")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

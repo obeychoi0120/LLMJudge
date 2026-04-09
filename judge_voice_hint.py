@@ -5,10 +5,11 @@ import time
 import concurrent.futures
 import threading
 from gemini_api_utils import (
-    create_client, make_generate_config,
-    load_config, parse_json_response,
-    _retry_api_call, start_chat_session,
+    make_generate_config,
+    parse_json_response,
+    _retry_api_call, retry_parse_json, start_chat_session,
     ensure_output_dir, load_processed_pairs,
+    init_pipeline, load_jsonl, append_jsonl,
 )
 
 # ───────────────────────────────────────────────
@@ -89,22 +90,13 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
     try:
         time.sleep(1)
 
-        max_parse_retries = 3
-        score_dict = None
-        for attempt in range(max_parse_retries):
-            try:
-                score_text = evaluate_query(
-                    client, args.vh_judge_model, judge_config,
-                    detailed_summary, query_text
-                )
-                score_dict = parse_json_response(score_text)
-                break
-            except json.JSONDecodeError:
-                print(f"    [Warning] JSON 파싱 실패 ({attempt+1}/{max_parse_retries}), 재시도...")
-                time.sleep(2)
-            except Exception as e:
-                print(f"    [Error] Judge 실패: {e}")
-                break
+        score_dict = retry_parse_json(
+            lambda: evaluate_query(
+                client, args.vh_judge_model, judge_config,
+                detailed_summary, query_text
+            ),
+            label=f"VH Judge (Scene {scene_idx})",
+        )
 
         total = score_dict.get("total_score", 0) if score_dict else 0
 
@@ -118,9 +110,7 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
 
         print(f"    -> Score: {total}/15 | {score_dict.get('rationale', '')[:100] if score_dict else 'N/A'}")
 
-        with file_write_lock:
-            with open(args.scores_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(score_record, ensure_ascii=False) + "\n")
+        append_jsonl(args.scores_file, score_record, lock=file_write_lock)
 
     except Exception as e:
         print(f"    [Error] Judge 최종 실패: {e}")
@@ -137,15 +127,7 @@ def main():
     parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--vh_judge_thinking_budget", type=int, default=2048, help="Voice Hint Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
-    args = parser.parse_args()
-    args = load_config(args)
-
-    if not args.gcp_project_id or not args.gs_bucket_name:
-        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
-        return
-
-    print(f"Initializing Gemini client for project: {args.gcp_project_id}, location: {args.location}")
-    client = create_client(args.gcp_project_id, args.location)
+    args, client = init_pipeline(parser.parse_args())
     judge_config = make_query_judge_config(thinking_budget=args.vh_judge_thinking_budget)
 
     ensure_output_dir(args.scores_file)
@@ -160,30 +142,19 @@ def main():
 
     # Summary 맵 로드: (content_id, scene_idx) -> summary_text
     summary_map = {}
-    if os.path.exists(args.summary_file):
-        with open(args.summary_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip(): continue
-                try:
-                    rec = json.loads(line)
-                    key = (rec.get("content_id"), rec.get("scene_idx"))
-                    if key[0] and key[1] is not None:
-                        summary_map[key] = rec.get("summary", "")
-                except json.JSONDecodeError:
-                    pass
+    for rec in load_jsonl(args.summary_file):
+        key = (rec.get("content_id"), rec.get("scene_idx"))
+        if key[0] and key[1] is not None:
+            summary_map[key] = rec.get("summary", "")
+    if summary_map:
         print(f"[Summary] {len(summary_map)}개 Scene의 Summary 로드됨 ({args.summary_file})")
+    elif os.path.exists(args.summary_file):
+        pass  # 파일은 있지만 비어 있음
     else:
         print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.summary_file}")
 
     # 입력: 각 줄이 scene 단위 레코드 {content_id, scene_idx, queries: [...]}
-    scene_list = []
-    with open(args.input_file, "r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip(): continue
-            try:
-                scene_list.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+    scene_list = load_jsonl(args.input_file)
 
     print(f"\n{'='*50}")
     print(f"Voice Hint 질문 품질 평가 프로세스 (Text-only) 시작")

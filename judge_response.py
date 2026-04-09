@@ -7,11 +7,12 @@ import sys
 import concurrent.futures
 import threading
 from gemini_api_utils import (
-    create_client, make_generate_config,
+    make_generate_config,
     start_chat_session,
-    load_config, parse_json_response,
-    _retry_api_call,
+    parse_json_response,
+    _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
+    init_pipeline, load_jsonl, append_jsonl,
 )
 
 # ============================================================
@@ -86,15 +87,7 @@ def main():
     parser.add_argument("--uq_judge_thinking_budget", type=int, default=2048,
                         help="UQ Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
-    args = parser.parse_args()
-
-    args = load_config(args)
-                
-    if not args.gcp_project_id or not args.gs_bucket_name:
-        print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다.")
-        return
-
-    client = create_client(args.gcp_project_id, args.location)
+    args, client = init_pipeline(parser.parse_args())
     judge_config = make_judge_config(thinking_budget=args.uq_judge_thinking_budget)
     
     # 출력 폴더 생성
@@ -112,61 +105,38 @@ def main():
             processed_pairs = load_processed_pairs(args.output_file)
 
             # 2-1. Reference 읽기
-            reference_map = {} # (content_id, query) -> reference_text
-            if os.path.exists(args.references_file):
-                with open(args.references_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            try:
-                                ref_data = json.loads(line)
-                                r_cid = ref_data.get("content_id")
-                                r_query = ref_data.get("query")
-                                r_text = ref_data.get("reference")
-                                if r_cid and r_query and r_text:
-                                    reference_map[(r_cid, r_query)] = r_text
-                            except json.JSONDecodeError:
-                                pass
+            reference_map = {}  # (content_id, query) -> reference_text
+            for ref_data in load_jsonl(args.references_file):
+                r_cid = ref_data.get("content_id")
+                r_query = ref_data.get("query")
+                r_text = ref_data.get("reference")
+                if r_cid and r_query and r_text:
+                    reference_map[(r_cid, r_query)] = r_text
 
             # 2-2. Input 읽기 - 새 포맷: 각 줄 = {"content_id", "query", "answers"}
             #    content_id별로 queries 리스트로 재그룹핑
             content_answers_dict = {}  # content_id -> {"content_id": ..., "queries": [...]}
             content_query_order = {}   # content_id -> [query, ...] (순서 보존)
-            if os.path.exists(args.answers_file):
-                with open(args.answers_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                c_id = data.get("content_id")
-                                query = data.get("query")
-                                answers = data.get("answers")
-                                if c_id and query and answers:
-                                    # 새 포맷: (content_id, query) 단위 레코드
-                                    if c_id not in content_answers_dict:
-                                        content_answers_dict[c_id] = {"content_id": c_id, "queries": []}
-                                        content_query_order[c_id] = []
-                                    if query not in content_query_order[c_id]:
-                                        content_query_order[c_id].append(query)
-                                        
-                                        # reference_map에서 참조 가져오기
-                                        ref_text = reference_map.get((c_id, query), data.get("reference", ""))
-                                        
-                                        content_answers_dict[c_id]["queries"].append({
-                                            "query": query, 
-                                            "reference": ref_text,
-                                            "answers": answers
-                                        })
-                                elif c_id and "queries" in data:
-                                    # 구 포맷 호환: {"content_id", "queries": [...]} 단위 레코드
-                                    content_answers_dict[c_id] = data
-                            except json.JSONDecodeError:
-                                pass
-                content_answers_list = list(content_answers_dict.values())
-            else:
-                content_answers_list = []
-                if not args.continuous:
-                    print(f"Error: {args.answers_file} 파일이 존재하지 않습니다. 먼저 generate_response.py를 실행하세요.")
-                    return
+            for data in load_jsonl(args.answers_file):
+                c_id = data.get("content_id")
+                query = data.get("query")
+                answers = data.get("answers")
+                if c_id and query and answers:
+                    if c_id not in content_answers_dict:
+                        content_answers_dict[c_id] = {"content_id": c_id, "queries": []}
+                        content_query_order[c_id] = []
+                    if query not in content_query_order[c_id]:
+                        content_query_order[c_id].append(query)
+                        ref_text = reference_map.get((c_id, query), data.get("reference", ""))
+                        content_answers_dict[c_id]["queries"].append({
+                            "query": query,
+                            "reference": ref_text,
+                            "answers": answers
+                        })
+            content_answers_list = list(content_answers_dict.values())
+            if not content_answers_list and not args.continuous:
+                print(f"Error: {args.answers_file} 파일이 존재하지 않거나 비어 있습니다.")
+                return
 
             new_data_processed = False
 
@@ -231,44 +201,21 @@ def main():
                         if not generated_answer or not str(generated_answer).strip() or str(generated_answer).startswith("Error"):
                             print(f"[{content_id}]  Evaluating [{mode}] skipped (no valid answer).")
                             return mode, None
-                        
+
                         print(f"[{content_id}]  Evaluating [{mode}]...")
                         time.sleep(1)
-                        
-                        # 독립 세션: evaluate_answer_session 내부에서 생성
-                        
-                        max_parse_retries = 3
-                        parse_success = False
-                        score_dict = None
-                        
-                        for attempt in range(max_parse_retries):
-                            try:
-                                score_text = evaluate_answer_session(
-                                    client=client,
-                                    model_name=args.uq_judge_model,
-                                    judge_config=judge_config,
-                                    user_prompt=user_prompt, 
-                                    generated_answer=generated_answer,
-                                    reference_answer=reference_answer
-                                )
-                                
-                                score_dict = parse_json_response(score_text)
-                                parse_success = True
-                                break
-                                
-                            except json.JSONDecodeError:
-                                print(f"[{content_id}]  [Warning] JSON 파싱 실패 (시도 {attempt+1}/{max_parse_retries}). 잠시 후 재시도합니다.")
-                                print(f"[{content_id}]  [Raw Text]: {score_text[:100]}...")
-                                time.sleep(2)
-                                
-                            except Exception as e:
-                                print(f"[{content_id}]  Evaluating [{mode}] error: {e}")
-                                break
-                                
-                        if not parse_success:
-                            print(f"[{content_id}]  [Error] JSON 파싱 최종 실패.")
-                            score_dict = {"raw_response": score_text if 'score_text' in locals() else "Error"}
-                            
+
+                        score_dict = retry_parse_json(
+                            lambda: evaluate_answer_session(
+                                client=client,
+                                model_name=args.uq_judge_model,
+                                judge_config=judge_config,
+                                user_prompt=user_prompt,
+                                generated_answer=generated_answer,
+                                reference_answer=reference_answer
+                            ),
+                            label=f"[{content_id}] [{mode}] Judge",
+                        )
                         return mode, score_dict
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as mode_executor:
@@ -287,9 +234,7 @@ def main():
                             "query": user_prompt,
                             "judge": ordered_judge
                         }
-                        with file_write_lock:
-                            with open(args.output_file, "a", encoding="utf-8") as f:
-                                f.write(json.dumps(score_record, ensure_ascii=False) + "\n")
+                        append_jsonl(args.output_file, score_record, lock=file_write_lock)
                         processed_pairs.add((content_id, user_prompt))
                     print(f"[{content_id}]  -> Score 저장 완료: {args.output_file}")
                     print("-" * 50)
