@@ -7,6 +7,7 @@ import sys
 import concurrent.futures
 import threading
 from gemini_api_utils import (
+    get_common_argparser,
     make_generate_config,
     process_gcs_file, process_gcs_file_range,
     check_gcs_files_exist,
@@ -132,17 +133,11 @@ def _build_mode_contents(past_parts, curr_parts, mode, has_end_time):
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate Responses using Gemini models")
+    parser = get_common_argparser(description="Generate Responses using Gemini models")
     parser.add_argument("--json_file", default="assets/user_query.jsonl", help="질문 목록 JSONL 파일 경로 (generate_user_query.py 출력)")
     parser.add_argument("--output_file", default="assets/uq_responses.jsonl", help="통합 답변 목록을 저장할 파일 경로 (.jsonl)")
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--uq_response_gen_model", default="gemini-2.5-flash", help="사용할 생성 모델명")
-    parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
     parser.add_argument("--skip_aggregate", action="store_true", help="수행 완료 후 자동 집계 로직을 건너뜁니다.")
-    parser.add_argument("--uq_response_gen_thinking_budget", type=int, default=-1,
-                        help="UQ Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -213,8 +208,8 @@ def main():
                     print(f"[{content_id}] Warning: JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
                     ref_scenes = []
 
-                print(f"[{content_id}] Initializing Generation configs ({args.uq_response_gen_model})...")
-                gen_configs = {mode: make_generation_config(mode=mode, thinking_budget=args.uq_response_gen_thinking_budget)
+                print(f"[{content_id}] Initializing Generation configs ({args.uq_response_model})...")
+                gen_configs = {mode: make_generation_config(mode=mode, thinking_budget=args.uq_response_thinking_budget)
                                for mode in ["video", "raw", "img_desc", "mm_desc"]}
 
                 for q_item in pending_queries:
@@ -252,7 +247,7 @@ def main():
                                 past_parts, curr_parts, mode, has_end_time)
                             answer_text = _retry_api_call(
                                 lambda: client.models.generate_content(
-                                    model=args.uq_response_gen_model,
+                                    model=args.uq_response_model,
                                     contents=[*mode_contents, user_prompt],
                                     config=gen_configs[mode]
                                 ).text,

@@ -5,6 +5,7 @@ import time
 import concurrent.futures
 import threading
 from gemini_api_utils import (
+    get_common_argparser,
     make_generate_config,
     parse_json_response,
     _retry_api_call, retry_parse_json, start_chat_session,
@@ -116,16 +117,11 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
         print(f"    [Error] Judge 최종 실패: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Voice Hint 질문을 텍스트 요약 기반으로 품질 평가")
+    parser = get_common_argparser(description="Voice Hint 질문을 텍스트 요약 기반으로 품질 평가")
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
     
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--vh_judge_model", default="gemini-2.5-pro", help="질문 평가에 사용할 Premium 모델명")
-    parser.add_argument("--location", default="global", help="GCP Location")
-    parser.add_argument("--vh_judge_thinking_budget", type=int, default=2048, help="Voice Hint Judge 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_query_judge_config(thinking_budget=args.vh_judge_thinking_budget)

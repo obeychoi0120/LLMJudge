@@ -4,6 +4,7 @@ import argparse
 import threading
 import sys
 from gemini_api_utils import (
+    get_common_argparser,
     make_generate_config,
     process_gcs_file, process_gcs_file_range,
     check_gcs_files_exist,
@@ -100,17 +101,10 @@ def _build_ref_contents(past_parts, curr_parts, has_end_time, use_ref):
     return contents
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate UQ References using Gemini models")
+    parser = get_common_argparser(description="Generate UQ References using Gemini models")
     parser.add_argument("--json_file", default="assets/user_query.jsonl", help="질문 목록 JSONL 파일 경로")
     parser.add_argument("--output_file", default="assets/uq_references.jsonl", help="Reference 답변을 저장할 파일 경로 (.jsonl)")
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름")
-    parser.add_argument("--uq_reference_gen_model", default="gemini-2.5-pro", help="Reference Answer 생성 모델명")
-    parser.add_argument("--use_ref_for_uq_reference", type=lambda x: str(x).lower() == 'true', default=False, help="Reference 생성 시 Ref JSONL 참조 여부")
-    parser.add_argument("--location", default="global", help="GCP Location")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 처리")
-    parser.add_argument("--uq_reference_gen_thinking_budget", type=int, default=4096,
-                        help="UQ Reference Answer 생성 모델의 Thinking Budget")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -168,8 +162,8 @@ def main():
                     print(f"[{content_id}] Warning: JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
                     ref_scenes = []
 
-                print(f"[{content_id}] Initializing Reference config ({args.uq_reference_gen_model}, Ref={'ON' if args.use_ref_for_uq_reference else 'OFF'})...")
-                ref_config = make_reference_config(thinking_budget=args.uq_reference_gen_thinking_budget)
+                print(f"[{content_id}] Initializing Reference config ({args.uq_reference_model}, Ref={'ON' if args.use_ref_for_uq_reference else 'OFF'})...")
+                ref_config = make_reference_config(thinking_budget=args.uq_reference_thinking_budget)
 
                 for q_item in pending_queries:
                     user_prompt = q_item["query"]
@@ -200,7 +194,7 @@ def main():
 
                         reference_answer = _retry_api_call(
                             lambda: client.models.generate_content(
-                                model=args.uq_reference_gen_model,
+                                model=args.uq_reference_model,
                                 contents=[*ref_contents, user_prompt],
                                 config=ref_config
                             ).text,

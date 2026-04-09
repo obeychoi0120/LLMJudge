@@ -4,6 +4,7 @@ import argparse
 import json
 import concurrent.futures
 from gemini_api_utils import (
+    get_common_argparser,
     make_generate_config,
     process_gcs_file_range, check_gcs_files_exist,
     parse_json_response, _retry_api_call,
@@ -82,16 +83,11 @@ def process_vh_parallel(client, vh_model_name, vh_config, current_parts, end_tim
 # ───────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Keypoint Scene 목록을 입력받아 Voice Hint를 생성합니다.")
+    parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 Voice Hint를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
 
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--location", default="global", help="GCP Location")
 
-    parser.add_argument("--vh_gen_model", default="gemini-2.5-flash", help="질문 생성에 사용할 Budget 모델명")
-    parser.add_argument("--vh_thinking_budget", type=int, default=0, help="Voice Hint 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args, client = init_pipeline(parser.parse_args())
 

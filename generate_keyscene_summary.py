@@ -3,6 +3,7 @@ import time
 import argparse
 import json
 from gemini_api_utils import (
+    get_common_argparser,
     make_generate_config,
     process_gcs_file_range, check_gcs_files_exist,
     _retry_api_call,
@@ -85,19 +86,10 @@ def process_summary(client, summary_model_name, summary_config, past_parts, curr
 # ───────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Keypoint Scene 목록을 입력받아 KeyScene Summary를 생성합니다.")
+    parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 KeyScene Summary를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary 별도 저장 경로")
-
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--location", default="global", help="GCP Location")
-
-    parser.add_argument("--keyscene_summary_model", default="gemini-2.5-pro", help="Summary 생성에 사용할 Premium 모델명")
-    parser.add_argument("--keyscene_summary_thinking_budget", type=int, default=1024,
-                        help="KeyScene Summary 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
-    parser.add_argument("--use_ref_for_keyscene_summary", type=lambda x: str(x).lower() == 'true', default=False, help="Summary 생성 시 Ref JSONL 참조 여부")
-
+    
     args, client = init_pipeline(parser.parse_args())
 
     summary_config = make_summary_config(thinking_budget=args.keyscene_summary_thinking_budget)

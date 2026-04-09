@@ -3,16 +3,11 @@ import subprocess
 import sys
 import os
 import json
-from gemini_api_utils import load_config
+from gemini_api_utils import load_config, get_common_argparser
 
 def main():
-    parser = argparse.ArgumentParser(description="End-to-End LLM Judge Pipeline Orchestrator (Voice Hint & User Query)")
+    parser = get_common_argparser("End-to-End LLM Judge Pipeline Orchestrator (Voice Hint & User Query)")
     parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
-
-    # GCP 설정
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--location", default="global", help="GCP Location")
 
     # Voice Hint 입출력 설정
     parser.add_argument("--voice_hints_file", default="assets/voice_hint.jsonl", help="Voice Hint 생성된 질문 목록 경로")
@@ -20,33 +15,11 @@ def main():
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 저장 경로")
     parser.add_argument("--voice_hint_scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 파일 경로")
         
-    # Voice Hint 생성/평가 관련 모델 설정
-    parser.add_argument("--keypoint_model", default="gemini-2.5-flash", help="Keypoint Scene 식별에 사용할 Budget 모델명")
-    parser.add_argument("--vh_gen_model", default="gemini-2.5-flash", help="Voice Hint 생성에 사용할 Budget 모델명")
-    parser.add_argument("--keyscene_summary_model", default="gemini-2.5-flash", help="Detailed Summary 생성에 사용할 Budget 모델명")
-    parser.add_argument("--vh_judge_model", default="gemini-2.5-pro", help="Voice Hint 질문 Judge에 사용할 Premium 모델명")
-    parser.add_argument("--keypoint_thinking_budget", type=int, default=512, help="Keypoint 식별 모델의 Thinking Budget")
-    parser.add_argument("--vh_thinking_budget", type=int, default=0, help="Voice Hint 모델의 Thinking Budget (0=비활성화, -1=동적)")
-    parser.add_argument("--keyscene_summary_thinking_budget", type=int, default=512, help="KeyScene Summary 생성 모델의 Thinking Budget")
-    parser.add_argument("--vh_judge_thinking_budget", type=int, default=1024, help="Voice Hint Judge 모델의 Thinking Budget")
-
     # User Query 입출력 설정
     parser.add_argument("--user_queries_file", default="assets/user_query.jsonl", help="User Query 생성된 질문 목록 경로")
     parser.add_argument("--responses_file", default="assets/uq_responses.jsonl", help="User Query 생성/통합된 답변 목록 경로")
     parser.add_argument("--references_file", help="User Query Reference 답변 목록 경로")
     parser.add_argument("--scores_file", default="assets/uq_response_scores.jsonl", help="User Query 최종 답변 평가 결과 경로")
-
-    # User Query 생성/평가 관련 모델 설정
-    parser.add_argument("--uq_gen_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
-    parser.add_argument("--uq_response_gen_model", default="gemini-2.5-flash", help="User Query 답변 생성 모델명")
-    parser.add_argument("--uq_reference_gen_model", default="gemini-2.5-pro", help="User Query Reference Answer 생성 모델명")
-    parser.add_argument("--uq_response_judge_model", default="gemini-2.5-pro", help="User Query 답변 평가 모델명")
-    parser.add_argument("--uq_gen_thinking_budget", type=int, default=1024, help="UQ 생성 모델의 Thinking Budget")
-    parser.add_argument("--uq_response_gen_thinking_budget", type=int, default=-1, help="UQ Response 생성 모델의 Thinking Budget (0=비활성화, -1=동적)")
-    parser.add_argument("--uq_reference_gen_thinking_budget", type=int, default=2048, help="UQ Reference Answer 생성 모델의 Thinking Budget")
-    parser.add_argument("--uq_response_judge_thinking_budget", type=int, default=1024, help="UQ Response Judge 모델의 Thinking Budget")
-    parser.add_argument("--use_ref_for_keyscene_summary", type=lambda x: str(x).lower() == 'true', default=False, help="Summary 생성 시 Ref JSONL 참조 여부")
-    parser.add_argument("--use_ref_for_uq_reference", type=lambda x: str(x).lower() == 'true', default=False, help="Reference 생성 시 Ref JSONL 참조 여부")
     
     # 파이프라인 설정
     parser.add_argument("--skip-keypoint", action="store_true", help="A-1. Keypoint 식별을 건너뛰기")
@@ -185,8 +158,8 @@ def main():
             sys.executable, "generate_uq_reference.py",
             "--json_file", args.user_queries_file,
             "--output_file", args.references_file,
-            "--uq_reference_gen_model", args.uq_reference_gen_model,
-            "--uq_reference_gen_thinking_budget", str(args.uq_reference_gen_thinking_budget),
+            "--uq_reference_model", args.uq_reference_model,
+            "--uq_reference_thinking_budget", str(args.uq_reference_thinking_budget),
             "--use_ref_for_uq_reference", str(args.use_ref_for_uq_reference),
         ] + common_project_args
         subprocess.run(cmd_ref, check=True)
@@ -204,8 +177,8 @@ def main():
             sys.executable, "generate_uq_response.py",
             "--json_file", args.user_queries_file,
             "--output_file", args.responses_file,
-            "--uq_response_gen_model", args.uq_response_gen_model,
-            "--uq_response_gen_thinking_budget", str(args.uq_response_gen_thinking_budget),
+            "--uq_response_model", args.uq_response_model,
+            "--uq_response_thinking_budget", str(args.uq_response_thinking_budget),
             "--skip_aggregate"
         ]
         cmd += common_project_args
@@ -225,8 +198,8 @@ def main():
             "--answers_file", args.responses_file,
             "--references_file", args.references_file,
             "--output_file", args.scores_file,
-            "--uq_response_judge_model", args.uq_response_judge_model,
-            "--uq_response_judge_thinking_budget", str(args.uq_response_judge_thinking_budget),
+            "--uq_judge_model", args.uq_judge_model,
+            "--uq_judge_thinking_budget", str(args.uq_judge_thinking_budget),
             "--skip_aggregate"
         ] + common_project_args
         subprocess.run(cmd, check=True)

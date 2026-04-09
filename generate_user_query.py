@@ -3,6 +3,7 @@ import time
 import argparse
 import json
 from gemini_api_utils import (
+    get_common_argparser,
     make_generate_config,
     process_gcs_file_range,
     check_gcs_files_exist,
@@ -71,18 +72,10 @@ def generate_user_query(client, model_name, query_config, past_parts, current_pa
 # ───────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Keypoint 기반 User 파이프라인 (User Query) 자동 생성")
+    parser = get_common_argparser(description="Keypoint 기반 User 파이프라인 (User Query) 자동 생성")
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 생성된 JSONL 파일 (Keypoint 추출용, keypoints_file 없을 시 폴백)")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL (우선 사용, 없으면 input_file에서 추출)")
     parser.add_argument("--output_file", default="assets/user_query.jsonl", help="User Query 목록 저장 경로")
-    
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--location", default="global", help="GCP Location")
-    
-    parser.add_argument("--uq_gen_model", default="gemini-2.5-pro", help="User Query 생성에 사용할 Premium 모델명")
-    parser.add_argument("--uq_gen_thinking_budget", type=int, default=2048,
-                        help="UQ 생성 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
 
     args, client = init_pipeline(parser.parse_args())
     query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT,

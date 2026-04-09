@@ -4,6 +4,7 @@ import concurrent.futures
 import argparse
 import json
 from gemini_api_utils import (
+    get_common_argparser,
     make_generate_config,
     process_gcs_file, process_gcs_file_range, check_gcs_files_exist,
     parse_json_response,
@@ -255,18 +256,10 @@ def resolve_keypoints(raw_list, ref_scenes):
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="영상 콘텐츠에서 Keypoint Scene을 식별하고 저장합니다.")
+    parser = get_common_argparser(description="영상 콘텐츠에서 Keypoint Scene을 식별하고 저장합니다.")
     parser.add_argument("--input_file", default="content_list.json", help="입력 JSON 파일 경로 (content_id 리스트)")
     parser.add_argument("--output_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 저장 경로")
-
-    parser.add_argument("--gcp_project_id", help="GCP 프로젝트 ID (기본값: config.json 사용)")
-    parser.add_argument("--gs_bucket_name", help="GCS 버킷 이름 (기본값: config.json 사용)")
-    parser.add_argument("--location", default="global", help="GCP Location")
-
-    parser.add_argument("--keypoint_model", default="gemini-2.5-flash", help="Keypoint 식별에 사용할 모델명")
-    parser.add_argument("--keypoint_thinking_budget", type=int, default=1024,
-                        help="Keypoint 식별 모델의 Thinking Budget (0=비활성화, -1=동적, 1~24576=지정 토큰 수)")
-
+    
     args, client = init_pipeline(parser.parse_args())
 
     keypoint_config = make_keypoint_config(args.keypoint_model, thinking_budget=args.keypoint_thinking_budget)
