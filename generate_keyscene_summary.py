@@ -18,10 +18,11 @@ from gemini_api_utils import (
 
 _SUMMARY_GEN_PROMPT = """\
 당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 대본 및 상황을 파악하는 전문가입니다.
-사용자는 이전 씬까지 생성된 **누적 요약 텍스트(Past Information)**와, **현재 씬의 비디오 영상 및 메타데이터(Current Information)**를 제공합니다.
-당신의 목표는 이 두 정보를 바탕으로 스토리가 어떻게 이어지고 있는지 파악한 후, 아래 출력 포맷에 맞추어 명확하게 구분하여 작성하는 것입니다.
+당신에게는 이전 씬의 참조용 메타데이터(Past Reference Metadata) 및 이전 요약 텍스트(Past Summary)와, 
+현재 씬의 참조용 메타데이터(Current Reference Metadata) 및 비디오(Current Video)가 제공됩니다.
+당신의 목표는 이 정보들을 바탕으로 스토리가 어떻게 이어지고 있는지 파악한 후, 아래 출력 포맷에 맞추어 명확하게 구분하여 작성하는 것입니다.
 
-[Reference 메타데이터의 필드 설명]
+[참조용 메타데이터의 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
@@ -30,24 +31,24 @@ _SUMMARY_GEN_PROMPT = """\
 - texts: 화면 속 자막, 간판 정보 등
 - speech: 등장인물들의 대사 (영어 또는 한국어)
 
-[메타데이터 사용 시 주의사항]
-- speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. 따라서 당신이 적절히 교차 검증하여 교정해야 합니다.
-- sounds: 효과음 분류 오류가 빈번합니다. 반드시 비디오 프레임에서 본 정보를 우선 참고하고, 비디오 프레임에 존재하지 않는 효과음이 있다면 무시하세요.
-- texts: OCR 오류로 인해 화면 텍스트의 철자가 틀릴 수 있습니다.
-- speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다.
+[참조용 메타데이터 사용 시 주의사항]
+- speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. 따라서 당신이 적절히 비디오와 교차 검증하여 교정해야 합니다.
+- sounds: 효과음 분류 오류가 빈번합니다. 반드시 비디오에서 본 정보를 우선시하고, 비디오에 존재하지 않는 효과음이 있다면 무시하세요.
+- texts: OCR 오류로 인해 화면 텍스트의 철자가 틀릴 수 있습니다. 비디오와 적절히 교차 검증하여 교정하세요.
+- speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다. 비디오와 적절히 교차 검증하여 교정하세요.
 
 [작성 규칙]
 - 아래 출력 포맷에 맞게 두 파트로 나누어 작성하세요.
-- 과거 장면(Past Information)이 제공되지 않은 경우, "1. 과거 장면 요약" 항목은 "해당 없음"으로 표기하세요.
-- 언어는 반드시 **한국어**로 작성하세요. 영어 콘텐츠의 경우 고유명사는 원어 병기(예: 일각고래(narwhal))를 허용합니다.
+- 과거 장면([Past Reference Metadata], [Past Summary])이 제공되지 않은 경우, "1. 과거 장면 요약" 항목은 "해당 없음"으로 표기하세요.
+- 언어는 **한국어**로 작성하되, 인물 이름과 고유명사는 원어를 병기하세요 (예: 일각고래(narwhal), 셰즈 은데예(Chez Ndeye)).
 - 각각의 파트는 텍스트의 길이 제한 없이 최대한 핵심을 상세하게 묘사하세요.
 
 [출력 포맷]
 **1. 과거 장면 요약**
-(지금까지 발생한 주요 사건의 흐름, 등장인물 간의 대화와 관계, 인물의 목적이나 동기 등을 시간순으로 요약합니다.)
+(지금까지 발생한 주요 사건의 흐름, 등장인물 간의 대화와 관계, 인물의 목적이나 동기, 나오는 물체 등을 텍스트의 길이 제한 없이 시간순으로 상세하게 요약합니다.)
 
 **2. 현재 장면**
-(현재 장면에서 벌어지고 있는 구체적인 상황, 인물의 행동, 대화 내용, 감정 변화, 갈등 요소 등을 상세하게 묘사합니다.)"""
+(현재 장면에서 벌어지고 있는 구체적인 상황, 인물의 행동, 대화 내용, 감정 변화, 갈등 요소, 나오는 물체 등을 텍스트의 길이 제한 없이 상세하게 묘사합니다.)"""
 
 
 def make_summary_config(thinking_budget=None):
@@ -55,20 +56,22 @@ def make_summary_config(thinking_budget=None):
     return make_generate_config(system_instruction=_SUMMARY_GEN_PROMPT, thinking_budget=thinking_budget)
 
 
-def process_summary(client, summary_model_name, summary_config, past_summary_text, current_parts, end_time, use_ref=False):
+def process_summary(client, summary_model_name, summary_config, past_summary_text, past_ref_metadata, current_parts, end_time, use_ref=False):
     contents = []
     if past_summary_text is not None:
-        contents += ["--- [Past Information (Context)] ---", past_summary_text]
-    contents += ["--- [Current Information (Focus Zone)] ---", current_parts["video"]]
+        if past_ref_metadata is not None:
+            contents += ["--- [Past Reference Metadata] ---", past_ref_metadata]
+        contents += ["--- [Past Summary] ---", past_summary_text]
     if use_ref:
-        contents.append(current_parts["ref"])
+        contents += ["--- [Current Reference Metadata] ---", current_parts["ref"]]
+    contents += ["--- [Current Video] ---", current_parts["video"]]
     request_msg = (
-        "[Past Information (Context)]에 제공된 이전 텍스트 내용을 모두 종합하여 '1. 과거 장면 요약'을 작성하고, "
-        "시각적으로 묘사된 [Current Information (Focus Zone)] 영상만을 관찰하여 '2. 현재 장면'을 새롭게 작성하세요. "
+        "[Past Reference Metadata]와 [Past Summary] 내용을 모두 종합하여 '1. 과거 장면 요약' 섹션을 작성하고, "
+        "제공된 [Current Reference Metadata]의 힌트를 참고하여 시각적으로 묘사된 [Current Video] 영상을 종합하여 '2. 현재 장면' 섹션을 새롭게 작성하세요. "
         "반드시 1번과 2번 항목을 분리하여 포맷을 준수해 주세요."
         if past_summary_text is not None else
         "과거 정보가 없으므로 '1. 과거 장면 요약'은 '해당 없음'으로 기재하고, "
-        "제공된 현재 정보(Current Information) 영상을 바탕으로 '2. 현재 장면'을 상세하게 묘사해 주세요."
+        "제공된 [Current Reference Metadata]와 [Current Video] 영상을 바탕으로 '2. 현재 장면' 섹션을 상세하게 작성해 주세요."
     )
     contents += ["--- 요청 사항 ---", request_msg]
     t0 = time.time()
@@ -120,9 +123,8 @@ def main():
         for data in load_jsonl(args.keyscene_summary_file):
             c_id = data.get("content_id")
             s_idx = data.get("scene_idx")
-            text = data.get("summary")
-            if c_id and s_idx is not None and text:
-                summary_texts_by_scene[(c_id, s_idx)] = text
+            if c_id and s_idx is not None:
+                summary_texts_by_scene[(c_id, s_idx)] = data
 
     print("\n" + "="*50)
     print("KeyScene Summary 생성 파이프라인을 시작합니다.")
@@ -161,9 +163,16 @@ def main():
                     # 직전 완료된 scene 탐색 (scene_idx보다 작은 것 중에서 최댓값)
                     past_scene_indices = [s for (c, s) in summary_pairs if c == content_id and s < scene_idx]
                     past_summary_text = None
+                    past_ref_metadata = None
                     if past_scene_indices:
                         last_scene_idx = max(past_scene_indices)
-                        past_summary_text = summary_texts_by_scene.get((content_id, last_scene_idx))
+                        past_record = summary_texts_by_scene.get((content_id, last_scene_idx))
+                        if past_record:
+                            past_summary_text = past_record.get("summary")
+                            if args.use_ref_for_keyscene_summary:
+                                p_start = float(past_record.get("start_time", 0.0))
+                                p_end = float(past_record.get("end_time", 0.0))
+                                past_ref_metadata = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", p_start, p_end)
 
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
@@ -171,7 +180,7 @@ def main():
                     }
                     return process_summary(
                         client, args.keyscene_summary_model, summary_config,
-                        past_summary_text, current_parts, end_time, use_ref=args.use_ref_for_keyscene_summary
+                        past_summary_text, past_ref_metadata, current_parts, end_time, use_ref=args.use_ref_for_keyscene_summary
                     )
 
                 try:
@@ -191,7 +200,7 @@ def main():
                         }
                         append_jsonl(args.keyscene_summary_file, summary_record)
                         summary_pairs.add(scene_key)
-                        summary_texts_by_scene[scene_key] = summary_text
+                        summary_texts_by_scene[scene_key] = summary_record
 
                     print(f"\n{summary_text}")
                     print(f"\n-> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")

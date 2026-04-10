@@ -18,48 +18,61 @@ from gemini_api_utils import (
 # ───────────────────────────────────────────────
 
 _VOICE_HINT_BASE = """\
-당신은 현재 시청 중인 방금 본 장면에서 자연스러운 궁금증을 유도하는 데이터 생성 전문가입니다.
-시청자에게는 오직 **현재 정보 (Current Information)** (방금 본 Scene)만 제공됩니다.
-당신에게는 장면 설명이 담긴 Description 메타데이터를 제공합니다.
-현재 장면의 구체적인 상황, 인물의 행동, 화면 속 디테일 등에 집중하여 시청자가 가질 수 있는 질문 3개를 생성하세요.
+당신은 제공되는 메타데이터를 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
 
-[Description 메타데이터의 필드 설명]
+시청자에게는 오직 현재 정보만 주어지는 것이 아닙니다. 시청자는 지금까지 시청해 온 **[1. 과거 맥락]**을 인지한 상태로 방금 **[2. 현재 장면]**을 보았습니다.
+이 두 정보를 바탕으로, TV 화면의 버튼을 눌러 답을 확인하고 싶게 만드는 매력적인 질문 3개를 생성하세요.
+
+당신에게는 영상 Scene이 축약된 다음과 같은 메타데이터가 주어집니다.
+[메타데이터 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
 - description: 해당 Scene의 시각적 상황, 인물 행동, 대사, 화면 자막, 환경음 등을 종합한 자세한 묘사
 
-[작성 규칙]
-- (중요) description을 통해 이미 명확하게 알 수 있는 내용은 질문하지 마세요.
-- 과거의 맥락은 제공되지 않으므로, 철저하게 '이 장면에 보이는 것만' 으로 만들어질 수 있는 질문이어야 합니다.
-- 당신은 다음에 어떤 컨텐츠가 제공될 지 알 수 없습니다. 미래 시점에 대해서 질문하지 마세요.
+[질문 생성 핵심 전략]
+1. 정보 공백 타겟팅 (Hook & Curiosity): 시청자가 [1. 과거 맥락]을 통해 이미 알고 있는 사실은 절대 묻지 마세요 (뒷북 금지). 과거 정보와 [2. 현재 장면]이 연결되며 새롭게 발생하는 '의문점'과 '정보의 공백'을 날카롭게 짚어내세요.
+2. 플랫폼 확장성 유도: 단순한 사실 확인(예/아니오)이나 1차원적인 시각적 질문("저 옷 어디 거야?")을 넘어, 작품의 세계관, 연관 다큐멘터리, 캐릭터 서사 등 플랫폼 내 다른 탐색으로 이어질 수 있는 입체적인 질문을 우대합니다.
+3. 시점 몰입도 (스포일러 금지): 질문의 트리거는 철저히 '현재 장면'에서 파생되어야 하며, 미래 전개를 암시하거나 예측하는 질문은 몰입을 깨므로 절대 금지합니다.
+4. 직관적 간결성: TV 화면에서 직관적으로 읽히도록 군더더기 없이 짧게 작성하세요. 옆에서 같이 TV를 보는 친구에게 무심코 툭 던지는 듯한 자연스럽고 캐주얼한 반말 구어체로 작성하세요.
 
 [출력 형식]
-- 어투: 반말 위주, 인터넷 커뮤니티나 친구에게 물어보는 매우 캐주얼한 구어체
-- 언어: 반드시 **한국어**로 작성하세요. 영어 콘텐츠의 경우 고유명사는 원어 병기(예: 일각고래(narwhal))를 허용합니다.
-- 형식: 아래의 [예시] 처럼 3개의 질문만 생성하세요. 다른 설명은 덧붙이지 마십시오.
+- 언어: 한국어 (단, 영어 콘텐츠의 고유명사나 특정 지명/동물은 원어 병기 허용. 예: 일각고래(Narwhal), 셰즈 은데예(Chez Ndeye))
+- 형식: 반드시 아래 JSON 형식으로 출력하세요. 시청자의 호기심을 어떻게 자극할 것인지 `rationale`에 먼저 짧게 분석한 뒤, 3개의 질문을 `queries` 배열에 담으세요. 다른 설명은 덧붙이지 마십시오.
 
-[출력 예시]
-[
-    "지금 저 여자가 입고 있는 옷을 찾아줘.",
-    "여기서 저 남자가 왜 갑자기 저렇게 행동하는 거야?",
-    "아까 주인공이 먹었던 빵 은담베(Pain Ndambe)는 어떻게 만드는 거야?"
-]"""
+[JSON 출력 예시]
+{
+    "rationale": "과거 맥락에서 혹등고래가 먹이를 찾지 못해 헤매는 것을 시청자가 이미 알고 있음. 현재 장면에서 갑자기 범고래 떼가 나타나 방향을 트는 단서가 포착됨. 시청자는 범고래의 등장 이유와 혹등고래의 운명에 대해 강한 호기심을 가질 것이므로 이를 타겟팅함.",
+    "queries": [
+        "방금 나타난 범고래 떼, 설마 혹등고래를 노리고 온 걸까?",
+        "지금 범고래들이 내는 저 소리, 사냥 시작한다는 신호 아니야?",
+        "이 지역에 범고래가 원래 이렇게 자주 나타나?"
+    ]
+}"""
 
 def make_voice_hint_config(thinking_budget=0):
     """Voice Hint 생성용 GenerateContentConfig를 반환합니다."""
     return make_generate_config(system_instruction=_VOICE_HINT_BASE, thinking_budget=thinking_budget)
 
-def process_vh_parallel(client, vh_model_name, vh_config, current_parts, end_time):
+def process_vh_parallel(client, vh_model_name, vh_config, past_parts, current_parts, end_time):
     """하나의 Keypoint에 대해 Voice Hint(img_desc, mm_desc 2개 모드)를 병렬로 수행합니다."""
     def generate_voice_hints(mode):
-        contents = [
-            "--- Current Information (Focus Zone) ---",
+        contents = []
+        past_text = past_parts[mode]
+        has_past = bool(past_text.strip())
+
+        if has_past:
+            contents += ["--- [1. 과거 맥락] ---", past_text]
+        
+        contents += [
+            "--- [2. 현재 장면] ---",
             current_parts[mode],
             "--- 요청 사항 ---",
-            "제공된 현재 장면(Current Information)만을 기반으로 시청자가 자연스럽게 가질 수 있는 질문 3개를 생성하세요."
+            "제공된 정보([1. 과거 맥락], [2. 현재 장면])를 바탕으로 시스템 프롬프트의 지침에 따라 매력적인 질문 3개를 JSON 형식으로 생성하세요." 
+            if has_past else "제공된 [2. 현재 장면]을 바탕으로 시스템 프롬프트의 지침에 따라 매력적인 질문 3개를 JSON 형식으로 생성하세요."
         ]
+        
         t0 = time.time()
         text = _retry_api_call(
             lambda: client.models.generate_content(
@@ -67,16 +80,35 @@ def process_vh_parallel(client, vh_model_name, vh_config, current_parts, end_tim
             ).text,
             label=f"Voice Hint({mode}) 생성 (end={end_time:.1f}s)"
         )
-        return parse_json_response(text)[:3], time.time() - t0
+        
+        parsed = parse_json_response(text)
+        rationale = ""
+        
+        if isinstance(parsed, dict):
+            queries = parsed.get("queries", [])
+            rationale = parsed.get("rationale", "")
+        elif isinstance(parsed, list):
+            queries = parsed
+        else:
+            queries = []
+            
+        return {"queries": queries[:3], "rationale": rationale}, time.time() - t0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         f_vh_img  = executor.submit(generate_voice_hints, "img_desc")
         f_vh_mm  = executor.submit(generate_voice_hints, "mm_desc")
         
-        vh_list_img, elapsed_img = f_vh_img.result()
-        vh_list_mm, elapsed_mm = f_vh_mm.result()
+        vh_res_img, elapsed_img = f_vh_img.result()
+        vh_res_mm, elapsed_mm = f_vh_mm.result()
 
-    return {"img_desc": vh_list_img[:3], "mm_desc": vh_list_mm[:3]}, {"img_desc": elapsed_img, "mm_desc": elapsed_mm}
+    return {
+        "img_desc": vh_res_img["queries"], 
+        "mm_desc": vh_res_mm["queries"],
+        "rationales": {
+            "img_desc": vh_res_img["rationale"],
+            "mm_desc": vh_res_mm["rationale"]
+        }
+    }, {"img_desc": elapsed_img, "mm_desc": elapsed_mm}
 
 # ───────────────────────────────────────────────
 # Main
@@ -157,11 +189,15 @@ def main():
                 print(f"\n[Desc (mm_desc)]\n{mm_desc_text}\n")
 
                 def _run_keypoint():
+                    past_parts = {
+                        "img_desc": get_gcs_text_range(args.gs_bucket_name, content_id, "img_desc", 0.0, start_time),
+                        "mm_desc": get_gcs_text_range(args.gs_bucket_name, content_id, "mm_desc", 0.0, start_time),
+                    }
                     current_parts = {
                         "img_desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "img_desc",  start_time, end_time),
                         "mm_desc":  process_gcs_file_range(args.gs_bucket_name, content_id, "mm_desc",  start_time, end_time),
                     }
-                    return process_vh_parallel(client, args.vh_gen_model, vh_config, current_parts, end_time)
+                    return process_vh_parallel(client, args.vh_gen_model, vh_config, past_parts, current_parts, end_time)
 
                 try:
                     vh_dict, vh_elapsed_dict = _retry_api_call(
@@ -179,18 +215,22 @@ def main():
                             "start_time": start_time,
                             "end_time": end_time,
                             "queries": [
-                                {"mode": "img_desc", "queries": vh_dict["img_desc"]},
-                                {"mode": "mm_desc", "queries": vh_dict["mm_desc"]}
+                                {"mode": "img_desc", "queries": vh_dict["img_desc"], "rationale": vh_dict.get("rationales", {}).get("img_desc", "")},
+                                {"mode": "mm_desc", "queries": vh_dict["mm_desc"], "rationale": vh_dict.get("rationales", {}).get("mm_desc", "")}
                             ],
                         }
                         append_jsonl(args.output_file, scene_record)
                         vh_pairs.add(scene_key)
 
                     print(f"-> [VH - img_desc] ({vh_elapsed_dict['img_desc']:.2f}초)")
+                    if vh_dict.get("rationales", {}).get("img_desc"):
+                        print(f"   [Rationale]: {vh_dict['rationales']['img_desc']}")
                     for qi, q in enumerate(vh_dict["img_desc"], 1):
                         print(f"    {qi}. {q}")
 
                     print(f"\n-> [VH - mm_desc] ({vh_elapsed_dict['mm_desc']:.2f}초)")
+                    if vh_dict.get("rationales", {}).get("mm_desc"):
+                        print(f"   [Rationale]: {vh_dict['rationales']['mm_desc']}\n")
                     for qi, q in enumerate(vh_dict["mm_desc"], 1):
                         print(f"    {qi}. {q}")
                     print(f"------------------------------------------------------\n")
