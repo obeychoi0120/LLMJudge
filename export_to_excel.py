@@ -5,7 +5,10 @@ import os
 def export_details(input_dir, output_dir):
     """User Query의 Response/Reference/Score를 상세 Excel로 내보냅니다."""
     # 1. 파일 읽기
-    references_path = os.path.join(input_dir, "uq_references.json")
+    import glob
+    summary_files = glob.glob(os.path.join(input_dir, "keyscene_summary*.json"))
+    references_path = summary_files[0] if summary_files else os.path.join(input_dir, "keyscene_summary.json")
+
     responses_path = os.path.join(input_dir, "uq_responses.json")
     scores_path = os.path.join(input_dir, "uq_response_scores.json")
 
@@ -15,7 +18,7 @@ def export_details(input_dir, output_dir):
             return
 
     with open(references_path, "r", encoding="utf-8") as f:
-        references = json.load(f)
+        keyscene_summaries = json.load(f)
     with open(responses_path, "r", encoding="utf-8") as f:
         responses = json.load(f)
     with open(scores_path, "r", encoding="utf-8") as f:
@@ -24,26 +27,35 @@ def export_details(input_dir, output_dir):
     modes = ["video", "raw", "img_desc", "mm_desc"]
 
     # 2. 데이터 매핑용 딕셔너리 생성
-    data_map = {}
+    summary_map = {}
+    for group in keyscene_summaries:
+        if "items" in group:
+            for item in group["items"]:
+                cid = item.get("content_id")
+                idx = item.get("scene_idx")
+                if cid and idx is not None:
+                    summary_map[(cid, idx)] = item.get("summary", "")
+        else:
+            cid = group.get("content_id")
+            idx = group.get("scene_idx")
+            if cid and idx is not None:
+                summary_map[(cid, idx)] = group.get("summary", "")
 
-    for item in references:
-        cid = item["content_id"]
-        for q in item["queries"]:
-            query = q["query"]
-            key = (cid, query)
-            if key not in data_map:
-                data_map[key] = {}
-            ref_text = q.get("reference", "")
-            for mode in modes:
-                data_map[key][f"ref_{mode}"] = ref_text
+    data_map = {}
 
     for item in responses:
         cid = item["content_id"]
         for q in item["queries"]:
             query = q["query"]
+            scene_idx = q.get("scene_idx")
             key = (cid, query)
             if key not in data_map:
-                continue
+                data_map[key] = {}
+                
+            ref_text = summary_map.get((cid, scene_idx), "") if scene_idx is not None else ""
+            for mode in modes:
+                data_map[key][f"ref_{mode}"] = ref_text
+                
             answers = q.get("answers", {})
             for mode in modes:
                 data_map[key][f"resp_{mode}"] = answers.get(mode, "")
@@ -63,7 +75,7 @@ def export_details(input_dir, output_dir):
 
     # 3. 데이터프레임 구조로 평탄화
     flat_data = []
-    for item in references:
+    for item in responses:
         cid = item["content_id"]
         for q in item["queries"]:
             query = q["query"]

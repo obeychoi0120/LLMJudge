@@ -18,7 +18,7 @@ def main():
     # User Query 입출력 설정
     parser.add_argument("--user_queries_file", default="assets/user_query.jsonl", help="User Query 생성된 질문 목록 경로")
     parser.add_argument("--responses_file", default="assets/uq_responses.jsonl", help="User Query 생성/통합된 답변 목록 경로")
-    parser.add_argument("--references_file", help="User Query Reference 답변 목록 경로")
+
     parser.add_argument("--scores_file", default="assets/uq_response_scores.jsonl", help="User Query 최종 답변 평가 결과 경로")
     
     # 파이프라인 설정
@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--skip-voice-hint-gen", action="store_true", help="A-3. Voice Hint 생성을 건너뛰기")
     parser.add_argument("--skip-query-judge", action="store_true", help="A-4. Voice Hint 품질 평가를 건너뛰기")
     parser.add_argument("--skip-user-query-gen", action="store_true", help="B-1. User Query 생성을 건너뛰기")
-    parser.add_argument("--skip-uq-reference", action="store_true", help="B-2. User Query Reference 생성을 건너뛰기")
+
     parser.add_argument("--skip-response", action="store_true", help="B-3. User Query 답변 생성을 건너뛰기")
     parser.add_argument("--skip-judge", action="store_true", help="B-4. User Query 답변 평가를 건너뛰기")
 
@@ -41,8 +41,7 @@ def main():
     # 기본값 설정 로직 (config 적용 후)
     if args.keyscene_summary_file is None:
         args.keyscene_summary_file = "assets/keyscene_summary_withref.jsonl" if args.use_ref_for_keyscene_summary else "assets/keyscene_summary_noref.jsonl"
-    if args.references_file is None:
-        args.references_file = "assets/uq_references_withref.jsonl" if args.use_ref_for_uq_reference else "assets/uq_references_noref.jsonl"
+
 
     common_project_args = [
         "--gcp_project_id", args.gcp_project_id,
@@ -147,27 +146,10 @@ def main():
     else:
         print(f"\n[Skip] User Query 생성 건너뜀.")
 
-    # ───────────────────────────────────────────────
-    # B-2: User Query Reference 생성 (generate_uq_reference.py)
-    # ───────────────────────────────────────────────
-    if not args.skip_uq_reference:
-        print("\n" + "="*60)
-        print(">>> B-2. User Query Reference 생성 (generate_uq_reference.py)")
-        print("="*60)
-        cmd_ref = [
-            sys.executable, "generate_uq_reference.py",
-            "--json_file", args.user_queries_file,
-            "--output_file", args.references_file,
-            "--uq_reference_model", args.uq_reference_model,
-            "--uq_reference_thinking_budget", str(args.uq_reference_thinking_budget),
-            "--use_ref_for_uq_reference", str(args.use_ref_for_uq_reference),
-        ] + common_project_args
-        subprocess.run(cmd_ref, check=True)
-    else:
-        print(f"\n[Skip] User Query Reference 생성 건너뜀.")
+
 
     # ───────────────────────────────────────────────
-    # B-3: User Query 답변 생성 (generate_response.py)
+    # B-2: User Query 답변 생성 (generate_response.py)
     # ───────────────────────────────────────────────
     if not args.skip_response:
         print("\n" + "="*60)
@@ -187,7 +169,7 @@ def main():
         print(f"\n[Skip] User Query 답변 생성 건너뜀.")
 
     # ───────────────────────────────────────────────
-    # B-4: User Query 답변 Judge (judge_response.py)
+    # B-3: User Query 답변 Judge (judge_response.py)
     # ───────────────────────────────────────────────
     if not args.skip_judge:
         print("\n" + "="*60)
@@ -196,7 +178,7 @@ def main():
         cmd = [
             sys.executable, "judge_response.py",
             "--answers_file", args.responses_file,
-            "--references_file", args.references_file,
+            "--keyscene_summary_file", args.keyscene_summary_file,
             "--output_file", args.scores_file,
             "--uq_judge_model", args.uq_judge_model,
             "--uq_judge_thinking_budget", str(args.uq_judge_thinking_budget),

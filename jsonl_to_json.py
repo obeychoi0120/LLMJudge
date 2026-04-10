@@ -117,16 +117,24 @@ def main():
                     queries_list = []
                     for q in content_query_map[c_id]:
                         raw = content_data_map[c_id][q]
+                        # find original item to get scene_idx
+                        scene_idx = next((it.get("scene_idx") for it in data if it.get("content_id") == c_id and it.get("query") == q), None)
+                        
+                        entry = {"query": q}
+                        if scene_idx is not None:
+                            entry["scene_idx"] = scene_idx
+                            
                         if isinstance(raw, dict):
                             # answers나 judge 같은 딕셔너리 데이터는 모드 순서대로 정렬
                             ordered = {m: raw[m] for m in desired_mode_order if m in raw}
                             for m, val in raw.items():
                                 if m not in desired_mode_order:
                                     ordered[m] = val
-                            queries_list.append({"query": q, data_key: ordered})
+                            entry[data_key] = ordered
                         else:
                             # reference 같은 문자열 데이터는 그대로 대입
-                            queries_list.append({"query": q, data_key: raw})
+                            entry[data_key] = raw
+                        queries_list.append(entry)
                     reformatted_data.append({"content_id": c_id, "queries": queries_list})
                 data = reformatted_data
             

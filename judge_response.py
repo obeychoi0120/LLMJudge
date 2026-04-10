@@ -22,23 +22,23 @@ from gemini_api_utils import (
 
 _JUDGE_PROMPT = """\
 당신은 AI 모델이 특정한 영상에 대해 생성한 답변의 품질을 평가하는 객관적이고 전문적인 평가자입니다.
-해당 AI 모델은 원본 영상에서 추출한 메타데이터 기반으로 답변을 생성합니다.
+해당 AI 모델은 원본 영상의 시각적, 청각적 정보를 바탕으로 답변을 생성합니다.
 
-당신의 목표는 원본 영상에 대한 [사용자 질문]에 대해 [평가 대상 답변]이 얼마나 훌륭한지,
-[기준 답변(Reference Answer)]과 비교하여 평가하는 것입니다.
-[기준 답변]은 원본 영상과 Reference 메타데이터를 모두 참조하여 생성된 고품질 정답입니다.
+당신의 목표는 영상의 실제 내용인 [영상 컨텍스트 (KeyScene Summary)]를 유일한 사실적 근거(Ground Truth Anchor)로 삼아, 
+[사용자 질문]에 대한 [평가 대상 답변]이 얼마나 정확하고 훌륭한지 평가하는 것입니다.
+[영상 컨텍스트]는 과거 사건의 요약과 현재 장면의 상세한 묘사를 포함하고 있습니다.
 외부 검색은 허용하지 않습니다.
 
 [데이터 목록]
-- 기준 답변 (Reference Answer): 원본 영상 + Reference 메타데이터를 기반으로 생성된 정답 답변
+- 영상 컨텍스트 (KeyScene Summary): 평가의 기준이 되는 영상의 실제 내용 (과거 장면 요약 및 현재 장면 묘사)
 - 사용자 질문
 - 평가 대상 답변
 
 [평가 기준]
 아래 세 가지 항목에 대해 1점부터 5점까지 점수를 매겨주세요. (1점: 매우 나쁨, 3점: 보통/수용 가능함, 5점: 완벽함)
-1. 정확성 (Accuracy): 평가 대상 답변이 기준 답변의 핵심 사실과 일치하는가? 기준 답변에 언급된 정보와 모순되거나 사실과 다른 내용(환각)이 포함되어 있지는 않은가?
-2. 포괄성 (Completeness): 기준 답변에 포함된 핵심 단서(대사, 텍스트 내용, 행동, 맥락 등)를 평가 대상 답변도 누락 없이 포함했는가?
-3. 가독성 (Helpfulness): 정보가 장황하게 나열되지 않고, 시간의 흐름이나 인과관계에 맞게 자연스럽고 이해하기 쉽게 작성되었는가? (만약 평가 대상 답변이 부자연스럽게 메타데이터 구조나 필드명 등을 직접 언급했다면 이 항목에서 감점을 고려하세요.)"""
+1. 정확성 (Accuracy): 평가 대상 답변이 [영상 컨텍스트]의 핵심 사실과 일치하는가? [영상 컨텍스트]에 언급된 정보와 모순되거나 사실과 다른 내용(환각)이 포함되어 있지는 않은가?
+2. 포괄성 (Completeness): [사용자 질문]에 대답하기 위해 [영상 컨텍스트]에서 반드시 언급되어야 할 핵심 단서를 평가 대상 답변도 누락 없이 포함했는가?
+3. 가독성 (Helpfulness): 정보가 장황하게 나열되지 않고, 시간의 흐름이나 인과관계에 맞게 자연스럽고 이해하기 쉽게 작성되었는가? 시청자 관점에서 자연스러운 문장인가? (만약 평가 대상 답변이 부자연스럽게 메타데이터 구조나 필드명, '현재 장면', '과거 장면' 등의 시스템적인 용어를 직접 언급했다면 이 항목에서 감점을 고려하세요.)"""
 
 _JUDGE_FORMAT_PROMPT = """\
 [출력 형식]
@@ -57,14 +57,15 @@ def make_judge_config(thinking_budget=None):
     return make_generate_config(system_instruction=_JUDGE_PROMPT, thinking_budget=thinking_budget)
 
 
-def evaluate_answer_session(client, model_name, judge_config, user_prompt, generated_answer, reference_answer):
+def evaluate_answer_session(client, model_name, judge_config, user_prompt, generated_answer, keyscene_summary):
     """
-    Judge 모델이 Reference Answer를 기준으로 generated_answer를 비교 평가합니다.
+    Judge 모델이 KeyScene Summary를 기준으로 generated_answer를 비교 평가합니다.
     """
     user_content = (
-        f"[사용자 질문]\n{user_prompt}\n\n"
-        f"[기준 답변 (Reference Answer)]\n{reference_answer}\n\n"
         f"[평가 대상 답변]\n{generated_answer}\n\n"
+        f"[Reference: 영상 컨텍스트 (KeyScene Summary)]\n{keyscene_summary}\n\n"
+        f"위 영상 컨텍스트를 근거로 삼아, 아래 [사용자 질문]에 대한 평가 대상 답변의 품질을 평가하세요.\n"
+        f"[사용자 질문]: {user_prompt}\n\n"
         f"{_JUDGE_FORMAT_PROMPT}"
     )
 
@@ -78,7 +79,7 @@ def evaluate_answer_session(client, model_name, judge_config, user_prompt, gener
 def main():
     parser = get_common_argparser(description="Evaluate Responses using Judge model")
     parser.add_argument("--answers_file", default="assets/uq_responses.jsonl", help="답변 목록 JSONL 파일 경로")
-    parser.add_argument("--references_file", default="assets/uq_references.jsonl", help="Reference 답변 목록 JSONL 파일 경로")
+    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 파일 경로")
     parser.add_argument("--output_file", default="assets/uq_response_scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
     parser.add_argument("--skip_aggregate", action="store_true", help="수행 완료 후 자동 집계 로직을 건너뜁니다.")
@@ -100,14 +101,14 @@ def main():
             # 1. Output (진행률) 읽기 - (content_id, query) 쌍 단위로 추적
             processed_pairs = load_processed_pairs(args.output_file)
 
-            # 2-1. Reference 읽기
-            reference_map = {}  # (content_id, query) -> reference_text
-            for ref_data in load_jsonl(args.references_file):
+            # 2-1. KeyScene Summary 읽기
+            summary_map = {}  # (content_id, scene_idx) -> summary_text
+            for ref_data in load_jsonl(args.keyscene_summary_file):
                 r_cid = ref_data.get("content_id")
-                r_query = ref_data.get("query")
-                r_text = ref_data.get("reference")
-                if r_cid and r_query and r_text:
-                    reference_map[(r_cid, r_query)] = r_text
+                r_idx = ref_data.get("scene_idx")
+                r_text = ref_data.get("summary")
+                if r_cid and r_idx is not None and r_text:
+                    summary_map[(r_cid, r_idx)] = r_text
 
             # 2-2. Input 읽기 - 새 포맷: 각 줄 = {"content_id", "query", "answers"}
             #    content_id별로 queries 리스트로 재그룹핑
@@ -116,6 +117,7 @@ def main():
             for data in load_jsonl(args.answers_file):
                 c_id = data.get("content_id")
                 query = data.get("query")
+                scene_idx = data.get("scene_idx")
                 answers = data.get("answers")
                 if c_id and query and answers:
                     if c_id not in content_answers_dict:
@@ -123,9 +125,10 @@ def main():
                         content_query_order[c_id] = []
                     if query not in content_query_order[c_id]:
                         content_query_order[c_id].append(query)
-                        ref_text = reference_map.get((c_id, query), data.get("reference", ""))
+                        ref_text = summary_map.get((c_id, scene_idx), data.get("reference", ""))
                         content_answers_dict[c_id]["queries"].append({
                             "query": query,
+                            "scene_idx": scene_idx,
                             "reference": ref_text,
                             "answers": answers
                         })
@@ -186,8 +189,8 @@ def main():
                     
                     print(f"[{content_id}] Scoring Query: '{user_prompt[:30]}...'")
                     
-                    if not reference_answer or str(reference_answer).startswith("Error"):
-                        print(f"[{content_id}]  [Warning] Reference answer가 없거나 오류입니다. 이 쿼리를 건너뜁니다.")
+                    if not reference_answer or str(reference_answer).startswith("Error") or str(reference_answer).startswith("Warning"):
+                        print(f"[{content_id}]  [Warning] KeyScene Summary가 없거나 오류입니다. 이 쿼리를 건너뜁니다.")
                         continue
                     
                     judge_results = {}  # mode -> score_dict
@@ -208,7 +211,7 @@ def main():
                                 judge_config=judge_config,
                                 user_prompt=user_prompt,
                                 generated_answer=generated_answer,
-                                reference_answer=reference_answer
+                                keyscene_summary=reference_answer
                             ),
                             label=f"[{content_id}] [{mode}] Judge",
                         )

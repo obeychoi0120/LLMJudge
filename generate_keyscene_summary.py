@@ -16,8 +16,7 @@ from gemini_api_utils import (
 # KeyScene Summary 생성 모델 프롬프트
 # ───────────────────────────────────────────────
 
-_SUMMARY_GEN_PROMPT = """\
-당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 대본 및 상황을 파악하는 전문가입니다.
+_SUMMARY_GEN_PROMPT = """당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 대본 및 상황을 파악하는 전문가입니다.
 당신에게는 이전 씬의 참조용 메타데이터(Past Reference Metadata) 및 이전 요약 텍스트(Past Summary)와, 
 현재 씬의 참조용 메타데이터(Current Reference Metadata) 및 비디오(Current Video)가 제공됩니다.
 당신의 목표는 이 정보들을 바탕으로 스토리가 어떻게 이어지고 있는지 파악한 후, 아래 출력 포맷에 맞추어 명확하게 구분하여 작성하는 것입니다.
