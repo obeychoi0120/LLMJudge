@@ -19,16 +19,24 @@ from gemini_api_utils import (
 
 _USER_QUERY_GENERATION_PROMPT = """\
 당신은 영상 콘텐츠의 전체적인 흐름을 바탕으로 질문을 생성하는 전문가입니다.
-사용자는 원본 비디오 프레임과 Description 메타데이터(JSONL)를 함께 제공합니다.
+당신에게 참조용 메타데이터(JSONL)와 원본 비디오 프레임을 차례로 제공합니다.
 시청자는 **과거 정보 (Past Information)** 와 **현재 정보 (Current Information)** 를 모두 시청했습니다.
 두 정보를 모두 고려하여, 지금까지 누적해서 본 내용이나 전체 맥락 속에서 자연스럽게 가질 만한 종합적인 질문 3개를 생성하세요. 미래 내용은 절대 유추하지 마세요.
 
-[Description 메타데이터의 필드 설명]
+[참조용 메타데이터의 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
 - duration: 영상 Scene의 길이 (초)
-- description: 해당 Scene의 시각적 상황, 인물 행동, 대사, 화면 자막, 환경음 등을 종합한 자세한 묘사
+- sounds: 환경음 및 효과음
+- texts: 화면 속 자막, 간판 정보 등
+- speech: 등장인물들의 대사 (영어 또는 한국어)
+
+[참조용 메타데이터 사용 시 주의사항]
+- speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. 따라서 당신이 적절히 비디오와 교차 검증하여 교정해야 합니다.
+- sounds: 효과음 분류 오류가 빈번합니다. 반드시 비디오에서 본 정보를 우선시하고, 비디오에 존재하지 않는 효과음이 있다면 무시하세요.
+- texts: OCR 오류로 인해 화면 텍스트의 철자가 틀릴 수 있습니다. 비디오와 적절히 교차 검증하여 교정하세요.
+- speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다. 비디오와 적절히 교차 검증하여 교정하세요.
 
 [작성 규칙]
 - 어투: 인터넷 커뮤니티나 친구에게 물어보는 매우 캐주얼한 구어체 (반말 위주)
@@ -48,11 +56,11 @@ def generate_user_query(client, model_name, query_config, past_parts, current_pa
     if past_parts is not None:
         contents += [
             "--- Past Information (Context) ---",
-            past_parts["video"], past_parts["meta"],
+            past_parts["meta"], past_parts["video"],
         ]
     contents += [
         "--- Current Information (Focus Zone) ---",
-        current_parts["video"], current_parts["meta"],
+        current_parts["meta"], current_parts["video"],
         "--- 요청 사항 ---",
     ]
     if past_parts is not None:
@@ -177,11 +185,11 @@ def main():
                     time.sleep(2)
                     past_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "mm_desc",  0.0, start_time)
+                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",  0.0, start_time)
                     } if start_time > 0.0 else None
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "mm_desc",  start_time, end_time)
+                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",  start_time, end_time)
                     }
 
                     user_query_list = generate_user_query(

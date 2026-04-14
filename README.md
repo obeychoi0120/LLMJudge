@@ -122,11 +122,11 @@ flowchart TD
 |------|----------|------|------|------|
 | A-1 | `identify_keypoint.py` | Video+Ref JSONL | `keypoint_scenes.jsonl` | Flash |
 | A-2 | `generate_keyscene_summary.py` | Video+Ref JSONL | `keyscene_summary.jsonl` | Flash |
-| A-3 | `generate_voice_hint.py` | img_desc, mm_desc JSONL | `voice_hint.jsonl` | Flash |
-| A-4 | `judge_voice_hint.py` | VH, KeyScene Summary | `voice_hint_scores.jsonl` | Pro |
-| B-1 | `generate_user_query.py` | Video+mm_desc JSONL | `user_query.jsonl` | Pro |
+| A-3 | `generate_voice_hint.py` | img_desc / mm_desc JSONL | `voice_hint.jsonl` | Flash |
+| A-4 | `judge_voice_hint.py` | VH+KeyScene Summary | `voice_hint_scores.jsonl` | Pro |
+| B-1 | `generate_user_query.py` | Video+Ref JSONL | `user_query.jsonl` | Pro |
 | B-2 | `generate_response.py` | Response: 4 Modes JSONL</br>Reference: Video+Ref JSONL | `uq_responses.jsonl`, `uq_references.jsonl` | Flash (Response), Pro (Reference) |
-| B-3 | `judge_response.py` | Response, Reference | `uq_response_scores.jsonl` | Pro |
+| B-3 | `judge_response.py` | Response+Reference | `uq_response_scores.jsonl` | Pro |
 | B-4 | `jsonl_to_json.py` / `export_to_excel.py` | `uq_response_scores.jsonl` | Excel 리포트 | — |
 
 ## ✨ 주요 특징

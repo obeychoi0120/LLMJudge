@@ -117,7 +117,7 @@ def process_vh_parallel(client, vh_model_name, vh_config, past_parts, current_pa
 def main():
     parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 Voice Hint를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
-    parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
+    parser.add_argument("--output_file", default="assets/voice_hint_minimal.jsonl", help="Voice Hint 목록 저장 경로")
 
 
 

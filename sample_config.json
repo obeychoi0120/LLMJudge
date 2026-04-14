@@ -13,11 +13,10 @@
     "use_ref_for_keyscene_summary": true,
     "use_ref_for_uq_reference": true,
     "keypoint_thinking_level": "low",
-    "vh_thinking_level": "low",
+    "vh_thinking_level": "minimal",
     "keyscene_summary_thinking_level": "high",
     "vh_judge_thinking_level": "high",
     "uq_gen_thinking_level": "high",
     "uq_response_thinking_level": "medium",
-    "uq_reference_thinking_level": "high",
     "uq_judge_thinking_level": "high"
 }
