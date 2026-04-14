@@ -63,8 +63,8 @@ _QUERY_JUDGE_FORMAT_PROMPT = """[출력 형식]
     "total_score": <네 항목 점수의 합계, 최소 4점 ~ 최대 20점>
 }"""
 
-def make_query_judge_config(thinking_budget=None):
-    return make_generate_config(system_instruction=_QUERY_JUDGE_PROMPT, thinking_budget=thinking_budget)
+def make_query_judge_config(thinking_level=None):
+    return make_generate_config(system_instruction=_QUERY_JUDGE_PROMPT, thinking_level=thinking_level)
 
 
 def evaluate_query(client, model_name, judge_config, detailed_summary, query_text):
@@ -125,7 +125,7 @@ def main():
     
 
     args, client = init_pipeline(parser.parse_args())
-    judge_config = make_query_judge_config(thinking_budget=args.vh_judge_thinking_budget)
+    judge_config = make_query_judge_config(thinking_level=args.vh_judge_thinking_level)
 
     ensure_output_dir(args.scores_file)
 

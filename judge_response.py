@@ -53,8 +53,8 @@ _JUDGE_FORMAT_PROMPT = """\
     "total_score": <세 항목 점수의 합계, 최대 15점>
 }"""
 
-def make_judge_config(thinking_budget=None):
-    return make_generate_config(system_instruction=_JUDGE_PROMPT, thinking_budget=thinking_budget)
+def make_judge_config(thinking_level=None):
+    return make_generate_config(system_instruction=_JUDGE_PROMPT, thinking_level=thinking_level)
 
 
 def evaluate_answer_session(client, model_name, judge_config, user_prompt, generated_answer, keyscene_summary):
@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--skip_aggregate", action="store_true", help="수행 완료 후 자동 집계 로직을 건너뜁니다.")
 
     args, client = init_pipeline(parser.parse_args())
-    judge_config = make_judge_config(thinking_budget=args.uq_judge_thinking_budget)
+    judge_config = make_judge_config(thinking_level=args.uq_judge_thinking_level)
     
     # 출력 폴더 생성
     ensure_output_dir(args.output_file)

@@ -79,7 +79,7 @@ def main():
 
     args, client = init_pipeline(parser.parse_args())
     query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT,
-                                        thinking_budget=args.uq_gen_thinking_budget)
+                                        thinking_level=args.uq_gen_thinking_level)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")

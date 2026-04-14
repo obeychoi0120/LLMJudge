@@ -52,7 +52,7 @@ _JSONL_VIEWER_BASE = """당신은 시청자와 나란히 소파에 앉아 TV를 
    - 시청자가 영상에 더 몰입할 수 있도록, 답변 마지막에 가벼운 공감 리액션을 덧붙이거나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 반드시 하나 던져 대화의 핑퐁을 유도하세요.
    - (예시: "저 범고래들이 사냥에 성공할 수 있을까요?", "시청자님도 오늘 저녁엔 봄나물 요리 어떠세요?")"""
 
-def make_generation_config(mode="img_desc", thinking_budget=None):
+def make_generation_config(mode="img_desc", thinking_level=None):
     """Response 생성용 GenerateContentConfig를 반환합니다."""
     if mode in ["raw", "img_desc", "mm_desc"]:
         prompt = _JSONL_VIEWER_BASE
@@ -60,7 +60,7 @@ def make_generation_config(mode="img_desc", thinking_budget=None):
         prompt = "당신은 실시간으로 영상을 시청하고 분석하는 고도로 발달된 '비디오 전문 AI 어시스턴트'입니다. 외부 정보를 절대 검색하지 말고, 제공된 영상 정보만을 사용하여 사용자 질문에 답변하세요."
     else:
         prompt = ""
-    return make_generate_config(system_instruction=prompt, thinking_budget=thinking_budget)
+    return make_generate_config(system_instruction=prompt, thinking_level=thinking_level)
 
 
 
@@ -222,7 +222,7 @@ def main():
                     ref_scenes = []
 
                 print(f"[{content_id}] Initializing Generation configs ({args.uq_response_model})...")
-                gen_configs = {mode: make_generation_config(mode=mode, thinking_budget=args.uq_response_thinking_budget)
+                gen_configs = {mode: make_generation_config(mode=mode, thinking_level=args.uq_response_thinking_level)
                                for mode in ["video", "raw", "img_desc", "mm_desc"]}
 
                 for q_item in pending_queries:

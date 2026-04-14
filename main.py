@@ -61,7 +61,7 @@ def main():
             "--input_file", args.input_file,
             "--output_file", args.keypoints_file,
             "--keypoint_model", args.keypoint_model,
-            "--keypoint_thinking_budget", str(args.keypoint_thinking_budget),
+            "--keypoint_thinking_level", str(args.keypoint_thinking_level),
         ] + common_project_args
         subprocess.run(cmd_kp, check=True)
         print(f"-> Keypoint Scenes 저장 완료: {args.keypoints_file}")
@@ -80,7 +80,7 @@ def main():
             "--input_file", args.keypoints_file,
             "--keyscene_summary_file", args.keyscene_summary_file,
             "--keyscene_summary_model", args.keyscene_summary_model,
-            "--keyscene_summary_thinking_budget", str(args.keyscene_summary_thinking_budget),
+            "--keyscene_summary_thinking_level", str(args.keyscene_summary_thinking_level),
             "--use_ref_for_keyscene_summary", str(args.use_ref_for_keyscene_summary),
         ] + common_project_args
         subprocess.run(cmd_ks, check=True)
@@ -100,7 +100,7 @@ def main():
             "--input_file", args.keypoints_file,
             "--output_file", args.voice_hints_file,
             "--vh_gen_model", args.vh_gen_model,
-            "--vh_thinking_budget", str(args.vh_thinking_budget),
+            "--vh_thinking_level", str(args.vh_thinking_level),
         ] + common_project_args
         subprocess.run(cmd_vh, check=True)
         print(f"-> Voice Hint 저장 완료: {args.voice_hints_file}")
@@ -120,7 +120,7 @@ def main():
             "--keyscene_summary_file", args.keyscene_summary_file,
             "--scores_file", args.voice_hint_scores_file,
             "--vh_judge_model", args.vh_judge_model,
-            "--vh_judge_thinking_budget", str(args.vh_judge_thinking_budget),
+            "--vh_judge_thinking_level", str(args.vh_judge_thinking_level),
         ] + common_project_args
         subprocess.run(cmd, check=True)
         print(f"-> Voice Hint 평가 점수 저장 완료: {args.voice_hint_scores_file}")
@@ -139,7 +139,7 @@ def main():
             "--keypoints_file", args.keypoints_file,
             "--output_file", args.user_queries_file,
             "--uq_gen_model", args.uq_gen_model,
-            "--uq_gen_thinking_budget", str(args.uq_gen_thinking_budget),
+            "--uq_gen_thinking_level", str(args.uq_gen_thinking_level),
         ] + common_project_args
         subprocess.run(cmd_user, check=True)
         print(f"-> User Query 저장 완료: {args.user_queries_file}")
@@ -160,7 +160,7 @@ def main():
             "--json_file", args.user_queries_file,
             "--output_file", args.responses_file,
             "--uq_response_model", args.uq_response_model,
-            "--uq_response_thinking_budget", str(args.uq_response_thinking_budget),
+            "--uq_response_thinking_level", str(args.uq_response_thinking_level),
             "--skip_aggregate"
         ]
         cmd += common_project_args
@@ -181,7 +181,7 @@ def main():
             "--keyscene_summary_file", args.keyscene_summary_file,
             "--output_file", args.scores_file,
             "--uq_judge_model", args.uq_judge_model,
-            "--uq_judge_thinking_budget", str(args.uq_judge_thinking_budget),
+            "--uq_judge_thinking_level", str(args.uq_judge_thinking_level),
             "--skip_aggregate"
         ] + common_project_args
         subprocess.run(cmd, check=True)

@@ -50,9 +50,9 @@ _SUMMARY_GEN_PROMPT = """당신은 영상 콘텐츠의 맥락을 완벽히 이�
 (현재 장면에서 벌어지고 있는 구체적인 상황, 인물의 행동, 대화 내용, 감정 변화, 갈등 요소, 나오는 물체 등을 텍스트의 길이 제한 없이 상세하게 묘사합니다.)"""
 
 
-def make_summary_config(thinking_budget=None):
+def make_summary_config(thinking_level=None):
     """Summary 생성용 GenerateContentConfig를 반환합니다."""
-    return make_generate_config(system_instruction=_SUMMARY_GEN_PROMPT, thinking_budget=thinking_budget)
+    return make_generate_config(system_instruction=_SUMMARY_GEN_PROMPT, thinking_level=thinking_level)
 
 
 def process_summary(client, summary_model_name, summary_config, past_summary_text, past_ref_metadata, current_parts, end_time, use_ref=False):
@@ -93,7 +93,7 @@ def main():
 
     args, client = init_pipeline(parser.parse_args())
 
-    summary_config = make_summary_config(thinking_budget=args.keyscene_summary_thinking_budget)
+    summary_config = make_summary_config(thinking_level=args.keyscene_summary_thinking_level)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")

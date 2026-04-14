@@ -51,9 +51,9 @@ _VOICE_HINT_BASE = """당신은 제공되는 메타데이터를 기반으로 스
     ]
 }"""
 
-def make_voice_hint_config(thinking_budget=0):
+def make_voice_hint_config(thinking_level=0):
     """Voice Hint 생성용 GenerateContentConfig를 반환합니다."""
-    return make_generate_config(system_instruction=_VOICE_HINT_BASE, thinking_budget=thinking_budget)
+    return make_generate_config(system_instruction=_VOICE_HINT_BASE, thinking_level=thinking_level)
 
 def process_vh_parallel(client, vh_model_name, vh_config, past_parts, current_parts, end_time):
     """하나의 Keypoint에 대해 Voice Hint(img_desc, mm_desc 2개 모드)를 병렬로 수행합니다."""
@@ -123,7 +123,7 @@ def main():
 
     args, client = init_pipeline(parser.parse_args())
 
-    vh_config = make_voice_hint_config(thinking_budget=args.vh_thinking_budget)
+    vh_config = make_voice_hint_config(thinking_level=args.vh_thinking_level)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")

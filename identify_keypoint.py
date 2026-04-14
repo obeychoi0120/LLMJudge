@@ -119,7 +119,7 @@ _SELECTOR_SYSTEM_PROMPT = """\
 # 분할 유틸리티
 # ============================================================
 
-# Scene 수가 이 값을 초과하면 3등분 분할을 적용
+# Scene 수가 이 값 이상이면 3등분 분할을 적용
 _SPLIT_THRESHOLD = 24
 
 
@@ -157,19 +157,19 @@ def build_scene_list_text(scenes):
 # 모델 초기화
 # ============================================================
 
-def make_keypoint_config(model_name, thinking_budget=None):
+def make_keypoint_config(model_name, thinking_level=None):
     """단일 세션(9~24 Scene)용 config"""
-    return make_generate_config(system_instruction=_KEYPOINT_SYSTEM_PROMPT, thinking_budget=thinking_budget)
+    return make_generate_config(system_instruction=_KEYPOINT_SYSTEM_PROMPT, thinking_level=thinking_level)
 
 
-def make_candidate_config(thinking_budget=None):
+def make_candidate_config(thinking_level=None):
     """Stage 1: 세그먼트별 Candidate 생성용 config"""
-    return make_generate_config(system_instruction=_CANDIDATE_SYSTEM_PROMPT, thinking_budget=thinking_budget)
+    return make_generate_config(system_instruction=_CANDIDATE_SYSTEM_PROMPT, thinking_level=thinking_level)
 
 
-def make_selector_config(thinking_budget=None):
+def make_selector_config(thinking_level=None):
     """Stage 2: 최종 Keypoint 선별용 config"""
-    return make_generate_config(system_instruction=_SELECTOR_SYSTEM_PROMPT, thinking_budget=thinking_budget)
+    return make_generate_config(system_instruction=_SELECTOR_SYSTEM_PROMPT, thinking_level=thinking_level)
 
 
 # ============================================================
@@ -262,9 +262,9 @@ def main():
     
     args, client = init_pipeline(parser.parse_args())
 
-    keypoint_config = make_keypoint_config(args.keypoint_model, thinking_budget=args.keypoint_thinking_budget)
-    candidate_config = make_candidate_config(thinking_budget=args.keypoint_thinking_budget)
-    selector_config = make_selector_config(thinking_budget=args.keypoint_thinking_budget)
+    keypoint_config = make_keypoint_config(args.keypoint_model, thinking_level=args.keypoint_thinking_level)
+    candidate_config = make_candidate_config(thinking_level=args.keypoint_thinking_level)
+    selector_config = make_selector_config(thinking_level=args.keypoint_thinking_level)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
@@ -326,10 +326,10 @@ def main():
                 ]
 
             # ======================================================
-            # 경로 B: Scene 11~24 → 단일 세션 (기존 방식)
+            # 경로 B: Scene 11~23 → 단일 세션 (기존 방식)
             # ======================================================
-            elif total_scenes <= _SPLIT_THRESHOLD:
-                print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 이하이므로 단일 세션으로 식별합니다.")
+            elif total_scenes < _SPLIT_THRESHOLD:
+                print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 미만이므로 단일 세션으로 식별합니다.")
 
                 video_part = process_gcs_file(args.gs_bucket_name, content_id, mode="video")
                 ref_part = process_gcs_file(args.gs_bucket_name, content_id, mode="ref")
@@ -347,13 +347,13 @@ def main():
                     continue
 
             # ======================================================
-            # 경로 C: Scene 25+ → 3등분 분할 (2-stage)
+            # 경로 C: Scene 24+ → 3등분 분할 (2-stage)
             # ======================================================
             else:
                 num_segments = 3
                 segments = split_scenes_into_segments(ref_scenes, num_segments)
 
-                print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 초과이므로 {num_segments}등분 분할합니다.")
+                print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 이상이므로 {num_segments}등분 분할합니다.")
                 for si, seg in enumerate(segments):
                     first_idx = seg[0].get("scene_idx", "?")
                     last_idx = seg[-1].get("scene_idx", "?")
@@ -378,7 +378,7 @@ def main():
                           f"({seg_start_time:.1f}s ~ {seg_end_time:.1f}s)")
 
                     # 각 스레드마다 독립 config 사용 (thread-safe)
-                    seg_cand_config = make_candidate_config(thinking_budget=args.keypoint_thinking_budget)
+                    seg_cand_config = make_candidate_config(thinking_level=args.keypoint_thinking_level)
 
                     video_part = process_gcs_file_range(
                         args.gs_bucket_name, content_id, "video",

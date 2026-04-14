@@ -12,14 +12,14 @@ from google.cloud import storage
 
 _CONFIG_KEYS = [
     # 공통
-    "location", "keypoint_model", "keypoint_thinking_budget",
+    "location", "keypoint_model", "keypoint_thinking_level",
     # A-track: Voice Hint
     "vh_gen_model", "keyscene_summary_model", "vh_judge_model",
-    "vh_thinking_budget", "keyscene_summary_thinking_budget", "vh_judge_thinking_budget",
+    "vh_thinking_level", "keyscene_summary_thinking_level", "vh_judge_thinking_level",
     "use_ref_for_keyscene_summary",
     # B-track: User Query
     "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
-    "uq_gen_thinking_budget", "uq_response_thinking_budget", "uq_reference_thinking_budget", "uq_judge_thinking_budget",
+    "uq_gen_thinking_level", "uq_response_thinking_level", "uq_reference_thinking_level", "uq_judge_thinking_level",
     "use_ref_for_uq_reference",
 ]
 
@@ -57,26 +57,26 @@ def get_common_argparser(description=""):
     parser.add_argument("--location", default="global", help="GCP Location")
 
     # 모델 공통 (A-track)
-    parser.add_argument("--keypoint_model", default="gemini-2.5-flash", help="Keypoint 식별에 사용할 모델명")
-    parser.add_argument("--keypoint_thinking_budget", type=int, default=512, help="Keypoint 식별 모델의 Thinking Budget")
-    parser.add_argument("--vh_gen_model", default="gemini-2.5-flash", help="Voice Hint 생성 모델명")
-    parser.add_argument("--vh_thinking_budget", type=int, default=128, help="Voice Hint 모델의 Thinking Budget")
-    parser.add_argument("--keyscene_summary_model", default="gemini-2.5-flash", help="KeyScene Summary 생성 모델명")
-    parser.add_argument("--keyscene_summary_thinking_budget", type=int, default=512, help="KeyScene Summary 모델의 Thinking Budget")
+    parser.add_argument("--keypoint_model", default="gemini-3.1-flash-lite-preview", help="Keypoint 식별에 사용할 모델명")
+    parser.add_argument("--keypoint_thinking_level", default="low", help="Keypoint 식별 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--vh_gen_model", default="gemini-3.1-flash-lite-preview", help="Voice Hint 생성 모델명")
+    parser.add_argument("--vh_thinking_level", default="low", help="Voice Hint 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--keyscene_summary_model", default="gemini-3.1-flash-lite-preview", help="KeyScene Summary 생성 모델명")
+    parser.add_argument("--keyscene_summary_thinking_level", default="high", help="KeyScene Summary 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--use_ref_for_keyscene_summary", type=lambda x: str(x).lower() == 'true', default=False, help="Summary 생성 시 Ref JSONL 참조 여부")
     parser.add_argument("--vh_judge_model", default="gemini-3.1-pro-preview", help="Voice Hint 질문 Judge 모델명")
-    parser.add_argument("--vh_judge_thinking_budget", type=int, default=1024, help="Voice Hint Judge 모델의 Thinking Budget")
+    parser.add_argument("--vh_judge_thinking_level", default="high", help="Voice Hint Judge 모델의 Thinking Level (low/medium/high)")
 
     # 모델 공통 (B-track)
     parser.add_argument("--uq_gen_model", default="gemini-3.1-pro-preview", help="User Query 생성 모델명")
-    parser.add_argument("--uq_gen_thinking_budget", type=int, default=1024, help="UQ 생성 모델의 Thinking Budget")
+    parser.add_argument("--uq_gen_thinking_level", default="high", help="UQ 생성 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--uq_reference_model", default="gemini-3.1-pro-preview", help="User Query Reference Answer 생성 모델명")
-    parser.add_argument("--uq_reference_thinking_budget", type=int, default=2048, help="UQ Reference Answer 생성 모델의 Thinking Budget")
+    parser.add_argument("--uq_reference_thinking_level", default="high", help="UQ Reference Answer 생성 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--use_ref_for_uq_reference", type=lambda x: str(x).lower() == 'true', default=False, help="Reference 생성 시 Ref JSONL 참조 여부")
-    parser.add_argument("--uq_response_model", default="gemini-2.5-flash", help="User Query 답변 생성 모델명")
-    parser.add_argument("--uq_response_thinking_budget", type=int, default=-1, help="UQ Response 생성 모델의 Thinking Budget (-1=동적)")
+    parser.add_argument("--uq_response_model", default="gemini-3.1-flash-lite-preview", help="User Query 답변 생성 모델명")
+    parser.add_argument("--uq_response_thinking_level", default="medium", help="UQ Response 생성 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--uq_judge_model", default="gemini-3.1-pro-preview", help="User Query 답변 평가 모델명")
-    parser.add_argument("--uq_judge_thinking_budget", type=int, default=1024, help="UQ Response Judge 모델의 Thinking Budget")
+    parser.add_argument("--uq_judge_thinking_level", default="high", help="UQ Response Judge 모델의 Thinking Level (low/medium/high)")
 
     return parser
 
@@ -100,22 +100,22 @@ def create_client(project_id: str, location: str) -> genai.Client:
 
 def make_generate_config(
     system_instruction: str = None,
-    thinking_budget: int = None,
+    thinking_level: str = None,
 ) -> types.GenerateContentConfig:
     """GenerateContentConfig 객체를 생성합니다.
 
     Args:
         system_instruction: 시스템 프롬프트 문자열
-        thinking_budget: Thinking 토큰 수 (0=off, -1=dynamic, 양수=지정). None이면 미설정.
+        thinking_level: Thinking 토큰 레벨 ("low", "medium", "high"). None이면 미설정.
     """
     kwargs = {}
 
     if system_instruction is not None:
         kwargs["system_instruction"] = system_instruction
 
-    if thinking_budget is not None:
+    if thinking_level is not None:
         kwargs["thinking_config"] = types.ThinkingConfig(
-            thinking_budget=thinking_budget
+            thinking_level=thinking_level
         )
 
     return types.GenerateContentConfig(**kwargs)
