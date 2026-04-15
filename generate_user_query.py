@@ -17,13 +17,12 @@ from gemini_api_utils import (
 # Step 2: User Query 생성 모델 프롬프트
 # ───────────────────────────────────────────────
 
-_USER_QUERY_GENERATION_PROMPT = """\
-당신은 영상 콘텐츠의 전체적인 흐름을 바탕으로 질문을 생성하는 전문가입니다.
-당신에게 참조용 메타데이터(JSONL)와 원본 비디오 프레임을 차례로 제공합니다.
-시청자는 **과거 정보 (Past Information)** 와 **현재 정보 (Current Information)** 를 모두 시청했습니다.
-두 정보를 모두 고려하여, 지금까지 누적해서 본 내용이나 전체 맥락 속에서 자연스럽게 가질 만한 종합적인 질문 3개를 생성하세요. 미래 내용은 절대 유추하지 마세요.
+_USER_QUERY_GENERATION_PROMPT = """당신은 영상 콘텐츠의 전체적인 흐름을 바탕으로 질문을 생성하는 전문가입니다.
+당신에게 그동안 논리적으로 정리된 누적 기억인 **[지금까지의 핵심 요약 및 현재 상황 (KeyScene Summary)]** 텍스트와 현재 장면의 메타데이터 / 원본 비디오를 함께 제공합니다.
+시청자는 화면을 보면서 당신이 읽는 요약본 내용만큼의 과거 스토리를 이미 알고 있다고 가정합니다.
+이 요약된 전체 맥락 속에서 자연스럽게 가질 만한 종합적인 질문 3개를 생성하세요. 미래 내용은 절대 유추하지 마세요.
 
-[참조용 메타데이터의 필드 설명]
+[메타데이터 필드 설명]
 - scene_idx: 영상 Scene 인덱스
 - start_time: 영상 Scene 시작 시간 (초)
 - end_time: 영상 Scene 종료 시간 (초)
@@ -32,7 +31,7 @@ _USER_QUERY_GENERATION_PROMPT = """\
 - texts: 화면 속 자막, 간판 정보 등
 - speech: 등장인물들의 대사 (영어 또는 한국어)
 
-[참조용 메타데이터 사용 시 주의사항]
+[메타데이터 해석 시 주의사항]
 - speech, texts, sounds 필드는 자동 추출된 값으로, 부정확할 수 있습니다. 따라서 당신이 적절히 비디오와 교차 검증하여 교정해야 합니다.
 - sounds: 효과음 분류 오류가 빈번합니다. 반드시 비디오에서 본 정보를 우선시하고, 비디오에 존재하지 않는 효과음이 있다면 무시하세요.
 - texts: OCR 오류로 인해 화면 텍스트의 철자가 틀릴 수 있습니다. 비디오와 적절히 교차 검증하여 교정하세요.
@@ -40,7 +39,7 @@ _USER_QUERY_GENERATION_PROMPT = """\
 
 [작성 규칙]
 - 어투: 인터넷 커뮤니티나 친구에게 물어보는 매우 캐주얼한 구어체 (반말 위주)
-- 현재 장면 뿐만 아니라 누적된 이야기 흐름이나 앞선 사건과의 연관성에 관한 질문도 좋습니다.
+- 현재 장면에만 국한되지 않고, 누적된 이야기 흐름이나 앞선 사건과의 연관성에 관한 거시적인 질문이어야 합니다.
 
 [출력 형식 예시]
 반드시 아래와 같은 형태의 JSON 배열 안에 3개의 질문을 작성해야 합니다.
@@ -48,25 +47,27 @@ _USER_QUERY_GENERATION_PROMPT = """\
     "저번 사건 때문에 지금 등장인물들이 저러는 건가?",
     "앞에 나왔던 아이템이 지금 또 등장했는데, 이게 복선이야?",
     "지금까지의 등장인물 관계를 보면 얘가 왜 이런 선택을 한 거지?"
-]\
-"""
+]"""
 
-def generate_user_query(client, model_name, query_config, past_parts, current_parts, end_time):
+def generate_user_query(client, model_name, query_config, summary_text, current_parts, end_time):
     contents = []
-    if past_parts is not None:
+    if summary_text:
         contents += [
-            "--- Past Information (Context) ---",
-            past_parts["meta"], past_parts["video"],
+            "--- [지금까지의 핵심 요약 및 현재 상황 (KeyScene Summary)] ---",
+            summary_text,
         ]
     contents += [
-        "--- Current Information (Focus Zone) ---",
-        current_parts["meta"], current_parts["video"],
+        "--- [Current Metadata] ---",
+        current_parts["meta"], 
+        "--- [Current Video] ---",
+        current_parts["video"],
         "--- 요청 사항 ---",
     ]
-    if past_parts is not None:
-        contents.append("과거와 현재 정보를 바탕으로 누적 맥락에서 질문 3개를 생성하세요.")
+    if summary_text:
+        contents.append("제공된 텍스트 요약(과거+현재)과 현재 데이터를 복합적으로 분석하여 시청자가 가질 만한 종합적인 질문 3개를 생성하세요.")
     else:
-        contents.append("현재 정보를 바탕으로 시청자가 자연스럽게 가질 만한 질문 3개를 생성하세요.")
+        contents.append("현재 데이터를 바탕으로 시청자가 자연스럽게 가질 만한 질문 3개를 생성하세요.")
+        
     text = _retry_api_call(
         lambda: client.models.generate_content(
             model=model_name, contents=contents, config=query_config
@@ -81,55 +82,45 @@ def generate_user_query(client, model_name, query_config, past_parts, current_pa
 
 def main():
     parser = get_common_argparser(description="Keypoint 기반 User 파이프라인 (User Query) 자동 생성")
-    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 생성된 JSONL 파일 (Keypoint 추출용, keypoints_file 없을 시 폴백)")
-    parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL (우선 사용, 없으면 input_file에서 추출)")
+    parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL")
+    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL (과거 문맥용)")
     parser.add_argument("--output_file", default="assets/user_query.jsonl", help="User Query 목록 저장 경로")
 
     args, client = init_pipeline(parser.parse_args())
     query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT,
                                         thinking_level=args.uq_gen_thinking_level)
 
-    if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")
+    # Keypoint 정보 로드
+    content_keypoints_map = {}
+    if not os.path.exists(args.keypoints_file):
+        print(f"Error: {args.keypoints_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")
         return
 
-    # Keypoint 정보 로드: keypoints_file 우선, 없으면 voice_hint.jsonl에서 추출
-    content_keypoints_map = {}
+    print(f"️  keypoint_scenes.jsonl을 사용: {args.keypoints_file}")
+    for data in load_jsonl(args.keypoints_file):
+        c_id = data.get("content_id")
+        keypoints = data.get("keypoints", [])
+        if c_id and keypoints:
+            content_keypoints_map[c_id] = [
+                {
+                    "scene_idx": kp.get("scene_idx"),
+                    "start_time": kp.get("start_time", 0.0),
+                    "end_time": kp.get("end_time", 0.0)
+                }
+                for kp in keypoints
+            ]
 
-    if os.path.exists(args.keypoints_file):
-        print(f"️  keypoint_scenes.jsonl 보존 파일을 사용: {args.keypoints_file}")
-        for data in load_jsonl(args.keypoints_file):
+    # KeyScene Summary 맵 로드
+    summary_map = {}
+    if os.path.exists(args.keyscene_summary_file):
+        for data in load_jsonl(args.keyscene_summary_file):
             c_id = data.get("content_id")
-            keypoints = data.get("keypoints", [])
-            if c_id and keypoints:
-                content_keypoints_map[c_id] = [
-                    {
-                        "scene_idx": kp.get("scene_idx"),
-                        "start_time": kp.get("start_time", 0.0),
-                        "end_time": kp.get("end_time", 0.0)
-                    }
-                    for kp in keypoints
-                ]
-    
-    if not content_keypoints_map:
-        print(f"keypoint_scenes.jsonl 없음 → {args.input_file} 에서 Keypoint 추출")
-        if not os.path.exists(args.input_file):
-            print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")
-            return
-        for data in load_jsonl(args.input_file):
-            c_id = data.get("content_id")
-            queries = data.get("queries", [])
-            kp_dict = {}
-            for q in queries:
-                s_idx = q.get("scene_idx")
-                if s_idx not in kp_dict:
-                    kp_dict[s_idx] = {
-                        "scene_idx": s_idx,
-                        "start_time": q.get("start_time", 0.0),
-                        "end_time": q.get("end_time", 0.0)
-                    }
-            if c_id and kp_dict:
-                content_keypoints_map[c_id] = list(kp_dict.values())
+            s_idx = data.get("scene_idx")
+            if c_id and s_idx is not None:
+                summary_map[(c_id, s_idx)] = data.get("summary", "")
+        print(f"[Summary] {len(summary_map)}개 Scene의 Summary 로드됨 ({args.keyscene_summary_file})")
+    else:
+        print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.keyscene_summary_file}")
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
@@ -183,10 +174,7 @@ def main():
 
                 try:
                     time.sleep(2)
-                    past_parts = {
-                        "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", 0.0, start_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",  0.0, start_time)
-                    } if start_time > 0.0 else None
+                    summary_text = summary_map.get((content_id, scene_idx), "")
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
                         "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",  start_time, end_time)
@@ -194,12 +182,12 @@ def main():
 
                     user_query_list = generate_user_query(
                         client, args.uq_gen_model, query_config,
-                        past_parts, current_parts, end_time
+                        summary_text, current_parts, end_time
                     )
                     
                     scene_queries = user_query_list[:3]
-                    for q in scene_queries:
-                        print(f"Q: {q}")
+                    for i, q in enumerate(scene_queries):
+                        print(f"  {i+1}: {q}")
 
                     with open(args.output_file, "a", encoding="utf-8") as f:
                         f.write(json.dumps({

@@ -13,13 +13,41 @@ from gemini_api_utils import (
 )
 
 # ───────────────────────────────────────────────
-# KeyScene Summary 생성 모델 프롬프트
+# [Session 1] 과거 장면 요약 전용 프롬프트 (텍스트 only)
 # ───────────────────────────────────────────────
 
-_SUMMARY_GEN_PROMPT = """당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 대본 및 상황을 파악하는 전문가입니다.
-당신에게는 지금까지의 흐름을 시간 순서대로 나열한 과거 연대기인 **'과거 기록(Past History)'**과,
+_PAST_SUMMARY_PROMPT = """당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 대본 및 상황을 파악하는 전문가입니다.
+당신에게는 지금까지의 흐름을 시간 순서대로 나열한 과거 연대기인 **'과거 기록(Past History)'**이 제공됩니다.
+과거 기록에는 이전 주요 장면(KeyScene)의 상세 묘사와, 주요 장면 사이 구간의 참조용 메타데이터가 시간순으로 포함되어 있습니다.
+당신의 목표는 이 과거 기록을 종합하여, 지금까지 발생한 사건의 흐름을 하나의 상세한 과거 장면 요약으로 작성하는 것입니다.
+
+[메타데이터 필드 설명]
+- scene_idx: 영상 Scene 인덱스
+- start_time: 영상 Scene 시작 시간 (초)
+- end_time: 영상 Scene 종료 시간 (초)
+- duration: 영상 Scene의 길이 (초)
+- sounds: 환경음 및 효과음
+- texts: 화면 속 자막, 간판 정보 등
+- speech: 등장인물들의 대사 (영어 또는 한국어)
+
+[메타데이터 해석 시 주의사항]
+- 메타데이터의 speech, texts, sounds 필드는 자동 추출된 값으로 부정확할 수 있습니다.
+- 이전 주요 장면의 상세 묘사(비디오 기반으로 이미 교정된 텍스트)가 함께 제공되므로, 메타데이터와 상세 묘사 사이에 불일치가 있을 경우 **상세 묘사를 우선시** 하세요.
+
+[강조 사항 및 작성 규칙]
+- **대화 상세 묘사:** 인물 간의 대화는 요약에 그치지 말고, 중요한 대사일 경우 직접 인용("...")하거나 화자와 청자의 관계, 의도 및 감정 상태를 포함하여 매우 구체적으로 서술하세요.
+- **키워드 및 핵심 소재:** 등장하는 중요한 물체(Object), 텍스트(Text), 환경적 특징(Background), 특이한 소리(Sound) 등 사건 전개의 실마리가 되는 키워드들은 누락하지 말고 반드시 명시하여 묘사하세요.
+- 언어는 **한국어**로 작성하되, 중요한 인물 이름, 고유명사, 등장하는 중요한 텍스트 등은 원어를 병기하여 정확성을 높이세요 (예: 일각고래(narwhal), 셰즈 은데예(Chez Ndeye)).
+- 텍스트의 길이 제한 없이 최대한 핵심을 상세하게 묘사하세요."""
+
+# ───────────────────────────────────────────────
+# [Session 2] 현재 장면 묘사 전용 프롬프트 (멀티모달)
+# ───────────────────────────────────────────────
+
+_CURRENT_SCENE_PROMPT = """당신은 영상 콘텐츠의 맥락을 완벽히 이해하고 대본 및 상황을 파악하는 전문가입니다.
+당신에게는 지금까지의 흐름을 종합한 **'과거 장면 요약(Past Summary)'**과,
 현재 장면의 **'현재 참조용 메타데이터(Current Reference Metadata)'** 및 **'현재 장면의 비디오(Current Video)'**가 순서대로 제공됩니다.
-당신의 목표는 이 정보들을 바탕으로 스토리가 어떻게 이어지고 있는지 파악한 후, 아래 출력 포맷에 맞추어 명확하게 구분하여 작성하는 것입니다.
+당신의 목표는 과거 장면 요약을 통해 이전 맥락을 파악한 후, 현재 장면에서 벌어지고 있는 상황을 비디오와 메타데이터를 교차 검증하여 상세하게 묘사하는 것입니다.
 
 [메타데이터 필드 설명]
 - scene_idx: 영상 Scene 인덱스
@@ -36,64 +64,84 @@ _SUMMARY_GEN_PROMPT = """당신은 영상 콘텐츠의 맥락을 완벽히 이�
 - texts: OCR 오류로 인해 화면 텍스트의 철자가 틀릴 수 있습니다. 비디오와 적절히 교차 검증하여 교정하세요.
 - speech: 음성 인식 오류로 인해 대사가 누락되거나 철자가 틀릴 수 있습니다. 비디오와 적절히 교차 검증하여 교정하세요.
 
-[작성 규칙]
-- 아래 출력 포맷에 맞게 두 파트로 나누어 작성하세요.
-- 과거 장면(Past History)이 제공되지 않은 경우, "1. 과거 장면 요약" 항목은 "해당 없음"으로 표기하세요.
-- 언어는 **한국어**로 작성하되, 인물 이름과 고유명사는 원어를 병기하세요 (예: 일각고래(narwhal), 셰즈 은데예(Chez Ndeye)).
-- 각각의 파트는 텍스트의 길이 제한 없이 최대한 핵심을 상세하게 묘사하세요.
-
-[출력 포맷]
-**1. 과거 장면 요약**
-(지금까지 발생한 주요 사건의 흐름, 등장인물 간의 대화와 관계, 인물의 목적이나 동기, 나오는 물체 등을 텍스트의 길이 제한 없이 시간순으로 상세하게 요약합니다.)
-
-**2. 현재 장면**
-(현재 장면에서 벌어지고 있는 구체적인 상황, 인물의 행동, 대화 내용, 감정 변화, 갈등 요소, 나오는 물체 등을 텍스트의 길이 제한 없이 상세하게 묘사합니다.)"""
+[강조 사항 및 작성 규칙]
+- **과거 맥락 활용:** 과거 장면 요약에서 파악한 인물 관계, 갈등 구조, 목적 등을 현재 장면의 행동과 연결지어 서술하세요.
+- **대화 상세 묘사:** 인물 간의 대화는 요약에 그치지 말고, 중요한 대사일 경우 직접 인용("...")하거나 화자와 청자의 관계, 의도 및 감정 상태를 포함하여 매우 구체적으로 서술하세요.
+- **키워드 및 핵심 소재:** 화면에 등장하는 중요한 물체(Object), 텍스트(Text), 환경적 특징(Background), 특이한 소리(Sound) 등 사건 전개의 실마리가 되는 키워드들은 누락하지 말고 반드시 명시하여 묘사하세요.
+- 언어는 **한국어**로 작성하되, 중요한 인물 이름, 고유명사, 등장하는 중요한 텍스트 등은 원어를 병기하여 정확성을 높이세요 (예: 일각고래(narwhal), 셰즈 은데예(Chez Ndeye)).
+- 텍스트의 길이 제한 없이 최대한 핵심을 상세하게 묘사하세요."""
 
 
-def make_summary_config(thinking_level=None):
-    """Summary 생성용 GenerateContentConfig를 반환합니다."""
-    return make_generate_config(system_instruction=_SUMMARY_GEN_PROMPT, thinking_level=thinking_level)
+def make_past_summary_config(thinking_level=None):
+    """[Session 1] 과거 장면 요약 전용 GenerateContentConfig를 반환합니다."""
+    return make_generate_config(system_instruction=_PAST_SUMMARY_PROMPT, thinking_level=thinking_level)
+
+def make_current_scene_config(thinking_level=None):
+    """[Session 2] 현재 장면 묘사 전용 GenerateContentConfig를 반환합니다."""
+    return make_generate_config(system_instruction=_CURRENT_SCENE_PROMPT, thinking_level=thinking_level)
 
 def extract_current_scene_desc(text):
-    """요약본 텍스트에서 '2. 현재 장면' 섹션의 내용만 파싱하여 반환합니다."""
-    tag = "**2. 현재 장면**"
+    """요약본 텍스트에서 '2. 현재 장면 묘사' 섹션의 내용만 파싱하여 반환합니다."""
+    tag = "[2. 현재 장면 묘사]"
     if tag in text:
         return text.split(tag)[-1].strip()
     return text.strip()
 
-def process_summary(client, summary_model_name, summary_config, past_history, current_parts, end_time, use_ref=False):
+def process_past_summary(client, model_name, config, past_history, end_time):
+    """[Session 1] 과거 연대기 텍스트를 종합하여 '1. 과거 장면 요약'을 생성합니다."""
+    contents = ["--- [Past History] ---"]
+    if isinstance(past_history, list):
+        contents.extend(past_history)
+    else:
+        contents.append(past_history)
+
+    request_msg = (
+        "시간 순서대로 제공된 [Past History] 연대기 내용을 종합하여 과거 장면 요약을 작성하세요. "
+        "이전 주요 장면의 상세 묘사와 중간 구간 메타데이터를 모두 반영하여, 핵심 사건·대화·키워드를 누락 없이 상세하게 담아주세요."
+    )
+    contents += ["--- 요청 사항 ---", request_msg]
+
+    t0 = time.time()
+    text = _retry_api_call(
+        lambda: client.models.generate_content(
+            model=model_name, contents=contents, config=config
+        ).text,
+        label=f"[Session 1] 과거 요약 생성 (end={end_time:.1f}s)"
+    )
+    return text, time.time() - t0
+
+
+def process_current_scene(client, model_name, config, past_summary_text, current_parts, end_time, use_ref=False):
+    """[Session 2] 과거 요약 + 현재 메타/비디오로 '2. 현재 장면'을 생성합니다."""
     contents = []
-    if past_history is not None:
-        contents += ["--- [Past History] ---"]
-        if isinstance(past_history, list):
-            contents.extend(past_history)
-        else:
-            contents.append(past_history)
+
+    if past_summary_text is not None:
+        contents += ["--- [Past Summary] ---", past_summary_text]
 
     if use_ref:
         contents += ["--- [Current Reference Metadata] ---", current_parts["ref"]]
     contents += ["--- [Current Video] ---", current_parts["video"]]
-    
-    if past_history is not None:
+
+    if past_summary_text is not None:
         request_msg = (
-            "시간 순서대로 제공된 [Past History] 연대기 내용을 종합하여 '1. 과거 장면 요약' 섹션을 새롭게 작성하고, "
-            "제공된 [Current Reference Metadata]의 힌트를 참고하여 시각적으로 묘사된 [Current Video] 영상을 종합하여 '2. 현재 장면' 섹션을 상세하게 작성하세요. "
-            "반드시 [출력 포맷]에 맞게 1번과 2번 항목을 분리하여 작성해 주세요."
+            "제공된 [Past Summary]로 이전 맥락을 파악한 후, "
+            "[Current Reference Metadata]의 힌트를 참고하고 [Current Video] 영상을 교차 검증하여 "
+            "현재 장면 묘사를 상세하게 작성해 주세요."
         )
     else:
         request_msg = (
-            "과거 정보가 없으므로 '1. 과거 장면 요약'은 '해당 없음'으로 기재하고, "
-            "제공된 [Current Reference Metadata]와 [Current Video] 영상을 바탕으로 '2. 현재 장면' 섹션을 상세하게 작성해 주세요. "
-            "반드시 [출력 포맷]에 맞게 1번과 2번 항목을 분리하여 작성해 주세요."
+            "과거 정보가 없으므로, 제공된 [Current Reference Metadata]와 [Current Video] 영상을 바탕으로 "
+            "현재 장면 묘사를 상세하게 작성해 주세요."
         )
 
     contents += ["--- 요청 사항 ---", request_msg]
+
     t0 = time.time()
     text = _retry_api_call(
         lambda: client.models.generate_content(
-            model=summary_model_name, contents=contents, config=summary_config
+            model=model_name, contents=contents, config=config
         ).text,
-        label=f"Summary 생성 (end={end_time:.1f}s)"
+        label=f"[Session 2] 현재 장면 생성 (end={end_time:.1f}s)"
     )
     return text, time.time() - t0
 
@@ -108,7 +156,8 @@ def main():
 
     args, client = init_pipeline(parser.parse_args())
 
-    summary_config = make_summary_config(thinking_level=args.keyscene_summary_thinking_level)
+    past_summary_config = make_past_summary_config(thinking_level=args.kss_past_summary_thinking_level)
+    current_scene_config = make_current_scene_config(thinking_level=args.kss_current_scene_thinking_level)
 
     if not os.path.exists(args.input_file):
         print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")
@@ -180,52 +229,76 @@ def main():
                 print(f"[{real_idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
                 
                 def _run_keypoint():
-                    # 직전 완료된 scene 탐색 (scene_idx보다 작은 것 중에서 최댓값)
+                    # ── 과거 연대기 구축 (KSS desc → Gap 순서) ──
                     past_scene_indices = sorted([s for (c, s) in summary_pairs if c == content_id and s < scene_idx])
-                    past_history = None
+                    accumulated_past = []
+
                     if past_scene_indices:
-                        accumulated_past = []
-                        last_end_time = 0.0
-                        
-                        for s_idx in past_scene_indices:
+                        for i, s_idx in enumerate(past_scene_indices):
                             record = summary_texts_by_scene.get((content_id, s_idx))
                             if not record:
                                 continue
-                            
+
                             p_start = float(record.get("start_time", 0.0))
                             p_end = float(record.get("end_time", 0.0))
-                            
-                            # 1) Gap Metadata
-                            if p_start > last_end_time and args.use_ref_for_keyscene_summary:
-                                gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", last_end_time, p_start)
+
+                            # 1) 첫 KSS 이전의 Gap (0s ~ 첫 KSS start): 완전성을 위해 수집
+                            if i == 0 and p_start > 0.0 and args.use_ref_for_keyscene_summary:
+                                gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", 0.0, p_start)
                                 if gap_ref:
-                                    accumulated_past.append(f"[중간 구간의 메타데이터: {last_end_time:.1f}s ~ {p_start:.1f}s]")
+                                    accumulated_past.append(f"[초반 구간의 메타데이터: 0.0s ~ {p_start:.1f}s]")
                                     accumulated_past.append(gap_ref)
 
-                            # 2) Past Scene Description
+                            # 2) KSS Description (방향 지시 역할)
                             desc = extract_current_scene_desc(record.get("summary", ""))
-                            accumulated_past.append(f"[이전 Scene {s_idx} 현장 묘사: {p_start:.1f}s ~ {p_end:.1f}s]\n{desc}")
-                            
-                            last_end_time = p_end
+                            accumulated_past.append(f"[이전 Scene {s_idx}의 장면 묘사: {p_start:.1f}s ~ {p_end:.1f}s]\n{desc}")
 
-                        # 3) Last Gap to Current Scene
-                        if start_time > last_end_time and args.use_ref_for_keyscene_summary:
-                            gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", last_end_time, start_time)
+                            # 3) Gap: 이 KSS end → 다음 KSS start (또는 현재 Scene start)
+                            if i + 1 < len(past_scene_indices):
+                                next_record = summary_texts_by_scene.get((content_id, past_scene_indices[i + 1]))
+                                gap_end = float(next_record.get("start_time", 0.0)) if next_record else start_time
+                            else:
+                                gap_end = start_time  # 마지막 과거 KSS → 현재 Scene
+
+                            if gap_end > p_end and args.use_ref_for_keyscene_summary:
+                                gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", p_end, gap_end)
+                                if gap_ref:
+                                    accumulated_past.append(f"[중간 구간의 메타데이터: {p_end:.1f}s ~ {gap_end:.1f}s]")
+                                    accumulated_past.append(gap_ref)
+
+                    else:
+                        # 과거 Scene이 없는 경우: 0s ~ 현재 Scene start까지의 Gap 수집
+                        if start_time > 0.0 and args.use_ref_for_keyscene_summary:
+                            gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", 0.0, start_time)
                             if gap_ref:
-                                accumulated_past.append(f"[중간 구간의 메타데이터: {last_end_time:.1f}s ~ {start_time:.1f}s]")
+                                accumulated_past.append(f"[초반 구간의 메타데이터: 0.0s ~ {start_time:.1f}s]")
                                 accumulated_past.append(gap_ref)
-                        
-                        if accumulated_past:
-                            past_history = accumulated_past
 
+                    # ── Phase 1: 과거 장면 요약 (텍스트 only) ──
+                    past_summary_text = None
+                    past_elapsed = 0.0
+                    if accumulated_past:
+                        past_summary_text, past_elapsed = process_past_summary(
+                            client, args.kss_past_summary_model, past_summary_config,
+                            accumulated_past, start_time
+                        )
+                        print(f"-> [Session 1] 과거 요약 완료 ({len(past_summary_text)}자, {past_elapsed:.2f}초)")
+
+                    # ── Phase 2: 현재 장면 묘사 (멀티모달) ──
                     current_parts = {
                         "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
                         "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
                     }
-                    return process_summary(
-                        client, args.keyscene_summary_model, summary_config,
-                        past_history, current_parts, end_time, use_ref=args.use_ref_for_keyscene_summary
+                    current_scene_text, scene_elapsed = process_current_scene(
+                        client, args.kss_current_scene_model, current_scene_config,
+                        past_summary_text, current_parts, end_time, use_ref=args.use_ref_for_keyscene_summary
                     )
+                    print(f"-> [Session 2] 현재 장면 완료 ({len(current_scene_text)}자, {scene_elapsed:.2f}초)")
+
+                    # ── 최종 조합 (extract_current_scene_desc 호환성 유지) ──
+                    final_summary = f"[1. 과거 장면 요약]\n\n{past_summary_text or '해당 없음'}\n\n[2. 현재 장면 묘사]\n\n{current_scene_text}"
+                    total_elapsed = past_elapsed + scene_elapsed
+                    return final_summary, total_elapsed
 
                 try:
                     summary_text, summary_elapsed = _retry_api_call(

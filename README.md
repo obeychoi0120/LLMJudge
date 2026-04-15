@@ -82,14 +82,13 @@ flowchart TD
 
     subgraph STEPB2["User Query Response 생성"]
         direction TB
-        R_SCRIPT["**generate_response.py**"]
-        R_REF["**uq_references.jsonl**<br/>Pro 기준 답변"]
+        R_SCRIPT["**generate_uq_response.py**"]
         R_ANS["**uq_responses.jsonl**<br/>4개 모드(video/raw/img_desc/mm_desc) 답변"]
     end
 
     subgraph STEPB3["Response Scoring"]
         direction TB
-        RJ_SCRIPT["**judge_response.py**"]
+        RJ_SCRIPT["**judge_response.py**<br/>(KeyScene Summary 기반)"]
         RJ_OUT["**uq_response_scores.jsonl**<br/>최종 평가 결과"]
     end
 
@@ -105,10 +104,8 @@ flowchart TD
 
     UQ_OUT --> R_SCRIPT
     GCS2 -.-> R_SCRIPT
-    R_SCRIPT --> R_REF
     R_SCRIPT --> R_ANS
 
-    R_REF --> RJ_SCRIPT
     R_ANS --> RJ_SCRIPT
     RJ_SCRIPT --> RJ_OUT
 
@@ -125,8 +122,8 @@ flowchart TD
 | A-3 | `generate_voice_hint.py` | img_desc / mm_desc JSONL | `voice_hint.jsonl` | Flash |
 | A-4 | `judge_voice_hint.py` | VH+KeyScene Summary | `voice_hint_scores.jsonl` | Pro |
 | B-1 | `generate_user_query.py` | Video+Ref JSONL | `user_query.jsonl` | Pro |
-| B-2 | `generate_response.py` | Response: 4 Modes JSONL</br>Reference: Video+Ref JSONL | `uq_responses.jsonl`, `uq_references.jsonl` | Flash (Response), Pro (Reference) |
-| B-3 | `judge_response.py` | Response+Reference | `uq_response_scores.jsonl` | Pro |
+| B-2 | `generate_uq_response.py` | Response: 4 Modes JSONL | `uq_responses.jsonl` | Flash (Response) |
+| B-3 | `judge_response.py` | Response+KeyScene Summary | `uq_response_scores.jsonl` | Pro |
 | B-4 | `jsonl_to_json.py` / `export_to_excel.py` | `uq_response_scores.jsonl` | Excel 리포트 | — |
 
 ## ✨ 주요 특징
@@ -146,13 +143,13 @@ flowchart TD
 - `raw` 모드: 오디오(ASR) 및 자막(OCR) 원시 데이터. `_raw.jsonl`로 관리.
 - `img_desc` 모드: VLM이 이미지 프레임만 보고 추출한 철저한 시각 묘사. `_imgdesc.jsonl`로 관리.
 - `mm_desc` 모드: VLM이 영상과 음성, 자막 메타데이터를 종합하여 서술한 묘사. `_mmdesc.jsonl`로 관리.
-- `ref` 지원 데이터: KeyScene 식별, 요약, 정답(Reference) 답변 생성 등 Pro 모델을 위한 정답급 기준 데이터. `_ref.jsonl`로 관리.
+- `ref` 지원 데이터: KeyScene 식별, 요약 등 Pro 모델을 위한 정답급 기준 데이터. `_ref.jsonl`로 관리.
 
 모든 Ref JSONL 사용 프롬프트에 **메타데이터 사용 시 주의사항**을 내장하여, 비디오 프레임의 시각 정보를 우선 참고하고 메타데이터는 보조 자료로만 활용하도록 유도합니다.
 
 ### 4. 다중 모드(Multi-mode) 병렬 추론 및 평가
 - `video`, `raw`, `img_desc`, `mm_desc`의 4가지 모달리티 및 정보 수준으로 구성된 각각의 답변을 병렬로 생성합니다.
-- **Reference 기반 독립 평가**: Pro 모델이 `video`와 `ref` JSONL을 기반으로 생성한 기준 정답(텍스트)과 각 모드의 답변을 비교 평가하여 4모드 공정 비교 평가를 구성했습니다.
+- **Reference 기반 독립 평가**: KeyScene Summary를 영상 컨텍스트의 객관적 진실(Ground Truth)로 삼아 4개 모드의 답변을 비교 평가하여 공정 비교 평가를 구성했습니다.
 
 ### 5. 운영 안정성 및 효율성
 - **쿼리 단위 Resume**: (content_id, query) 단위로 실시간 저장. 중단 후 재실행 시 잔여 작업만 처리.
@@ -169,7 +166,7 @@ LLMJudge/
 ├── generate_voice_hint.py      # Keypoint 입력 → Voice Hint 생성 (A-3)
 ├── judge_voice_hint.py         # Voice Hint 및 Summary 기반 품질 평가 (A-4)
 ├── generate_user_query.py        # Keypoint 모아서 → User Query 생성 (B-1)
-├── generate_response.py          # User Query → Reference + 4모드 병렬 답변 생성 (B-2)
+├── generate_uq_response.py       # User Query → 4모드 병렬 답변 생성 (B-2)
 ├── judge_response.py             # 각 모드 답변에 대한 자동 품질 평가 (B-3)
 ├── gemini_api_utils.py           # Gemini SDK, GCS 검증, 재시도 등 공통 유틸
 ├── jsonl_to_json.py              # JSONL → 분석용 JSON 변환
@@ -184,7 +181,6 @@ LLMJudge/
     ├── voice_hint_scores.jsonl
     ├── user_query.jsonl
     ├── uq_responses.jsonl
-    ├── uq_references.jsonl
     └── uq_response_scores.jsonl
 ```
 
@@ -255,7 +251,7 @@ python judge_voice_hint.py
 python generate_user_query.py
 
 # B-2: User Query 답변 생성 (실시간 모니터링 모드 가능)
-python generate_response.py --continuous
+python generate_uq_response.py --continuous
 
 # B-3: 답변 Judge (실시간 모니터링 모드 가능)
 python judge_response.py --continuous
@@ -301,19 +297,7 @@ python judge_response.py --continuous
 }
 ```
 
-### 4. `uq_references.jsonl` (User Query Reference 답변)
-```json
-{
-  "content_id": "v001",
-  "query": "앞에서 나왔던 사건이 지금이랑 연관 있는 거야?",
-  "scene_idx": 5,
-  "start_time": 120.0,
-  "end_time": 135.2,
-  "reference": "초반에 주인공이 지도를 잃어버리는 장면이 복선으로, 지금 길을 헤매는 상황과 직접적으로 연결됩니다."
-}
-```
-
-### 5. `uq_response_scores.jsonl` (최종 평가 결과)
+### 4. `uq_response_scores.jsonl` (최종 평가 결과)
 ```json
 {
   "content_id": "v001",

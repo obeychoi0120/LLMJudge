@@ -79,8 +79,10 @@ def main():
             sys.executable, "generate_keyscene_summary.py",
             "--input_file", args.keypoints_file,
             "--keyscene_summary_file", args.keyscene_summary_file,
-            "--keyscene_summary_model", args.keyscene_summary_model,
-            "--keyscene_summary_thinking_level", str(args.keyscene_summary_thinking_level),
+            "--kss_past_summary_model", args.kss_past_summary_model,
+            "--kss_past_summary_thinking_level", str(args.kss_past_summary_thinking_level),
+            "--kss_current_scene_model", args.kss_current_scene_model,
+            "--kss_current_scene_thinking_level", str(args.kss_current_scene_thinking_level),
             "--use_ref_for_keyscene_summary", str(args.use_ref_for_keyscene_summary),
         ] + common_project_args
         subprocess.run(cmd_ks, check=True)

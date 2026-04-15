@@ -14,8 +14,12 @@ _CONFIG_KEYS = [
     # 공통
     "location", "keypoint_model", "keypoint_thinking_level",
     # A-track: Voice Hint
-    "vh_gen_model", "keyscene_summary_model", "vh_judge_model",
-    "vh_thinking_level", "keyscene_summary_thinking_level", "vh_judge_thinking_level",
+    "vh_gen_model", "vh_judge_model",
+    "vh_thinking_level", "vh_judge_thinking_level",
+    "vh_gen_past_scenes_size",
+    # A-track: KeyScene Summary (Session별 분리)
+    "kss_past_summary_model", "kss_past_summary_thinking_level",
+    "kss_current_scene_model", "kss_current_scene_thinking_level",
     "use_ref_for_keyscene_summary",
     # B-track: User Query
     "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
@@ -61,8 +65,11 @@ def get_common_argparser(description=""):
     parser.add_argument("--keypoint_thinking_level", default="low", help="Keypoint 식별 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--vh_gen_model", default="gemini-3.1-flash-lite-preview", help="Voice Hint 생성 모델명")
     parser.add_argument("--vh_thinking_level", default="low", help="Voice Hint 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--keyscene_summary_model", default="gemini-3.1-flash-lite-preview", help="KeyScene Summary 생성 모델명")
-    parser.add_argument("--keyscene_summary_thinking_level", default="high", help="KeyScene Summary 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--vh_gen_past_scenes_size", type=int, default=5, help="Voice Hint 과거 맥락에 포함할 최대 Scene 개수")
+    parser.add_argument("--kss_past_summary_model", default="gemini-3.1-flash-lite-preview", help="[Session 1] 과거 요약 생성 모델명")
+    parser.add_argument("--kss_past_summary_thinking_level", default="medium", help="[Session 1] 과거 요약 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--kss_current_scene_model", default="gemini-3.1-pro-preview", help="[Session 2] 현재 장면 묘사 모델명")
+    parser.add_argument("--kss_current_scene_thinking_level", default="high", help="[Session 2] 현재 장면 묘사 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--use_ref_for_keyscene_summary", type=lambda x: str(x).lower() == 'true', default=False, help="Summary 생성 시 Ref JSONL 참조 여부")
     parser.add_argument("--vh_judge_model", default="gemini-3.1-pro-preview", help="Voice Hint 질문 Judge 모델명")
     parser.add_argument("--vh_judge_thinking_level", default="high", help="Voice Hint Judge 모델의 Thinking Level (low/medium/high)")
@@ -392,6 +399,37 @@ def truncate_jsonl_range(jsonl_text, start_time, end_time):
         except json.JSONDecodeError:
             continue
     return "\n".join(truncated_lines)
+
+
+def get_gcs_descriptions_range(gs_bucket_name, content_id, mode, start_time, end_time):
+    """지정된 구간의 description 필드만 추출하여 Scene idx 태그와 함께 반환합니다.
+
+    반환 형식 예시:
+        [Scene 5]
+        주인공이 복도를 걸어감...
+
+        [Scene 6]
+        문 앞에서 멈추고...
+    """
+    if mode not in _GCS_MODE_MAP:
+        raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
+    path_template, _ = _GCS_MODE_MAP[mode]
+    blob_path = path_template.format(cid=content_id)
+    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
+    lines = []
+    for line in jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            scene_end = scene.get("end_time", float("inf"))
+            if start_time < scene_end <= end_time:
+                idx = scene.get("scene_idx", "?")
+                desc = scene.get("description", "")
+                lines.append(f"[Scene {idx}]\n{desc}")
+        except json.JSONDecodeError:
+            continue
+    return "\n\n".join(lines)
 
 
 def get_gcs_text_range(gs_bucket_name, content_id, mode, start_time, end_time):
