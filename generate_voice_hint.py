@@ -6,10 +6,10 @@ import concurrent.futures
 from gemini_api_utils import (
     get_common_argparser,
     make_generate_config,
-    process_gcs_file_range, check_gcs_files_exist,
+    check_gcs_files_exist,
     parse_json_response, _retry_api_call,
     ensure_output_dir, load_processed_pairs,
-    preload_content_metadata, get_gcs_text_range, get_gcs_descriptions_range, download_gcs_text, truncate_jsonl_range,
+    preload_content_metadata, get_gcs_descriptions_by_scene_idx,
     init_pipeline, load_jsonl, append_jsonl,
 )
 
@@ -38,7 +38,7 @@ _VOICE_HINT_BASE = """당신은 제공되는 메타데이터를 기반으로 스
 - 언어: 한국어 (단, 영어 콘텐츠의 고유명사나 특정 지명/동물은 원어 병기 허용. 예: 일각고래(Narwhal), 셰즈 은데예(Chez Ndeye))
 - 형식: 반드시 아래 JSON 형식으로 출력하세요. 시청자의 호기심을 어떻게 자극할 것인지, 그리고 **VLM 데이터의 오류를 발견했다면 어떻게 교정했는지(해당할 경우)** `rationale`에 먼저 짧게 분석한 뒤, 3개의 질문을 `queries` 배열에 담으세요. 다른 설명은 덧붙이지 마십시오.
 
-[JSON 출력 예시]
+[JSON 형식 예시]
 {
     "rationale": "묘사에 '봄고레 때' 등의 오탈자가 있으나 문맥과 상식을 통해 '범고래 떼'로 자체 교정함. 과거 맥락에서 혹등고래가 먹이를 찾지 못해 헤매는 것을 시청자가 이미 알고 있음. 현재 장면에서 갑자기 범고래 떼가 나타나 방향을 트는 단서가 포착됨. 시청자는 범고래의 등장 이유와 혹등고래의 운명에 대해 강한 호기심을 가질 것이므로 이를 타겟팅함.",
     "queries": [
@@ -59,16 +59,17 @@ def process_vh_parallel(client, vh_model_name, vh_config, past_parts, current_pa
         past_text = past_parts[mode]
         has_past = bool(past_text.strip())
 
-        # 현재 장면을 먼저 배치 (primacy effect 활용)
-        contents += ["--- [현재 장면] ---", current_parts[mode]]
+        # 샌드위치 구조 (LITM 대응): A(현재) → B(과거) → A(현재) → 요청
+        contents += ["--- [현재 장면] 시작 ---", current_parts[mode], "--- [현재 장면] 끝---"]
 
         if has_past:
-            contents += ["--- [과거 맥락] ---", past_text]
+            contents += ["--- [과거 맥락] 시작 ---", past_text, "--- [과거 맥락] 끝 ---"]
+            contents += ["--- [현재 장면 (재확인)] 시작 ---", current_parts[mode], "--- [현재 장면 (재확인)] 끝 ---"]
         
         contents += [
             "--- 요청 사항 ---",
-            "[현재 장면]에서 발생한 사건이나 단서를 직접적인 트리거로 삼아, 시스템 프롬프트의 지침에 따라 매력적인 질문 3개를 JSON 형식으로 생성하세요. [과거 맥락]은 오직 맥락 파악용이며, 과거 사건 자체를 묻는 질문은 절대 생성하지 마세요." 
-            if has_past else "제공된 [현재 장면]을 바탕으로 시스템 프롬프트의 지침에 따라 매력적인 질문 3개를 JSON 형식으로 생성하세요."
+            "[현재 장면] 에서 발생한 사건이나 단서를 직접적인 트리거로 삼아, 시스템 프롬프트의 지침에 따라 매력적인 질문 3개를 JSON 형식으로 생성하세요. [과거 맥락] 은 오직 맥락 파악용이며, 과거 사건 자체를 묻는 질문은 절대 생성하지 마세요." 
+            if has_past else "제공된 [현재 장면] 을 바탕으로 시스템 프롬프트의 지침에 따라 매력적인 질문 3개를 JSON 형식으로 생성하세요."
         ]
         
         t0 = time.time()
@@ -175,24 +176,29 @@ def main():
                 end_time = float(kp.get("end_time", 0.0))
                 reason = kp.get("reason", "")
 
-                print(f"[{real_idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
+                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
                 
                 # 로깅용 Desc 텍스트 추출 및 즉시 출력 (description-only 형식)
-                img_desc_text = get_gcs_descriptions_range(args.gs_bucket_name, content_id, "img_desc", start_time, end_time)
+                img_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", scene_idx, scene_idx)
                 print(f"\n[Desc (img_desc)]\n{img_desc_text}\n")
 
-                mm_desc_text = get_gcs_descriptions_range(args.gs_bucket_name, content_id, "mm_desc", start_time, end_time)
+                mm_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "mm_desc", scene_idx, scene_idx)
                 print(f"\n[Desc (mm_desc)]\n{mm_desc_text}\n")
 
                 def _run_keypoint():
-                    # 과거 N개 구역(Scene)을 위한 start_time 계산 (Sliding Window)
-                    past_start_idx = max(0, real_idx - args.vh_gen_past_scenes_size)
-                    past_start_time = float(keypoints[past_start_idx].get("start_time", 0.0))
+                    # 과거 N개 구역(Scene)을 위한 scene_idx 계산 (Sliding Window)
+                    past_start_kp_idx = max(0, real_idx - args.vh_gen_past_scenes_size)
+                    past_start_scene_idx = keypoints[past_start_kp_idx].get("scene_idx", 0)
+                    past_end_scene_idx = scene_idx - 1  # 현재 Scene 직전까지
 
-                    past_parts = {
-                        "img_desc": get_gcs_descriptions_range(args.gs_bucket_name, content_id, "img_desc", past_start_time, start_time),
-                        "mm_desc": get_gcs_descriptions_range(args.gs_bucket_name, content_id, "mm_desc", past_start_time, start_time),
-                    }
+                    if past_end_scene_idx >= past_start_scene_idx:
+                        past_parts = {
+                            "img_desc": get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", past_start_scene_idx, past_end_scene_idx),
+                            "mm_desc":  get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "mm_desc",  past_start_scene_idx, past_end_scene_idx),
+                        }
+                    else:
+                        past_parts = {"img_desc": "", "mm_desc": ""}
+
                     current_parts = {
                         "img_desc": img_desc_text,
                         "mm_desc": mm_desc_text,

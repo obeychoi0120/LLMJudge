@@ -385,32 +385,24 @@ def process_gcs_file(gs_bucket_name, content_id, mode="video"):
 # Truncation Helpers
 # ============================================================
 
-def truncate_jsonl_range(jsonl_text, start_time, end_time):
-    """JSONL 텍스트에서 [start_time, end_time] 구간의 Scene만 추출합니다."""
+def truncate_jsonl_by_scene_idx(jsonl_text, start_idx, end_idx):
+    """JSONL 텍스트에서 scene_idx가 [start_idx, end_idx] 범위인 Scene만 추출합니다."""
     truncated_lines = []
     for line in jsonl_text.strip().split("\n"):
         if not line.strip():
             continue
         try:
             scene = json.loads(line)
-            scene_end = scene.get("end_time", float("inf"))
-            if start_time < scene_end <= end_time:
+            s_idx = scene.get("scene_idx")
+            if s_idx is not None and start_idx <= s_idx <= end_idx:
                 truncated_lines.append(line)
         except json.JSONDecodeError:
             continue
     return "\n".join(truncated_lines)
 
 
-def get_gcs_descriptions_range(gs_bucket_name, content_id, mode, start_time, end_time):
-    """지정된 구간의 description 필드만 추출하여 Scene idx 태그와 함께 반환합니다.
-
-    반환 형식 예시:
-        [Scene 5]
-        주인공이 복도를 걸어감...
-
-        [Scene 6]
-        문 앞에서 멈추고...
-    """
+def get_gcs_descriptions_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx):
+    """scene_idx 구간의 description 필드만 추출하여 [Scene N] 태그와 함께 반환합니다."""
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
     path_template, _ = _GCS_MODE_MAP[mode]
@@ -422,62 +414,64 @@ def get_gcs_descriptions_range(gs_bucket_name, content_id, mode, start_time, end
             continue
         try:
             scene = json.loads(line)
-            scene_end = scene.get("end_time", float("inf"))
-            if start_time < scene_end <= end_time:
-                idx = scene.get("scene_idx", "?")
+            s_idx = scene.get("scene_idx")
+            if s_idx is not None and start_idx <= s_idx <= end_idx:
                 desc = scene.get("description", "")
-                lines.append(f"[Scene {idx}]\n{desc}")
+                lines.append(f"[Scene {s_idx}]\n{desc}")
         except json.JSONDecodeError:
             continue
     return "\n\n".join(lines)
 
 
-def get_gcs_text_range(gs_bucket_name, content_id, mode, start_time, end_time):
-    """지정된 mode의 JSONL 파일에서 [start_time, end_time] 구간의 텍스트를 반환합니다."""
+def get_gcs_text_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx):
+    """scene_idx 구간의 전체 JSONL 텍스트를 반환합니다."""
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
     path_template, _ = _GCS_MODE_MAP[mode]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
-    return truncate_jsonl_range(jsonl_text, start_time, end_time)
+    return truncate_jsonl_by_scene_idx(jsonl_text, start_idx, end_idx)
 
 
-def process_gcs_file_range(gs_bucket_name, content_id, mode, start_time, end_time):
-    """[start_time, end_time] 구간 데이터 Part를 반환합니다.
+def process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time):
+    """[start_time, end_time] 구간으로 클리핑된 비디오 Part를 반환합니다. (VideoMetadata 기반, 캐시 적용)"""
+    path_template, mime_type = _GCS_MODE_MAP["video"]
+    blob_path = path_template.format(cid=content_id)
+    file_uri = f"gs://{gs_bucket_name}/{blob_path}"
 
-    - video 모드: VideoMetadata의 start_offset/end_offset으로 구간 클리핑 (캐시 적용)
-    - jsonl 모드: GCS에서 다운로드 후 해당 구간만 추출하여 인라인 Part 반환
+    cache_key = f"{gs_bucket_name}/{content_id}/video/{int(start_time)}-{int(end_time)}"
+    if cache_key in _gcs_part_cache:
+        return _gcs_part_cache[cache_key]
+    part = types.Part(
+        file_data=types.FileData(file_uri=file_uri, mime_type=mime_type),
+        video_metadata=types.VideoMetadata(
+            start_offset=f"{int(start_time)}s",
+            end_offset=f"{int(end_time)}s",
+        ),
+    )
+    _gcs_part_cache[cache_key] = part
+    return part
+
+
+def process_gcs_file_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx):
+    """scene_idx 구간 데이터 Part를 반환합니다.
+
+    - video 모드: ref JSONL에서 scene_idx로 start/end time lookup 후 VideoMetadata 클리핑
+    - jsonl 모드: GCS에서 다운로드 후 scene_idx 구간만 추출하여 인라인 Part 반환
     """
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
 
-    path_template, mime_type = _GCS_MODE_MAP[mode]
-    blob_path = path_template.format(cid=content_id)
-    file_uri = f"gs://{gs_bucket_name}/{blob_path}"
-
     if mode == "video":
-        # 비디오 Part 객체 캐시: 동일 범위의 Part 재생성 방지
-        cache_key = f"{gs_bucket_name}/{content_id}/video/{int(start_time)}-{int(end_time)}"
-        if cache_key in _gcs_part_cache:
-            return _gcs_part_cache[cache_key]
-        part = types.Part(
-            file_data=types.FileData(file_uri=file_uri, mime_type=mime_type),
-            video_metadata=types.VideoMetadata(
-                start_offset=f"{int(start_time)}s",
-                end_offset=f"{int(end_time)}s",
-            ),
-        )
-        _gcs_part_cache[cache_key] = part
-        return part
+        ref_scenes = load_scenes(gs_bucket_name, content_id, mode="ref")
+        start_scene = next((s for s in ref_scenes if s.get("scene_idx") == start_idx), None)
+        end_scene   = next((s for s in ref_scenes if s.get("scene_idx") == end_idx), None)
+        start_time  = float(start_scene.get("start_time", 0.0)) if start_scene else 0.0
+        end_time    = float(end_scene.get("end_time", 0.0))    if end_scene   else 0.0
+        return process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time)
     else:
-        # JSONL 텍스트 다운로드는 download_gcs_text 캐시가 자동 적용됨
-        range_text = get_gcs_text_range(gs_bucket_name, content_id, mode, start_time, end_time)
+        range_text = get_gcs_text_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx)
         return types.Part.from_bytes(data=range_text.encode("utf-8"), mime_type="text/plain")
-
-
-def process_gcs_file_truncated(gs_bucket_name, content_id, mode, end_time):
-    """[0, end_time]까지 Truncation된 GCS 파일 Part를 반환합니다."""
-    return process_gcs_file_range(gs_bucket_name, content_id, mode, 0.0, end_time)
 
 
 # ============================================================

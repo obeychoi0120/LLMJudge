@@ -5,7 +5,7 @@ import json
 from gemini_api_utils import (
     get_common_argparser,
     make_generate_config,
-    process_gcs_file_range,
+    process_gcs_file_by_scene_idx,
     check_gcs_files_exist,
     parse_json_response, _retry_api_call,
     ensure_output_dir,
@@ -49,7 +49,7 @@ _USER_QUERY_GENERATION_PROMPT = """당신은 영상 콘텐츠의 전체적인 �
     "지금까지의 등장인물 관계를 보면 얘가 왜 이런 선택을 한 거지?"
 ]"""
 
-def generate_user_query(client, model_name, query_config, summary_text, current_parts, end_time):
+def generate_user_query(client, model_name, query_config, summary_text, current_parts, scene_idx):
     contents = []
     if summary_text:
         contents += [
@@ -72,7 +72,7 @@ def generate_user_query(client, model_name, query_config, summary_text, current_
         lambda: client.models.generate_content(
             model=model_name, contents=contents, config=query_config
         ).text,
-        label=f"User Query 생성 (end={end_time:.1f}s)"
+        label=f"User Query 생성 (Scene {scene_idx})"
     )
     return parse_json_response(text)
 
@@ -104,8 +104,6 @@ def main():
             content_keypoints_map[c_id] = [
                 {
                     "scene_idx": kp.get("scene_idx"),
-                    "start_time": kp.get("start_time", 0.0),
-                    "end_time": kp.get("end_time", 0.0)
                 }
                 for kp in keypoints
             ]
@@ -163,26 +161,24 @@ def main():
 
             for idx, kp in enumerate(keypoints):
                 scene_idx = kp["scene_idx"]
-                start_time = float(kp["start_time"])
-                end_time = float(kp["end_time"])
 
                 if (content_id, scene_idx) in processed_scenes:
-                    print(f"\n[{idx+1}/{len(keypoints)}] Range=[{start_time:.1f}s ~ {end_time:.1f}s] - [Skip] 이미 처리됨")
+                    print(f"\n[{idx}/{len(keypoints)}] Scene {scene_idx} - [Skip] 이미 처리됨")
                     continue
 
-                print(f"\n[{idx+1}/{len(keypoints)}] Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
+                print(f"\n[{idx}/{len(keypoints)}] Scene {scene_idx}")
 
                 try:
                     time.sleep(2)
                     summary_text = summary_map.get((content_id, scene_idx), "")
                     current_parts = {
-                        "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
-                        "meta":  process_gcs_file_range(args.gs_bucket_name, content_id, "ref",  start_time, end_time)
+                        "video": process_gcs_file_by_scene_idx(args.gs_bucket_name, content_id, "video", scene_idx, scene_idx),
+                        "meta":  process_gcs_file_by_scene_idx(args.gs_bucket_name, content_id, "ref",   scene_idx, scene_idx)
                     }
 
                     user_query_list = generate_user_query(
                         client, args.uq_gen_model, query_config,
-                        summary_text, current_parts, end_time
+                        summary_text, current_parts, scene_idx
                     )
                     
                     scene_queries = user_query_list[:3]
@@ -193,8 +189,6 @@ def main():
                         f.write(json.dumps({
                             "content_id": content_id,
                             "scene_idx": scene_idx,
-                            "start_time": start_time,
-                            "end_time": end_time,
                             "queries": scene_queries
                         }, ensure_ascii=False) + "\n")
 

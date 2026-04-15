@@ -6,7 +6,7 @@ import json
 from gemini_api_utils import (
     get_common_argparser,
     make_generate_config,
-    process_gcs_file, process_gcs_file_range, check_gcs_files_exist,
+    process_gcs_file, process_gcs_file_by_scene_idx, check_gcs_files_exist,
     parse_json_response,
     _retry_api_call, load_scenes,
     ensure_output_dir, load_processed_content_ids,
@@ -386,13 +386,16 @@ def main():
                     # 각 스레드마다 독립 config 사용 (thread-safe)
                     seg_cand_config = make_candidate_config(thinking_level=args.keypoint_thinking_level)
 
-                    video_part = process_gcs_file_range(
+                    seg_start_idx = seg[0].get("scene_idx")
+                    seg_end_idx = seg[-1].get("scene_idx")
+
+                    video_part = process_gcs_file_by_scene_idx(
                         args.gs_bucket_name, content_id, "video",
-                        seg_start_time, seg_end_time
+                        seg_start_idx, seg_end_idx
                     )
-                    ref_part = process_gcs_file_range(
+                    ref_part = process_gcs_file_by_scene_idx(
                         args.gs_bucket_name, content_id, "ref",
-                        seg_start_time, seg_end_time
+                        seg_start_idx, seg_end_idx
                     )
 
                     target_pick = 4 if total_scenes < _SPLIT_THRESHOLD else None
@@ -461,7 +464,7 @@ def main():
 
             # ---- 결과 출력 ----
             print(f"\n총 {len(keypoints)}개의 Keypoint가 식별되었습니다:")
-            for i, kp in enumerate(keypoints, 1):
+            for i, kp in enumerate(keypoints, 0):
                 reason_str = f" | {kp['reason']}" if kp.get("reason") else ""
                 print(f"  {i:2d}. [Scene {kp['scene_idx']:2d}] {kp['start_time']:.1f}s ~ {kp['end_time']:.1f}s{reason_str}")
 

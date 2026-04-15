@@ -5,10 +5,10 @@ import json
 from gemini_api_utils import (
     get_common_argparser,
     make_generate_config,
-    process_gcs_file_range, check_gcs_files_exist,
+    process_gcs_file_by_scene_idx, check_gcs_files_exist,
     _retry_api_call,
     ensure_output_dir, load_processed_pairs,
-    preload_content_metadata, get_gcs_text_range, download_gcs_text, truncate_jsonl_range,
+    preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
 )
 
@@ -217,7 +217,7 @@ def main():
             for kp in remaining:
                 real_idx = keypoints.index(kp)
                 scene_idx = kp.get("scene_idx", real_idx)
-                
+
                 scene_key = (content_id, scene_idx)
                 if scene_key in summary_pairs:
                     # 이미 동일한 Scene에 속하는 중복 Keypoint라면 무의미한 중복 API 호출을 방지하기 위해 건너뜁니다.
@@ -226,8 +226,8 @@ def main():
                 start_time = float(kp.get("start_time", 0.0))
                 end_time = float(kp.get("end_time", 0.0))
 
-                print(f"[{real_idx+1}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
-                
+                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
+
                 def _run_keypoint():
                     # ── 과거 연대기 구축 (KSS desc → Gap 순서) ──
                     past_scene_indices = sorted([s for (c, s) in summary_pairs if c == content_id and s < scene_idx])
@@ -239,39 +239,38 @@ def main():
                             if not record:
                                 continue
 
-                            p_start = float(record.get("start_time", 0.0))
-                            p_end = float(record.get("end_time", 0.0))
-
-                            # 1) 첫 KSS 이전의 Gap (0s ~ 첫 KSS start): 완전성을 위해 수집
-                            if i == 0 and p_start > 0.0 and args.use_ref_for_keyscene_summary:
-                                gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", 0.0, p_start)
+                            # 1) 첫 KSS 이전의 Gap (Scene 0 ~ s_idx-1): 완전성을 위해 수집
+                            if i == 0 and s_idx > 0 and args.use_ref_for_keyscene_summary:
+                                gap_ref = process_gcs_file_by_scene_idx(args.gs_bucket_name, content_id, "ref", 0, s_idx - 1)
                                 if gap_ref:
-                                    accumulated_past.append(f"[초반 구간의 메타데이터: 0.0s ~ {p_start:.1f}s]")
+                                    accumulated_past.append(f"[초반 구간의 메타데이터: Scene 0 ~ Scene {s_idx - 1}]")
                                     accumulated_past.append(gap_ref)
 
                             # 2) KSS Description (방향 지시 역할)
                             desc = extract_current_scene_desc(record.get("summary", ""))
-                            accumulated_past.append(f"[이전 Scene {s_idx}의 장면 묘사: {p_start:.1f}s ~ {p_end:.1f}s]\n{desc}")
+                            accumulated_past.append(f"[이전 Scene {s_idx}의 장면 묘사]\n{desc}")
 
-                            # 3) Gap: 이 KSS end → 다음 KSS start (또는 현재 Scene start)
+                            # 3) Gap: 이 KSS end → 다음 KSS start (또는 현재 Scene) 사이
                             if i + 1 < len(past_scene_indices):
-                                next_record = summary_texts_by_scene.get((content_id, past_scene_indices[i + 1]))
-                                gap_end = float(next_record.get("start_time", 0.0)) if next_record else start_time
+                                next_s_idx = past_scene_indices[i + 1]
                             else:
-                                gap_end = start_time  # 마지막 과거 KSS → 현재 Scene
+                                next_s_idx = scene_idx  # 마지막 과거 KSS → 현재 Scene
 
-                            if gap_end > p_end and args.use_ref_for_keyscene_summary:
-                                gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", p_end, gap_end)
+                            gap_start_scene = s_idx + 1
+                            gap_end_scene = next_s_idx - 1
+
+                            if gap_end_scene >= gap_start_scene and args.use_ref_for_keyscene_summary:
+                                gap_ref = process_gcs_file_by_scene_idx(args.gs_bucket_name, content_id, "ref", gap_start_scene, gap_end_scene)
                                 if gap_ref:
-                                    accumulated_past.append(f"[중간 구간의 메타데이터: {p_end:.1f}s ~ {gap_end:.1f}s]")
+                                    accumulated_past.append(f"[중간 구간의 메타데이터: Scene {gap_start_scene} ~ Scene {gap_end_scene}]")
                                     accumulated_past.append(gap_ref)
 
                     else:
-                        # 과거 Scene이 없는 경우: 0s ~ 현재 Scene start까지의 Gap 수집
-                        if start_time > 0.0 and args.use_ref_for_keyscene_summary:
-                            gap_ref = process_gcs_file_range(args.gs_bucket_name, content_id, "ref", 0.0, start_time)
+                        # 과거 Scene이 없는 경우: Scene 0 ~ scene_idx-1까지의 Gap 수집
+                        if scene_idx > 0 and args.use_ref_for_keyscene_summary:
+                            gap_ref = process_gcs_file_by_scene_idx(args.gs_bucket_name, content_id, "ref", 0, scene_idx - 1)
                             if gap_ref:
-                                accumulated_past.append(f"[초반 구간의 메타데이터: 0.0s ~ {start_time:.1f}s]")
+                                accumulated_past.append(f"[초반 구간의 메타데이터: Scene 0 ~ Scene {scene_idx - 1}]")
                                 accumulated_past.append(gap_ref)
 
                     # ── Phase 1: 과거 장면 요약 (텍스트 only) ──
@@ -286,8 +285,8 @@ def main():
 
                     # ── Phase 2: 현재 장면 묘사 (멀티모달) ──
                     current_parts = {
-                        "video": process_gcs_file_range(args.gs_bucket_name, content_id, "video", start_time, end_time),
-                        "ref":   process_gcs_file_range(args.gs_bucket_name, content_id, "ref",   start_time, end_time),
+                        "video": process_gcs_file_by_scene_idx(args.gs_bucket_name, content_id, "video", scene_idx, scene_idx),
+                        "ref":   process_gcs_file_by_scene_idx(args.gs_bucket_name, content_id, "ref",   scene_idx, scene_idx),
                     }
                     current_scene_text, scene_elapsed = process_current_scene(
                         client, args.kss_current_scene_model, current_scene_config,

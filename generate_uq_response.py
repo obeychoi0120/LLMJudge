@@ -9,7 +9,7 @@ import threading
 from gemini_api_utils import (
     get_common_argparser,
     make_generate_config,
-    process_gcs_file, process_gcs_file_range,
+    process_gcs_file, process_gcs_file_by_scene_idx,
     check_gcs_files_exist,
     _retry_api_call, load_scenes,
     ensure_output_dir, preload_content_metadata,
@@ -81,8 +81,6 @@ def _load_query_items(json_file):
             # scene별 레코드: queries + scene context를 각 query에 주입
             scene_ctx = {
                 "scene_idx": data.get("scene_idx", -1),
-                "start_time": data.get("start_time"),
-                "end_time": data.get("end_time"),
             }
             for q in data["queries"]:
                 if isinstance(q, dict):
@@ -114,13 +112,23 @@ def _load_completed_pairs(responses_path):
     return completed
 
 
-def _build_parts(gs_bucket_name, content_id, start_time, end_time, has_end_time):
-    """Past/Current Parts를 빌드합니다."""
+def _build_parts(gs_bucket_name, content_id, scene_idx, has_scene_context):
+    """Past/Current Parts를 빌드합니다.
+
+    - has_scene_context=True: scene_idx 기반으로 past/current 구간 분리
+      - past: Scene 0 ~ scene_idx-1
+      - current: scene_idx (단일 Scene)
+    - has_scene_context=False: 전체 영상 사용
+    """
     modes_to_fetch = ["video", "raw", "img_desc", "mm_desc"]
-    if has_end_time:
-        past_parts = {m: process_gcs_file_range(gs_bucket_name, content_id, m, 0.0, start_time)
+    if has_scene_context and scene_idx > 0:
+        past_parts = {m: process_gcs_file_by_scene_idx(gs_bucket_name, content_id, m, 0, scene_idx - 1)
                       for m in modes_to_fetch}
-        curr_parts = {m: process_gcs_file_range(gs_bucket_name, content_id, m, start_time, end_time)
+        curr_parts = {m: process_gcs_file_by_scene_idx(gs_bucket_name, content_id, m, scene_idx, scene_idx)
+                      for m in modes_to_fetch}
+    elif has_scene_context and scene_idx == 0:
+        past_parts = {m: None for m in modes_to_fetch}
+        curr_parts = {m: process_gcs_file_by_scene_idx(gs_bucket_name, content_id, m, scene_idx, scene_idx)
                       for m in modes_to_fetch}
     else:
         past_parts = {m: None for m in modes_to_fetch}
@@ -129,9 +137,9 @@ def _build_parts(gs_bucket_name, content_id, start_time, end_time, has_end_time)
     return past_parts, curr_parts
 
 
-def _build_mode_contents(past_parts, curr_parts, mode, has_end_time):
+def _build_mode_contents(past_parts, curr_parts, mode, has_scene_context):
     """지정된 mode의 API 호출용 contents 리스트를 빌드합니다."""
-    if has_end_time:
+    if has_scene_context and past_parts.get(mode) is not None:
         return [
             "--- Past Information ---", past_parts[mode],
             "--- Current Information ---", curr_parts[mode],
@@ -194,9 +202,7 @@ def main():
                 for c_id, q_items in pending_work.items():
                     print(f"- content_id '{c_id}':")
                     for q_item in q_items:
-                        end_val = q_item.get("end_time")
-                        end_str = f" [end={end_val:.1f}s]" if end_val is not None else ""
-                        print(f"    - query \"{q_item['query']}\"{end_str}")
+                        print(f"    - query \"{q_item['query']}\" [Scene {q_item.get('scene_idx', '?')}]")
                 print("-" * 50)
 
             file_write_lock = threading.Lock()
@@ -218,7 +224,7 @@ def main():
                 try:
                     ref_scenes = load_scenes(args.gs_bucket_name, content_id, mode="img_desc")
                 except Exception as e:
-                    print(f"[{content_id}] Warning: JSONL 로드 실패 ({e}). start_time이 0으로 설정될 수 있습니다.")
+                    print(f"[{content_id}] Warning: JSONL 로드 실패 ({e}).")
                     ref_scenes = []
 
                 print(f"[{content_id}] Initializing Generation configs ({args.uq_response_model})...")
@@ -227,27 +233,19 @@ def main():
 
                 for q_item in pending_queries:
                     user_prompt = q_item["query"]
-                    end_time = float(q_item.get("end_time") or 0)
                     scene_idx = q_item.get("scene_idx", -1)
-                    start_time = q_item.get("start_time")
-                    if start_time is None and scene_idx != -1:
-                        target_scene = next((s for s in ref_scenes if s.get("scene_idx") == scene_idx), None)
-                        start_time = target_scene.get("start_time", 0.0) if target_scene else 0.0
-                    else:
-                        start_time = float(start_time or 0.0)
-
-                    has_end_time = end_time > 0
+                    has_scene_context = (scene_idx != -1)
 
                     if (content_id, user_prompt) in processed_pairs:
                         print(f"[{content_id}] Query: '{user_prompt[:40]}...' -> already completed (skip)")
                         continue
 
-                    end_label = f"Range=[{start_time:.1f}s ~ {end_time:.1f}s]" if has_end_time else "full"
+                    end_label = f"Scene {scene_idx}" if has_scene_context else "full"
                     print(f"[{content_id}] Processing Query [{end_label}]: '{user_prompt}'")
 
                     # Parts 준비
                     past_parts, curr_parts = _build_parts(
-                        args.gs_bucket_name, content_id, start_time, end_time, has_end_time)
+                        args.gs_bucket_name, content_id, scene_idx, has_scene_context)
 
                     # 1. 2개 Mode 답변 생성
                     answers_for_query = {}
@@ -257,7 +255,7 @@ def main():
                         try:
                             time.sleep(1)
                             mode_contents = _build_mode_contents(
-                                past_parts, curr_parts, mode, has_end_time)
+                                past_parts, curr_parts, mode, has_scene_context)
                             answer_text = _retry_api_call(
                                 lambda: client.models.generate_content(
                                     model=args.uq_response_model,
@@ -280,9 +278,7 @@ def main():
                     ordered_answers = {m: answers_for_query[m] for m in ["video", "raw", "img_desc", "mm_desc"] if m in answers_for_query}
 
                     time_ctx = {
-                        "scene_idx": scene_idx if has_end_time else None,
-                        "start_time": start_time if has_end_time else None,
-                        "end_time": end_time if has_end_time else None,
+                        "scene_idx": scene_idx if has_scene_context else None,
                     }
 
                     response_record = {"content_id": content_id, **time_ctx, "query": user_prompt, "answers": ordered_answers}
