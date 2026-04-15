@@ -174,7 +174,7 @@ def main():
                 scene_idx = kp.get("scene_idx", real_idx)
                 start_time = float(kp.get("start_time", 0.0))
                 end_time = float(kp.get("end_time", 0.0))
-                reason = kp.get("reason", "")
+                rationale = kp.get("rationale", "")
 
                 print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
                 

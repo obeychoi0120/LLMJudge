@@ -54,9 +54,9 @@ _KEYPOINT_SYSTEM_PROMPT = f"""\
 
 [출력 형식 예시]
 [
-    {{"scene_idx": 3, "reason": "미팅 장소에 도착하는 시점"}},
-    {{"scene_idx": 7, "reason": "주인공의 인상적인 발언"}},
-    {{"scene_idx": 16, "reason": "사건의 전환을 암시하는 행동"}}
+    {{"rationale": "미팅 장소에 도착하는 시점", "scene_idx": 3}},
+    {{"rationale": "주인공의 인상적인 발언", "scene_idx": 7}},
+    {{"rationale": "사건의 전환을 암시하는 행동", "scene_idx": 16}}
 ]"""
 
 # ---- (B) Stage 1: 세그먼트별 Candidate 생성용 (25개 이상일 때) ----
@@ -75,25 +75,24 @@ _CANDIDATE_SYSTEM_PROMPT = f"""\
 - 제공된 **Scene List** 중에서 가장 적합한 Scene을 선택하세요.
 - 사용자 요청 개수에 맞춰서, 기준에 부합하는 가장 중요한 후보를 선택하세요. (만약 개수 제한이 명시되지 않았다면 기준에 부합하는 모든 후보를 선택하세요)
 - 각 후보에 대해 아래 필드를 모두 포함하세요:
+  - rationale: 해당 Scene을 선택한 구체적 이유 (무엇이 일어났는지, 왜 시청자가 궁금해할지 2~3문장으로 상세히 기술)
   - scene_idx: Scene 인덱스
-  - reason: 해당 Scene을 선택한 구체적 이유 (무엇이 일어났는지, 왜 시청자가 궁금해할지 2~3문장으로 상세히 기술)
   - category: 선별 기준 카테고리 ("전환점", "새로운행동", "시각적임팩트", "호기심발언" 중 택 1)
   - impact: 시청자 호기심 유발 강도 (1~5, 5가 가장 강렬)
 - 반드시 아래 JSON 배열 형식으로만 출력하세요 (다른 설명 추가 금지)
 
 [출력 형식 예시]
 [
-    {{"scene_idx": 3, "reason": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다. 익숙한 장소지만 새로운 발견이 있음을 암시하며 시청자의 기대감을 높인다.", "category": "전환점", "impact": 4}},
-    {{"scene_idx": 7, "reason": "나물에 대한 독특한 비유를 사용하며 전문 지식을 드러낸다. 일반적이지 않은 관점이 시청자의 호기심을 자극한다.", "category": "호기심발언", "impact": 3}}
+    {{"rationale": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다. 익숙한 장소지만 새로운 발견이 있음을 암시하며 시청자의 기대감을 높인다.", "scene_idx": 3, "category": "전환점", "impact": 4}},
+    {{"rationale": "나물에 대한 독특한 비유를 사용하며 전문 지식을 드러낸다. 일반적이지 않은 관점이 시청자의 호기심을 자극한다.", "scene_idx": 7, "category": "호기심발언", "impact": 3}}
 ]"""
 
 # ---- (C) Stage 2: 최종 Keypoint 선별용 ----
 _SELECTOR_SYSTEM_PROMPT = """\
 당신은 영상 콘텐츠의 '핵심 씬(Keypoint Scene)' 최종 선별 전문가입니다.
 
-영상의 여러 구간에서 독립적으로 추출된 Keypoint 후보(Candidate) 목록과 
-전체 영상의 Scene List가 제공됩니다.
-각 Candidate에는 reason(상세 이유), category(유형), impact(1~5 호기심 강도) 정보가 포함되어 있습니다.
+영상의 여러 구간에서 독립적으로 추출된 Keypoint 후보(Candidate) 목록이 제공됩니다.
+각 Candidate에는 rationale(상세 이유), category(유형), impact(1~5 호기심 강도) 정보가 포함되어 있습니다.
 
 [선별 기준]
 1. **impact 점수 우선:** impact가 높은 후보를 우선 선택하되, 이것만으로 결정하지 마세요.
@@ -109,9 +108,9 @@ _SELECTOR_SYSTEM_PROMPT = """\
 
 [출력 형식 예시]
 [
-    {"scene_idx": 3, "reason": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다."},
-    {"scene_idx": 22, "reason": "요리가 완성되는 클라이맥스로 시각적 임팩트가 크다."},
-    {"scene_idx": 40, "reason": "마무리 대화에서 감동적인 순간이 펼쳐진다."}
+    {"rationale": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다.", "scene_idx": 3},
+    {"rationale": "요리가 완성되는 클라이맥스로 시각적 임팩트가 크다.", "scene_idx": 22},
+    {"rationale": "마무리 대화에서 감동적인 순간이 펼쳐진다.", "scene_idx": 40}
 ]"""
 
 
@@ -183,7 +182,7 @@ def identify_keypoints_single(client, model_name, keypoint_config, video_part, r
         "시청자가 영상을 보는 도중 자연스럽게 궁금해할 만한 핵심 전환점/사건 Scene을 "
         "최대 8개 골라내세요.\n\n"
         f"[Scene List]\n{scene_list_text}\n\n"
-        "반드시 지정된 JSON 배열 형식으로만 출력하세요 (scene_idx와 reason 필수)."
+        "반드시 지정된 JSON 배열 형식으로만 출력하세요 (rationale과 scene_idx 필수)."
     )
     return _retry_api_call(
         lambda: client.models.generate_content(
@@ -207,7 +206,7 @@ def generate_candidates_for_segment(client, model_name, candidate_config, video_
         "시청자가 영상을 보는 도중 자연스럽게 궁금해할 만한 핵심 전환점/사건 Scene 후보를 "
         f"{pick_instruction}\n\n"
         f"[Scene List]\n{scene_list_text}\n\n"
-        "반드시 지정된 JSON 배열 형식으로만 출력하세요 (scene_idx와 reason 필수)."
+        "반드시 지정된 JSON 배열 형식으로만 출력하세요 (rationale과 scene_idx 필수)."
     )
     return _retry_api_call(
         lambda: client.models.generate_content(
@@ -217,17 +216,15 @@ def generate_candidates_for_segment(client, model_name, candidate_config, video_
     )
 
 
-def select_keypoints_from_candidates(client, model_name, selector_config, all_candidates, full_scene_list_text):
+def select_keypoints_from_candidates(client, model_name, selector_config, all_candidates):
     """Candidate 목록에서 최종 Keypoint를 선별합니다 (Stage 2)."""
     candidates_json = json.dumps(all_candidates, ensure_ascii=False, indent=2)
     prompt = (
-        "아래는 영상의 여러 구간에서 독립적으로 추출된 Keypoint 후보(Candidate) 목록과 "
-        "전체 영상의 Scene List입니다.\n\n"
-        f"[전체 Scene List]\n{full_scene_list_text}\n\n"
+        "아래는 영상의 여러 구간에서 독립적으로 추출된 Keypoint 후보(Candidate) 목록입니다.\n\n"
         f"[Candidate 목록 (총 {len(all_candidates)}개)]\n{candidates_json}\n\n"
         "위 Candidate 중에서 영상 전체의 흐름과 시간적 균형을 고려하여 "
         "최종 Keypoint를 **최대 8개** 선별하세요.\n"
-        "반드시 지정된 JSON 배열 형식으로만 출력하세요 (scene_idx와 reason 필수)."
+        "반드시 지정된 JSON 배열 형식으로만 출력하세요 (rationale과 scene_idx 필수)."
     )
     return _retry_api_call(
         lambda: client.models.generate_content(
@@ -247,14 +244,14 @@ def resolve_keypoints(raw_list, ref_scenes):
     for rk in raw_list:
         s_idx = rk.get("scene_idx")
         if s_idx in merged_map:
-            existing_reason = merged_map[s_idx].get("reason", "").strip()
-            new_reason = rk.get("reason", "").strip()
+            existing_rationale = merged_map[s_idx].get("rationale", "").strip()
+            new_rationale = rk.get("rationale", "").strip()
             # 이유가 비어있지 않고, 기존 내용에 완벽히 포함되지 않은 경우에만 덧붙임
-            if new_reason and new_reason not in existing_reason:
-                if existing_reason:
-                    merged_map[s_idx]["reason"] = existing_reason + " / " + new_reason
+            if new_rationale and new_rationale not in existing_rationale:
+                if existing_rationale:
+                    merged_map[s_idx]["rationale"] = existing_rationale + " / " + new_rationale
                 else:
-                    merged_map[s_idx]["reason"] = new_reason
+                    merged_map[s_idx]["rationale"] = new_rationale
         else:
             merged_map[s_idx] = rk.copy()
             
@@ -266,7 +263,7 @@ def resolve_keypoints(raw_list, ref_scenes):
                 "scene_idx": s_idx,
                 "start_time": target["start_time"],
                 "end_time": target["end_time"],
-                "reason": rk.get("reason", "")
+                "rationale": rk.get("rationale", "")
             })
             
     # 시간 순(scene_idx)으로 정렬
@@ -342,7 +339,7 @@ def main():
                         "scene_idx": s.get("scene_idx"),
                         "start_time": s.get("start_time", 0.0),
                         "end_time": s.get("end_time", 0.0),
-                        "reason": ""
+                        "rationale": ""
                     }
                     for s in ref_scenes
                     if s.get("scene_idx") is not None
@@ -454,7 +451,7 @@ def main():
                         time.sleep(2)
                         selection_text = select_keypoints_from_candidates(
                             client, args.keypoint_model, selector_config,
-                            all_candidates, full_scene_list_text
+                            all_candidates
                         )
                         raw_keypoints = parse_json_response(selection_text)[:8]
                         keypoints = resolve_keypoints(raw_keypoints, ref_scenes)
@@ -465,8 +462,8 @@ def main():
             # ---- 결과 출력 ----
             print(f"\n총 {len(keypoints)}개의 Keypoint가 식별되었습니다:")
             for i, kp in enumerate(keypoints, 0):
-                reason_str = f" | {kp['reason']}" if kp.get("reason") else ""
-                print(f"  {i:2d}. [Scene {kp['scene_idx']:2d}] {kp['start_time']:.1f}s ~ {kp['end_time']:.1f}s{reason_str}")
+                rationale_str = f" | {kp['rationale']}" if kp.get("rationale") else ""
+                print(f"  {i:2d}. [Scene {kp['scene_idx']:2d}] {kp['start_time']:.1f}s ~ {kp['end_time']:.1f}s{rationale_str}")
 
             # ---- 저장 ----
             kp_record = {

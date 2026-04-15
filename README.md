@@ -4,12 +4,12 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ## 📝 프로젝트 개요
 
-이 프로젝트는 시청자가 영상을 중간까지 보다가 질문을 남길 만한 핵심 씬 (Keypoint Scene)을 식별하고, 해당 시점까지의 **과거 맥락(Past)** 과 **현재 장면(Current Focus)** 을 분리하여 분석합니다. 두 가지 유형의 질문을 생성하고, 각각에 적합한 평가 프로세스를 적용합니다.
+이 프로젝트는 시청자가 영상을 중간까지 보다가 질문을 남길 만한 핵심 씬 (KeyScene Scene)을 식별하고, 해당 시점까지의 **과거 맥락(Past)** 과 **현재 장면(Current Focus)** 을 분리하여 분석합니다. 두 가지 유형의 질문을 생성하고, 각각에 적합한 평가 프로세스를 적용합니다.
 
 - **Voice Hint**: 현재 장면에 보이는 것만으로 생성되는 시청자의 즉각적인 궁금증 (장면 중심)
-  - Keypoint 식별 → Voice Hint 생성 → KeyScene Summary 기반 질문 품질 평가 (Scoring)
+  - KeyScene 식별 → Voice Hint 생성 → KeyScene Summary 기반 질문 품질 평가 (Scoring)
 - **User Query**: 지금까지 누적해서 본 전체 맥락에서 자연스럽게 발생하는 종합적인 질문 (맥락 중심)
-  - 식별된 Keypoint 재사용 → User Query 생성 → 4개 모드(video/raw/img_desc/mm_desc) 답변 생성 → KeyScene Summary 기반 답변 평가
+  - 식별된 KeyScene 재사용 → User Query 생성 → 4개 모드(video/raw/img_desc/mm_desc) 답변 생성 → KeyScene Summary 기반 답변 평가
 
 ## 🔄 파이프라인 흐름
 
@@ -23,10 +23,10 @@ flowchart TD
         GCS["GCS Bucket Asset<br/>Video, JSONL Scenes"]
     end
 
-    subgraph STEP1["Keypoint 식별"]
+    subgraph STEP1["KeyScene 식별"]
         direction TB
-        KP_SCRIPT["**identify_keypoint.py**"]
-        KP_OUT["**keypoint_scenes.jsonl**<br/>Keypoint Scene 목록"]
+        KP_SCRIPT["**identify_KeyScene.py**"]
+        KP_OUT["**KeyScene_scenes.jsonl**<br/>KeyScene Scene 목록"]
     end
 
     subgraph STEP2["KeyScene Summary 생성"]
@@ -70,7 +70,7 @@ flowchart TD
 flowchart TD
     subgraph INPUT2["Prerequisite"]
         direction LR
-        KP_IN["**keypoint_scenes.jsonl**<br/>(Scenario 1에서 생성)"]
+        KP_IN["**KeyScene_scenes.jsonl**<br/>(Scenario 1에서 생성)"]
         KSS_IN["**keyscene_summary.jsonl**<br/>(Scenario 1에서 생성)"]
         GCS2["GCS Bucket Asset<br/>Video, JSONL Scenes"]
     end
@@ -120,7 +120,7 @@ flowchart TD
 
 | Step | 스크립트 | Source | Output | 모델 |
 |------|----------|--------|--------|------|
-| A-1 | `identify_keypoint.py` | Video + Ref JSONL | `keypoint_scenes.jsonl` | Flash Lite |
+| A-1 | `identify_keyscene.py` | Video + Ref JSONL | `KeyScene_scenes.jsonl` | Flash Lite |
 | A-2 | `generate_keyscene_summary.py` | Video + Ref JSONL + 이전 KSS | `keyscene_summary.jsonl` | Flash Lite (Phase 1) + Pro (Phase 2) |
 | A-3 | `generate_voice_hint.py` | img_desc / mm_desc JSONL | `voice_hint.jsonl` | Flash Lite |
 | A-4 | `judge_voice_hint.py` | VH + KSS | `voice_hint_scores.jsonl` | Pro |
@@ -131,21 +131,21 @@ flowchart TD
 
 ## ✨ 핵심 설계 전략
 
-### 1. Keypoint 식별: Scene 수에 따른 3경로 분기 전략
+### 1. KeyScene 식별: Scene 수에 따른 3경로 분기 전략
 
 단일 영상을 하나의 모델 호출로 분석하면 씬 수가 많아질수록 컨텍스트가 과부하됩니다. 이를 해결하기 위해 전체 씬 수에 따라 LLM 호출 전략을 3가지로 분기합니다.
 
 | Scene 수 | 경로 | Stage 1 | Stage 2 |
 |----------|------|---------|---------|
-| ≤ 8개 | A | LLM 호출 없이 전체를 Keypoint로 자동 지정 | — |
+| ≤ 8개 | A | LLM 호출 없이 전체를 KeyScene으로 자동 지정 | — |
 | 9 ~ 17개 | B | 2등분 → 각 세그먼트에서 병렬로 4개씩 추출 | 생략 (단순 결합) |
 | ≥ 18개 | C | 3등분 → 각 세그먼트에서 병렬로 Candidate 무제한 추출 | Selector 모델이 전체 Candidate 중 8개 최종 선별 |
 
-Stage 1 Candidate 프롬프트는 `reason` (2~3문장 상세 이유), `category` (전환점/새로운행동/시각적임팩트/호기심발언), `impact` (1~5 강도)를 포함한 구조화된 JSON을 요구합니다. Stage 2 Selector 프롬프트는 **impact 점수 + 시간적 균등 분포 + 카테고리 다양성 + 중복 제거** 기준을 명시적으로 지시하여 고품질의 균형 잡힌 Keypoint 집합을 보장합니다.
+Stage 1 Candidate 프롬프트는 `rationale` (2~3문장 상세 이유), `category` (전환점/새로운행동/시각적임팩트/호기심발언), `impact` (1~5 강도)를 포함한 구조화된 JSON을 요구합니다. Stage 2 Selector 프롬프트는 **impact 점수 + 시간적 균등 분포 + 카테고리 다양성 + 중복 제거** 기준을 명시적으로 지시하여 고품질의 균형 잡힌 KeyScene 집합을 보장합니다.
 
 ### 2. KeyScene Summary: 2-Phase 세션 아키텍처
 
-각 Keypoint에 대해 "과거를 이해한 AI가 현재 장면을 정밀하게 묘사"하는 것이 목표입니다. 이를 위해 한 번의 거대한 멀티모달 호출 대신, **역할이 다른 두 세션으로 분리**하여 각각 최적의 모델을 배치합니다.
+각 KeyScene에 대해 "과거를 이해한 AI가 현재 장면을 정밀하게 묘사"하는 것이 목표입니다. 이를 위해 한 번의 거대한 멀티모달 호출 대신, **역할이 다른 두 세션으로 분리**하여 각각 최적의 모델을 배치합니다.
 
 ```
 [과거 연대기 구축]
@@ -162,7 +162,7 @@ Stage 1 Candidate 프롬프트는 `reason` (2~3문장 상세 이유), `category`
 
 - **Phase 1**은 텍스트만 처리하므로 경량 Flash Lite 모델로 충분하며 비용을 절약합니다.
 - **Phase 2**는 비디오를 직접 보며 메타데이터 오류(ASR 오탈자, OCR 오류, 효과음 분류 오류)를 교정해야 하므로 Pro 모델 + 높은 Thinking Level을 배치합니다.
-- 첫 번째 Keypoint 이전 구간(Scene 0 ~ 첫 KSS 이전)도 Gap으로 처리하여 **연대기의 완전성**을 보장합니다.
+- 첫 번째 KeyScene 이전 구간(Scene 0 ~ 첫 KSS 이전)도 Gap으로 처리하여 **연대기의 완전성**을 보장합니다.
 - 생성된 KSS는 이후 Voice Hint Judge, User Query Judge의 **Ground Truth**로 재활용됩니다.
 
 ### 3. Voice Hint 생성: 페이로드 설계와 프롬프팅 전략
@@ -177,7 +177,7 @@ Voice Hint는 "현재 장면을 보는 순간 자연스럽게 드는 궁금증"�
 [현재 장면] → [과거 맥락 (Sliding Window: 직전 N개 KP)] → [현재 장면 재확인] → [요청]
 ```
 
-- 과거 맥락은 전체 JSONL이 아닌 **직전 N개 Keypoint의 description 필드만** 추출하여 토큰 볼륨을 최소화합니다. (기본 `vh_gen_past_scenes_size=3`)
+- 과거 맥락은 전체 JSONL이 아닌 **직전 N개 KeyScene의 description 필드만** 추출하여 토큰 볼륨을 최소화합니다. (기본 `vh_gen_past_scenes_size=3`)
 - 요청 프롬프트에 "**[현재 장면]에서 발생한 사건이 직접적인 트리거여야 한다**"를 명시하여 과거 사건을 묻는 "뒷북 질문"을 방지합니다.
 
 **VH 생성 프롬프트 (CX 전문가 페르소나) 핵심 전략:**
@@ -236,13 +236,13 @@ AI 시청 파트너 시스템 프롬프트는 두 가지 핵심을 강조합니�
 
 두 Judge 모두 **KeyScene Summary를 유일한 Ground Truth**로 사용합니다. 별도의 Reference Answer 생성 단계 없이, Phase 2에서 Pro 모델이 실제 비디오를 보며 생성한 상세 묘사가 기준점 역할을 합니다.
 
-### 7. 모델 배치 전략
+### 7. Step별 모델 사용 전략
 
 생성(Generation)은 Flash Lite로 비용을 최소화하고, 판단·평가(Judge/Analysis)는 Pro로 품질을 극대화하는 원칙을 따릅니다.
 
-| 단계 | 역할 | 모델 | Thinking Level | 배치 근거 |
+| 단계 | 역할 | 모델 | Thinking Level | 근거 |
 |------|------|------|----------------|---------|
-| A-1 | Keypoint 식별 | Flash Lite | low | 대량 세그먼트 병렬 처리, 비용 최소화 |
+| A-1 | KeyScene 식별 | Flash Lite | medium | 대량 세그먼트 병렬 처리, 비용 최소화 |
 | A-2 Phase 1 | 과거 요약 | Flash Lite | medium | 텍스트 only · 요약 작업 → 경량 충분 |
 | A-2 Phase 2 | 현재 장면 묘사 | Pro | high | 멀티모달 + 오류 교정 + 정밀 묘사 |
 | A-3 | Voice Hint 생성 | Flash Lite | low | desc 텍스트 only · 대량 병렬 생성 |
@@ -261,7 +261,7 @@ AI 시청 파트너 시스템 프롬프트는 두 가지 핵심을 강조합니�
 | `raw` | `*_raw.jsonl` | ASR(음성 인식) + OCR(자막) 원시 데이터 |
 | `img_desc` | `*_imgdesc.jsonl` | VLM이 이미지 프레임만 보고 생성한 시각 묘사 |
 | `mm_desc` | `*_mmdesc.jsonl` | VLM이 영상·음성·자막을 종합하여 생성한 묘사 |
-| `ref` | `*_ref.jsonl` | Keypoint 식별·KSS 생성용 정밀 기준 메타데이터 |
+| `ref` | `*_ref.jsonl` | KeyScene 식별·KSS 생성용 정밀 기준 메타데이터 |
 
 `ref` 모드 사용 프롬프트에는 **"메타데이터는 보조 참고 자료이며 비디오 프레임의 시각 정보를 우선 참고"** 주의사항을 내장하여 메타데이터 오류에 의한 환각을 방지합니다.
 
@@ -270,11 +270,11 @@ AI 시청 파트너 시스템 프롬프트는 두 가지 핵심을 강조합니�
 ```text
 LLMJudge/
 ├── main.py                       # E2E 파이프라인 오케스트레이터
-├── identify_keypoint.py          # Keypoint Scene 식별 (A-1)
-├── generate_keyscene_summary.py  # Keypoint 입력 → KeyScene Summary 생성 (A-2)
-├── generate_voice_hint.py        # Keypoint 입력 → Voice Hint 생성 (A-3)
+├── identify_KeyScene.py          # KeyScene Scene 식별 (A-1)
+├── generate_keyscene_summary.py  # KeyScene 입력 → KeyScene Summary 생성 (A-2)
+├── generate_voice_hint.py        # KeyScene 입력 → Voice Hint 생성 (A-3)
 ├── judge_voice_hint.py           # Voice Hint 및 Summary 기반 품질 평가 (A-4)
-├── generate_user_query.py        # Keypoint + KSS → User Query 생성 (B-1)
+├── generate_user_query.py        # KeyScene + KSS → User Query 생성 (B-1)
 ├── generate_uq_response.py       # User Query → 4모드 병렬 답변 생성 (B-2)
 ├── judge_response.py             # 각 모드 답변에 대한 자동 품질 평가 (B-3)
 ├── gemini_api_utils.py           # Gemini SDK, GCS 접근, 공통 유틸
@@ -284,7 +284,7 @@ LLMJudge/
 ├── config.json                   # 환경 설정 (GCP, 모델명 등)
 ├── content_list.json             # 평가 대상 Content ID 목록
 └── assets/                       # 파이프라인 중간 결과 및 최종 스코어
-    ├── keypoint_scenes.jsonl
+    ├── KeyScene_scenes.jsonl
     ├── keyscene_summary.jsonl
     ├── voice_hint.jsonl
     ├── voice_hint_scores.jsonl
@@ -323,8 +323,8 @@ LLMJudge/
    {
      "gcp_project_id": "...",
      "gs_bucket_name": "...",
-     "keypoint_model": "gemini-3.1-flash-lite-preview",
-     "keypoint_thinking_level": "low",
+     "KeyScene_model": "gemini-3.1-flash-lite-preview",
+     "KeyScene_thinking_level": "low",
      "kss_past_summary_model": "gemini-3.1-flash-lite-preview",
      "kss_past_summary_thinking_level": "medium",
      "kss_current_scene_model": "gemini-3.1-pro-preview",
@@ -346,39 +346,21 @@ LLMJudge/
 
 ## 🎯 실행 방법
 
-### 통합 실행
-```bash
-# 전체 파이프라인 실행
-python main.py --input_file content_list.json
-
-# Keypoint 식별만 실행 (A-1만)
-python main.py --skip-keyscene-summary --skip-voice-hint-gen --skip-query-judge --skip-user-query-gen --skip-response --skip-judge
-
-# Keypoint 식별 결과가 있고 Query 생성부터 시작
-python main.py --skip-keypoint
-
-# A 트랙(Voice Hint)만 실행
-python main.py --skip-user-query-gen --skip-response --skip-judge
-
-# B 트랙(User Query)만 실행 (Keypoint + KSS 결과 필요)
-python main.py --skip-keypoint --skip-keyscene-summary --skip-voice-hint-gen --skip-query-judge
-```
-
 ### 각 모듈 개별 실행
 ```bash
-# A-1: Keypoint Scene 식별
-python identify_keypoint.py
+# A-1: KeyScene 식별
+python identify_keyscene.py
 
 # A-2: KeyScene Summary 생성
 python generate_keyscene_summary.py
 
-# A-3: Voice Hint 생성 (Keypoint 입력)
+# A-3: Voice Hint 생성 (KeyScene 입력)
 python generate_voice_hint.py
 
 # A-4: Voice Hint 품질 Judge
 python judge_voice_hint.py
 
-# B-1: User Query 생성 (Keypoint + KSS 입력)
+# B-1: User Query 생성 (KeyScene + KSS 입력)
 python generate_user_query.py
 
 # B-2: User Query 답변 생성 (실시간 모니터링 모드 가능)
@@ -386,6 +368,12 @@ python generate_uq_response.py --continuous
 
 # B-3: 답변 Judge (실시간 모니터링 모드 가능)
 python judge_response.py --continuous
+```
+
+### 통합 실행
+```bash
+# 전체 파이프라인 실행
+python main.py --input_file content_list.json
 ```
 
 ## 📊 출력 데이터 상세 예시 (assets/)
