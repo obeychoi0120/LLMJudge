@@ -38,8 +38,7 @@ _QUERY_JUDGE_PROMPT = """당신은 스마트 TV 플랫폼의 '개인화된 인�
 3. 플랫폼 체류 확장성 (Platform Extensibility): 이 질문에 대한 답변이 플랫폼 내 추가 탐색(관련 VOD 추천, 배우/촬영지 정보, OST 검색, 세계관 지식 등)으로 이어져 체류 시간을 늘릴 잠재력이 있는가?
    - 5점: 답변이 단순 예/아니오로 끝나지 않고, 시청자가 관련된 배경지식이나 타 작품 등 부가적인 TV 생태계 콘텐츠를 더 소비하게 만들어 스마트폰 이탈을 완벽히 방어하는 확장성 높은 질문.
    - 3점: 흥미로운 정보를 주지만, 해당 지식을 얻는 것에서 상호작용이 종료될 가능성이 큰 1차원적인 질문.
-   - 1점: 시청자의 시선을 오히려 스마트폰 구글링으로 이탈하게 만들거나, 체류 시간 연장에 전혀 도움이 되지 않는 질문.
-"""
+   - 1점: 시청자의 시선을 오히려 스마트폰 구글링으로 이탈하게 만들거나, 체류 시간 연장에 전혀 도움이 되지 않는 질문."""
 
 _QUERY_JUDGE_FORMAT_PROMPT = """[출력 형식]
 반드시 아래의 JSON 형식으로만 출력하세요. 다른 설명은 덧붙이지 마십시오.
@@ -67,7 +66,7 @@ def evaluate_query(client, model_name, judge_config, detailed_summary, query_tex
     """생성된 질문을 KeyScene Summary 기반으로 평가합니다."""
     contents = []
     if detailed_summary:
-        contents += ["--- [KeyScene Summary (과거 요약 및 현재 장면 묘사)] ---", detailed_summary]
+        contents += ["--- [Reference (과거 요약 및 현재 장면 묘사)] ---", detailed_summary]
     contents += [
         f"[평가 대상 질문]\n{query_text}\n\n",
         "위 Reference를 근거로, 평가 대상 질문의 품질을 평가하세요.\n\n" + _QUERY_JUDGE_FORMAT_PROMPT

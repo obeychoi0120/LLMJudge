@@ -3,9 +3,9 @@ import os
 import argparse
 
 def main():
-    parser = argparse.ArgumentParser(description="Aggregate LLM Judge scores")
-    parser.add_argument("--scores_file", default="assets/scores.json", help="Path to scores.json")
-    parser.add_argument("--output_file", default="assets/scores_aggregated.json", help="Path to aggregated JSON")
+    parser = argparse.ArgumentParser(description="Aggregate UQ Response scores")
+    parser.add_argument("--scores_file", default="assets/uq_response_scores.json", help="Path to uq_response_scores.json")
+    parser.add_argument("--output_file", default="assets/uq_response_scores_aggregated.json", help="Path to aggregated JSON")
     args = parser.parse_args()
 
     if not os.path.exists(args.scores_file):
@@ -93,7 +93,7 @@ def main():
     with open(args.output_file, "w", encoding="utf-8") as f:
         json.dump(final_output, f, indent=4, ensure_ascii=False)
 
-    print(f"\n[Success] Score Aggregation Complete:")
+    print(f"\n[Success] UQ Score Aggregation Complete:")
     print(f"-> Source: {args.scores_file}")
     print(f"-> Results saved to: {args.output_file}")
     print("-" * 50)

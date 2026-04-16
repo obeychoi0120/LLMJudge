@@ -117,12 +117,14 @@ def main():
                     queries_list = []
                     for q in content_query_map[c_id]:
                         raw = content_data_map[c_id][q]
-                        # find original item to get scene_idx
-                        scene_idx = next((it.get("scene_idx") for it in data if it.get("content_id") == c_id and it.get("query") == q), None)
+                        # find original item to get scene_idx and other metadata
+                        original_item = next((it for it in data if it.get("content_id") == c_id and it.get("query") == q), {})
                         
                         entry = {"query": q}
-                        if scene_idx is not None:
-                            entry["scene_idx"] = scene_idx
+                        if original_item.get("scene_idx") is not None:
+                            entry["scene_idx"] = original_item.get("scene_idx")
+                        if "mode" in original_item:
+                            entry["mode"] = original_item["mode"]
                             
                         if isinstance(raw, dict):
                             # answers나 judge 같은 딕셔너리 데이터는 모드 순서대로 정렬
@@ -134,6 +136,10 @@ def main():
                         else:
                             # reference 같은 문자열 데이터는 그대로 대입
                             entry[data_key] = raw
+                            
+                        if "total_score" in original_item:
+                            entry["total_score"] = original_item["total_score"]
+                            
                         queries_list.append(entry)
                     reformatted_data.append({"content_id": c_id, "queries": queries_list})
                 data = reformatted_data
