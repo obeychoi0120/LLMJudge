@@ -152,7 +152,7 @@ def process_current_scene(client, model_name, config, past_summary_text, current
 def main():
     parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 KeyScene Summary를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
-    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary 별도 저장 경로")
+    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary_pro_high.jsonl", help="KeyScene Summary 별도 저장 경로")
 
     args, client = init_pipeline(parser.parse_args())
 
