@@ -1,6 +1,7 @@
 import pandas as pd
 import json
 import os
+from gemini_api_utils import load_jsonl
 
 def export_uq_details(input_dir, output_dir):
     """User Query의 Response/Reference/Score를 상세 Excel로 내보냅니다."""
@@ -142,16 +143,15 @@ def export_uq_scores(input_dir, output_dir):
 
 def export_vh_details(input_dir, output_dir):
     """Voice Hint Judge 상세 결과를 Excel로 내보냅니다."""
-    vh_scores_path = os.path.join(input_dir, "voice_hint_scores.json")
+    vh_scores_path = os.path.join(input_dir, "voice_hint_scores.jsonl")
     if not os.path.exists(vh_scores_path):
         print(f"[Skip] {vh_scores_path} 파일이 없어 VH Details 내보내기를 건너뜁니다.")
         return
 
-    with open(vh_scores_path, "r", encoding="utf-8") as f:
-        vh_data = json.load(f)
+    vh_data = load_jsonl(vh_scores_path)
 
     flat_vh = []
-    metrics = ["curiosity_and_hook", "temporal_immersion", "platform_extensibility"]
+    metrics = ["curiosity_and_hook", "temporal_immersion"]
 
     for item in vh_data:
         cid = item.get("content_id", "")
@@ -167,7 +167,6 @@ def export_vh_details(input_dir, output_dir):
                 "query": item.get("query", ""),
                 "rationale_curiosity": judge.get("curiosity_and_hook", {}).get("rationale", ""),
                 "rationale_temporal": judge.get("temporal_immersion", {}).get("rationale", ""),
-                "rationale_platform": judge.get("platform_extensibility", {}).get("rationale", ""),
             }
             for met in metrics:
                 row[met] = judge.get(met, {}).get("score", "")
@@ -185,7 +184,6 @@ def export_vh_details(input_dir, output_dir):
                     "query": q_entry.get("query", ""),
                     "rationale_curiosity": judge.get("curiosity_and_hook", {}).get("rationale", ""),
                     "rationale_temporal": judge.get("temporal_immersion", {}).get("rationale", ""),
-                    "rationale_platform": judge.get("platform_extensibility", {}).get("rationale", ""),
                 }
                 for met in metrics:
                     row[met] = judge.get(met, {}).get("score", "")
@@ -207,7 +205,6 @@ def export_vh_details(input_dir, output_dir):
         "content_id": 20, "scene_idx": 10, "mode": 10, "query": 40,
         "rationale_curiosity": 40, "curiosity_and_hook": 12,
         "rationale_temporal": 40, "temporal_immersion": 12,
-        "rationale_platform": 40, "platform_extensibility": 12,
         "total_score": 12
     }
     for idx, col in enumerate(df.columns):

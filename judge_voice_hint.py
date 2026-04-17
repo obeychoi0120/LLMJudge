@@ -21,7 +21,7 @@ _QUERY_JUDGE_PROMPT = """당신은 스마트 TV 플랫폼의 '개인화된 인�
 
 이 예상 질문들의 궁극적인 비즈니스 목표는 수동적인 시청자를 자극하여 **1) 리모콘 조작(상호작용)을 즉각 유도**하고, **2) 스마트폰 검색으로 인한 시선 이탈을 방지**하며, **3) TV 플랫폼 내의 추가적인 콘텐츠 탐색(체류 시간 증대)으로 연결**하는 것입니다.
 
-평가 시에는 해당 질문이 생성된 시점의 맥락을 담은 **[KeyScene Summary (과거 요약 및 현재 장면 묘사)]**가 Reference로 제공됩니다. 제공되는 텍스트 요약을 기반으로, 아래 4가지 항목에 대해 각 1~5점으로 평가하세요.
+평가 시에는 해당 질문이 생성된 시점의 맥락을 담은 **[KeyScene Summary (과거 요약 및 현재 장면 묘사)]**가 Reference로 제공됩니다. 제공되는 텍스트 요약을 기반으로, 아래 2가지 항목에 대해 각 1~5점으로 평가하세요.
 
 
 [평가 항목]
@@ -33,12 +33,7 @@ _QUERY_JUDGE_PROMPT = """당신은 스마트 TV 플랫폼의 '개인화된 인�
 2. 시점 몰입도 (Temporal Immersion): 질문의 타이밍이 **[현재 장면]**과 완벽히 동기화되어 극의 감정선과 시청 몰입을 방해하지 않는가?
    - 5점: [현재 장면]의 특정 시각적/청각적 단서를 보는 바로 그 순간 화면에 떴을 때, 씬의 분위기를 깨지 않고 자연스럽게 스며드는 완벽한 타이밍의 질문.
    - 3점: 현재 장면의 맥락이긴 하나 타이밍이 살짝 지연되었거나, 질문의 초점이 다소 포괄적임.
-   - 1점: 앞선 [과거 장면 요약]만 묻는 '뒷북' 질문이거나, 긴장감 넘치는 씬에서 흐름을 깨거나, 추후 전개될 내용을 암시하는 스포일러성 질문.
-
-3. 플랫폼 체류 확장성 (Platform Extensibility): 이 질문에 대한 답변이 플랫폼 내 추가 탐색(관련 VOD 추천, 배우/촬영지 정보, OST 검색, 세계관 지식 등)으로 이어져 체류 시간을 늘릴 잠재력이 있는가?
-   - 5점: 답변이 단순 예/아니오로 끝나지 않고, 시청자가 관련된 배경지식이나 타 작품 등 부가적인 TV 생태계 콘텐츠를 더 소비하게 만들어 스마트폰 이탈을 완벽히 방어하는 확장성 높은 질문.
-   - 3점: 흥미로운 정보를 주지만, 해당 지식을 얻는 것에서 상호작용이 종료될 가능성이 큰 1차원적인 질문.
-   - 1점: 시청자의 시선을 오히려 스마트폰 구글링으로 이탈하게 만들거나, 체류 시간 연장에 전혀 도움이 되지 않는 질문."""
+   - 1점: 앞선 [과거 장면 요약]만 묻는 '뒷북' 질문이거나, 긴장감 넘치는 씬에서 흐름을 깨거나, 추후 전개될 내용을 암시하는 스포일러성 질문."""
 
 _QUERY_JUDGE_FORMAT_PROMPT = """[출력 형식]
 반드시 아래의 JSON 형식으로만 출력하세요. 다른 설명은 덧붙이지 마십시오.
@@ -50,10 +45,6 @@ _QUERY_JUDGE_FORMAT_PROMPT = """[출력 형식]
     },
     "temporal_immersion": {
         "rationale": "<항목 2. 시점 몰입도 에 대한 구체적인 평가 이유>",
-        "score": <1~5 사이의 정수>
-    },
-    "platform_extensibility": {
-        "rationale": "<항목 3. 플랫폼 체류 확장성 에 대한 구체적인 평가 이유>",
         "score": <1~5 사이의 정수>
     }
 }"""
@@ -97,7 +88,7 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
             label=f"VH Judge (Scene {scene_idx})",
         )
 
-        _SCORE_KEYS = ["curiosity_and_hook", "temporal_immersion", "platform_extensibility"]
+        _SCORE_KEYS = ["curiosity_and_hook", "temporal_immersion"]
         total = sum(
             (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
             for k in _SCORE_KEYS
@@ -115,7 +106,6 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
         _ITEM_LABELS = [
             ("curiosity_and_hook", "호기심 및 상호작용 유도력"),
             ("temporal_immersion", "시점 몰입도"),
-            ("platform_extensibility", "플랫폼 체류 확장성"),
         ]
         print(f"\nQuery ({score_record['mode']}): {query_text}")
         if score_dict:
@@ -125,7 +115,7 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
                 rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
                 score = item.get("score", "N/A") if isinstance(item, dict) else "N/A"
                 print(f"{i}. {label}({score}점): {rationale}")
-        print(f"-> Total Score: {total}/15")
+        print(f"-> Total Score: {total}/10")
 
         append_jsonl(args.scores_file, score_record, lock=file_write_lock)
 

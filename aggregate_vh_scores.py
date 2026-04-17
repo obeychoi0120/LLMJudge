@@ -1,10 +1,11 @@
 import json
 import os
 import argparse
+from gemini_api_utils import load_jsonl
 
 def main():
     parser = argparse.ArgumentParser(description="Aggregate Voice Hint scores")
-    parser.add_argument("--scores_file", default="assets/voice_hint_scores.json", help="Path to voice_hint_scores.json")
+    parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Path to voice_hint_scores.jsonl")
     parser.add_argument("--output_file", default="assets/voice_hint_scores_aggregated.json", help="Path to aggregated JSON")
     args = parser.parse_args()
 
@@ -13,14 +14,17 @@ def main():
         return
 
     print(f"Reading scores from {args.scores_file}...")
-    with open(args.scores_file, "r", encoding="utf-8") as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError as e:
-            print(f"Error: Failed to parse {args.scores_file}: {e}")
-            return
+    try:
+        if args.scores_file.endswith(".jsonl"):
+            data = load_jsonl(args.scores_file)
+        else:
+            with open(args.scores_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+    except Exception as e:
+        print(f"Error: Failed to parse {args.scores_file}: {e}")
+        return
 
-    metrics = ["curiosity_and_hook", "temporal_immersion", "platform_extensibility", "total_score"]
+    metrics = ["curiosity_and_hook", "temporal_immersion", "total_score"]
     # modes will be discovered dynamically
     modes = []
 
