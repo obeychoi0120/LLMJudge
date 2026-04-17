@@ -3,6 +3,168 @@ import json
 import os
 from gemini_api_utils import load_jsonl
 
+def aggregate_uq_scores(input_dir):
+    """UQ Score를 집계하여 JSON으로 저장합니다."""
+    scores_file = os.path.join(input_dir, "uq_response_scores.json")
+    output_file = os.path.join(input_dir, "uq_response_scores_aggregated.json")
+    
+    if not os.path.exists(scores_file):
+        print(f"[Skip] {scores_file} 파일이 없어 UQ Aggregation을 건너뜁니다.")
+        return
+
+    print(f"Aggregating UQ scores from {scores_file}...")
+    with open(scores_file, "r", encoding="utf-8") as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"Error: Failed to parse {scores_file}: {e}")
+            return
+
+    metrics = ["accuracy", "completeness", "helpfulness", "total_score"]
+    modes = ["video", "raw", "img_desc", "mm_desc"]
+
+    results_by_video = {}
+    overall_raw = {m: {met: [] for met in metrics} for m in modes}
+
+    for video_item in data:
+        c_id = video_item.get("content_id")
+        if not c_id: continue
+        
+        video_raw = {m: {met: [] for met in metrics} for m in modes}
+        
+        for query_item in video_item.get("queries", []):
+            judge_data = query_item.get("judge", {})
+            for m in modes:
+                if m in judge_data:
+                    m_data = judge_data[m]
+                    s_data = m_data.get("scores", {})
+                    ts = m_data.get("total_score")
+                    
+                    for met in metrics[:-1]:
+                        if met in s_data:
+                            val = s_data[met]
+                            if isinstance(val, (int, float)):
+                                video_raw[m][met].append(val)
+                                overall_raw[m][met].append(val)
+                    
+                    if ts is not None and isinstance(ts, (int, float)):
+                        video_raw[m]["total_score"].append(ts)
+                        overall_raw[m]["total_score"].append(ts)
+
+        avg_video = {}
+        for m in modes:
+            avg_mode = {}
+            for met in metrics:
+                s_list = video_raw[m][met]
+                if s_list:
+                    avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+            if avg_mode:
+                avg_video[m] = avg_mode
+        
+        if avg_video:
+            results_by_video[c_id] = avg_video
+
+    results_overall = {}
+    for m in modes:
+        avg_mode = {}
+        for met in metrics:
+            s_list = overall_raw[m][met]
+            if s_list:
+                avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+        if avg_mode:
+            results_overall[m] = avg_mode
+
+    final_output = {"by_video": results_by_video, "overall": results_overall}
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(final_output, f, indent=4, ensure_ascii=False)
+    print(f"[Done] UQ Score Aggregation: {output_file}")
+
+
+def aggregate_vh_scores(input_dir):
+    """VH Score를 집계하여 JSON으로 저장합니다."""
+    scores_file = os.path.join(input_dir, "voice_hint_scores.jsonl")
+    output_file = os.path.join(input_dir, "voice_hint_scores_aggregated.json")
+
+    if not os.path.exists(scores_file):
+        print(f"[Skip] {scores_file} 파일이 없어 VH Aggregation을 건너뜁니다.")
+        return
+
+    print(f"Aggregating VH scores from {scores_file}...")
+    try:
+        data = load_jsonl(scores_file)
+    except Exception as e:
+        print(f"Error: Failed to parse {scores_file}: {e}")
+        return
+
+    metrics = ["curiosity_and_hook", "temporal_immersion", "total_score"]
+    modes = []
+    results_by_video = {}
+    overall_raw = {}
+
+    for video_item in data:
+        c_id = video_item.get("content_id")
+        if not c_id: continue
+        
+        video_raw = {}
+        
+        items = video_item.get("queries", [])
+        if not items and "query" in video_item: 
+            items = [video_item]
+
+        for query_item in items:
+            m = query_item.get("mode", "unknown")
+            if m not in video_raw:
+                video_raw[m] = {met: [] for met in metrics}
+            if m not in overall_raw:
+                overall_raw[m] = {met: [] for met in metrics}
+                if m not in modes:
+                    modes.append(m)
+
+            judge_data = query_item.get("judge", {})
+            ts = query_item.get("total_score")
+
+            for met in metrics[:-1]:
+                if met in judge_data:
+                    val = judge_data[met].get("score")
+                    if isinstance(val, (int, float)):
+                        video_raw[m][met].append(val)
+                        overall_raw[m][met].append(val)
+            
+            if isinstance(ts, (int, float)):
+                video_raw[m]["total_score"].append(ts)
+                overall_raw[m]["total_score"].append(ts)
+
+        avg_video = {}
+        for m in video_raw:
+            avg_mode = {}
+            for met in metrics:
+                s_list = video_raw[m][met]
+                if s_list:
+                    avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+            if avg_mode:
+                avg_video[m] = avg_mode
+        
+        if avg_video:
+            results_by_video[c_id] = avg_video
+
+    results_overall = {}
+    for m in overall_raw:
+        avg_mode = {}
+        for met in metrics:
+            s_list = overall_raw[m][met]
+            if s_list:
+                avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+        if avg_mode:
+            results_overall[m] = avg_mode
+
+    final_output = {"by_video": results_by_video, "overall": results_overall}
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(final_output, f, indent=4, ensure_ascii=False)
+    print(f"[Done] VH Score Aggregation: {output_file}")
+
+
 def export_uq_details(input_dir, output_dir):
     """User Query의 Response/Reference/Score를 상세 Excel로 내보냅니다."""
     # 1. 파일 읽기
@@ -270,7 +432,18 @@ if __name__ == "__main__":
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
 
+    print("="*60)
+    print("1. Data Aggregation Phase")
+    print("="*60)
+    aggregate_uq_scores(assets_dir)
+    aggregate_vh_scores(assets_dir)
+
+    print("\n" + "="*60)
+    print("2. Excel Export Phase")
+    print("="*60)
     export_uq_details(assets_dir, results_dir)
     export_uq_scores(assets_dir, results_dir)
     export_vh_details(assets_dir, results_dir)
     export_vh_scores(assets_dir, results_dir)
+
+    print("\nAll pipeline tasks completed.")
