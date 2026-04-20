@@ -7,7 +7,7 @@ from gemini_api_utils import (
     get_common_argparser,
     make_generate_config,
     check_gcs_files_exist,
-    parse_json_response, _retry_api_call,
+    parse_json_response, _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
     preload_content_metadata, get_gcs_descriptions_by_scene_idx,
     init_pipeline, load_jsonl, append_jsonl,
@@ -111,15 +111,19 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
             ]
             vh_config = vh_configs["kss"]
         else:
+            current_text = current_parts.get(mode, "")
+            if not current_text.strip():
+                return {"queries": [], "rationale": f"해당 모드({mode})의 현재 장면 묘사 텍스트가 비어있어 생성을 생략합니다."}, 0.0
+
             past_text = past_parts.get(mode, "")
             has_past = bool(past_text.strip())
 
             # 샌드위치 구조 (소형 모델 앵커링용)
-            contents += ["--- [현재 시청 중인 장면] 시작 ---", current_parts.get(mode, ""), "--- [현재 시청 중인 장면] 끝 ---"]
+            contents += ["--- [현재 시청 중인 장면] 시작 ---", current_text, "--- [현재 시청 중인 장면] 끝 ---"]
 
             if has_past:
                 contents += ["--- [이전까지의 과거 시청 맥락 (참조용)] 시작 ---", past_text, "--- [이전까지의 과거 시청 맥락 (참조용)] 끝 ---"]
-                contents += ["--- [현재 시청 중인 장면 (재확인)] 시작 ---", current_parts.get(mode, ""), "--- [현재 시청 중인 장면 (재확인)] 끝 ---"]
+                contents += ["--- [현재 시청 중인 장면 (재확인)] 시작 ---", current_text, "--- [현재 시청 중인 장면 (재확인)] 끝 ---"]
             
             contents += [
                 "--- 요청 사항 ---",
@@ -129,14 +133,17 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
             vh_config = vh_configs["desc"]
         
         t0 = time.time()
-        text = _retry_api_call(
-            lambda: client.models.generate_content(
-                model=vh_model_name, contents=contents, config=vh_config
-            ).text,
-            label=f"Voice Hint({mode}) 생성 (end={end_time:.1f}s)"
+        
+        parsed = retry_parse_json(
+            lambda: _retry_api_call(
+                lambda: client.models.generate_content(
+                    model=vh_model_name, contents=contents, config=vh_config
+                ).text,
+                label=f"VH API 생성 ({mode})"
+            ),
+            label=f"VH JSON Parse ({mode})"
         )
         
-        parsed = parse_json_response(text)
         rationale = ""
         
         if isinstance(parsed, dict):
@@ -274,7 +281,7 @@ def main():
                 print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
                 if kss_summary_text and "kss" in missing_modes:
                     current_scene_only = kss_summary_text.split("[2. 현재 장면 묘사]")[-1].strip() if "[2. 현재 장면 묘사]" in kss_summary_text else kss_summary_text.strip()
-                    print(f"\n[ --- KSS 현재 장면 --- ]\n\n{current_scene_only}\n")
+                    print(f"\n[ --- KSS 현재 장면 --- ]\n\n{current_scene_only}")
                 
                 # 로깅용 Desc 텍스트 추출 및 즉시 출력 (description-only 형식)
                 img_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", scene_idx, scene_idx) if "img_desc" in missing_modes else ""
@@ -329,7 +336,7 @@ def main():
 
                     for mod in missing_modes:
                         if vh_dict.get(mod):
-                            print(f"-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
+                            print(f"\n-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
                             if vh_dict.get("rationales", {}).get(mod):
                                 print(f"[Rationale]: {vh_dict['rationales'][mod]}\n")
                             for qi, q in enumerate(vh_dict[mod], 1):

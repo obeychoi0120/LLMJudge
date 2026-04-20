@@ -50,13 +50,13 @@ _KEYPOINT_SYSTEM_PROMPT = f"""\
 - 제공된 **Scene List** 중에서 가장 적합한 Scene을 선택하세요.
 - 각 Keypoint는 반드시 특정 Scene의 종료 시점(end_time)을 기준으로 합니다.
 - **최대 10개 선택**
+- 각 항목에 대해 아래 필드를 차례대로 포함하세요: rationale, category("전환점", "새로운행동", "시각적임팩트", "호기심발언" 중 택 1), impact(1~5), scene_idx
 - 반드시 아래 JSON 배열 형식으로만 출력하세요 (다른 설명 추가 금지)
 
 [출력 형식 예시]
 [
-    {{"rationale": "미팅 장소에 도착하는 시점", "scene_idx": 3}},
-    {{"rationale": "주인공의 인상적인 발언", "scene_idx": 7}},
-    {{"rationale": "사건의 전환을 암시하는 행동", "scene_idx": 16}}
+    {{"rationale": "미팅 장소에 도착하는 시점", "category": "새로운행동", "impact": 3, "scene_idx": 3}},
+    {{"rationale": "주인공의 인상적인 발언", "category": "호기심발언", "impact": 4, "scene_idx": 7}}
 ]"""
 
 # ---- (B) Stage 1: 세그먼트별 Candidate 생성용 (25개 이상일 때) ----
@@ -74,17 +74,17 @@ _CANDIDATE_SYSTEM_PROMPT = f"""\
 [주의사항]
 - 제공된 **Scene List** 중에서 가장 적합한 Scene을 선택하세요.
 - 사용자 요청 개수에 맞춰서, 기준에 부합하는 가장 중요한 후보를 선택하세요. (만약 개수 제한이 명시되지 않았다면 기준에 부합하는 모든 후보를 선택하세요)
-- 각 후보에 대해 아래 필드를 모두 포함하세요:
+- 각 후보에 대해 아래 순서대로 필드를 포함하세요:
   - rationale: 해당 Scene을 선택한 구체적 이유 (무엇이 일어났는지, 왜 시청자가 궁금해할지 2~3문장으로 상세히 기술)
-  - scene_idx: Scene 인덱스
   - category: 선별 기준 카테고리 ("전환점", "새로운행동", "시각적임팩트", "호기심발언" 중 택 1)
   - impact: 시청자 호기심 유발 강도 (1~5, 5가 가장 강렬)
+  - scene_idx: 최종 판단한 Scene 인덱스
 - 반드시 아래 JSON 배열 형식으로만 출력하세요 (다른 설명 추가 금지)
 
 [출력 형식 예시]
 [
-    {{"rationale": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다. 익숙한 장소지만 새로운 발견이 있음을 암시하며 시청자의 기대감을 높인다.", "scene_idx": 3, "category": "전환점", "impact": 4}},
-    {{"rationale": "나물에 대한 독특한 비유를 사용하며 전문 지식을 드러낸다. 일반적이지 않은 관점이 시청자의 호기심을 자극한다.", "scene_idx": 7, "category": "호기심발언", "impact": 3}}
+    {{"rationale": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다. 익숙한 장소지만 새로운 발견이 있음을 암시하며 시청자의 기대감을 높인다.", "category": "전환점", "impact": 4, "scene_idx": 3}},
+    {{"rationale": "나물에 대한 독특한 비유를 사용하며 전문 지식을 드러낸다. 일반적이지 않은 관점이 시청자의 호기심을 자극한다.", "category": "호기심발언", "impact": 3, "scene_idx": 7}}
 ]"""
 
 # ---- (C) Stage 2: 최종 Keypoint 선별용 ----
@@ -96,21 +96,21 @@ _SELECTOR_SYSTEM_PROMPT = """\
 
 [선별 기준]
 1. **impact 점수 우선:** impact가 높은 후보를 우선 선택하되, 이것만으로 결정하지 마세요.
-2. **시간적 균등 분포:** 영상 전체에 걸쳐 초반/중반/후반이 골고루 포함되어야 합니다. 특정 구간에 치우치면 안 됩니다.
+2. **시간적 균등 분포:** 각 후보에 포함된 `segment` 번호(1~3)를 반드시 확인하세요. 특정 segment에 결과가 편향되지 않도록 모든 segment에서 고르게 포함되도록 조합하세요.
 3. **카테고리 다양성:** 가능하면 다양한 category의 후보를 포함하세요.
-4. **중복 제거:** 유사한 내용의 중복 후보는 impact가 더 높은 하나만 선택하세요.
+4. **중복 제거:** 유사한 내용의 중복 후보는 impact가 더 높은 하나만 선택하세요. (인접한 scene이 스토리가 이어지는 하나의 사건이라면 가장 임팩트 있는 1개만 선택)
 5. **전환점 우선:** 영상의 주요 전환점, 감정적 하이라이트, 정보 제공 순간을 우선 선택하세요.
 
 [주의사항]
 - 반드시 제공된 Candidate 목록에 있는 scene_idx만 선택하세요.
 - **최대 8개** 선택
+- Candidate의 `category`와 `impact` 정보를 버리지 말고 출력에 그대로 포함하세요.
 - 반드시 아래 JSON 배열 형식으로만 출력하세요 (다른 설명 추가 금지)
 
 [출력 형식 예시]
 [
-    {"rationale": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다.", "scene_idx": 3},
-    {"rationale": "요리가 완성되는 클라이맥스로 시각적 임팩트가 크다.", "scene_idx": 22},
-    {"rationale": "마무리 대화에서 감동적인 순간이 펼쳐진다.", "scene_idx": 40}
+    {"rationale": "주인공이 처음 시장에 도착하여 놀라운 표정을 짓는다.", "category": "전환점", "impact": 4, "scene_idx": 3},
+    {"rationale": "요리가 완성되는 클라이맥스로 시각적 임팩트가 크다.", "category": "시각적임팩트", "impact": 5, "scene_idx": 22}
 ]"""
 
 
@@ -263,7 +263,9 @@ def resolve_keypoints(raw_list, ref_scenes):
                 "scene_idx": s_idx,
                 "start_time": target["start_time"],
                 "end_time": target["end_time"],
-                "rationale": rk.get("rationale", "")
+                "rationale": rk.get("rationale", ""),
+                "category": rk.get("category", ""),
+                "impact": rk.get("impact", "")
             })
             
     # 시간 순(scene_idx)으로 정렬
@@ -339,7 +341,9 @@ def main():
                         "scene_idx": s.get("scene_idx"),
                         "start_time": s.get("start_time", 0.0),
                         "end_time": s.get("end_time", 0.0),
-                        "rationale": ""
+                        "rationale": "",
+                        "category": "",
+                        "impact": ""
                     }
                     for s in ref_scenes
                     if s.get("scene_idx") is not None
