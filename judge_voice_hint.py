@@ -124,6 +124,8 @@ def main():
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
+    parser.add_argument("--watch", action="store_true", help="파일을 계속 모니터링하여 새 질문을 실시간으로 평가합니다.")
+    parser.add_argument("--modes", nargs="+", default=["img_desc", "mm_desc", "kss"], choices=["img_desc", "mm_desc", "kss"], help="평가할 모드 직접 지정 (기본값: 모두 평가)")
     
 
     args, client = init_pipeline(parser.parse_args())
@@ -152,54 +154,98 @@ def main():
     else:
         print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.kss_file}")
 
-    # 입력: 각 줄이 scene 단위 레코드 {content_id, scene_idx, queries: [...]}
-    scene_list = load_jsonl(args.input_file)
-
     print(f"\n{'='*50}")
-    print(f"Voice Hint 질문 품질 평가 프로세스 시작")
+    print(f"Voice Hint 질문 품질 평가 프로세스 시작 (Watch 모드: {args.watch})")
     print(f"{'='*50}")
 
     file_write_lock = threading.Lock()
-    preloaded_contents = set()
+    last_position = 0
+    pipeline_done = False
+    
+    total_generated = 0
+    total_evaluated = len(processed_pairs)
 
     try:
-        for scene_item in scene_list:
-            content_id = scene_item.get("content_id")
-            scene_idx  = scene_item.get("scene_idx")
-            query_groups = scene_item.get("queries", [])
-
-            if not content_id or scene_idx is None or not query_groups:
+        while True:
+            if not os.path.exists(args.input_file):
+                if not args.watch:
+                    print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
+                    return
+                time.sleep(2)
                 continue
+                
+            with open(args.input_file, "r", encoding="utf-8") as f:
+                f.seek(last_position)
+                new_lines = f.readlines()
+                last_position = f.tell()
+                
+            new_items = []
+            for line in new_lines:
+                if line.strip():
+                    try:
+                        obj = json.loads(line)
+                        if obj.get("pipeline_done"):
+                            pipeline_done = True
+                        else:
+                            new_items.append(obj)
+                    except json.JSONDecodeError:
+                        pass
+                        
+            if new_items:
+                for scene_item in new_items:
+                    content_id = scene_item.get("content_id")
+                    scene_idx  = scene_item.get("scene_idx")
+                    query_groups = scene_item.get("queries", [])
 
-            detailed_summary = summary_map.get((content_id, scene_idx), "")
+                    if not content_id or scene_idx is None or not query_groups:
+                        continue
 
-            # 그룹화된 포맷을 펼쳐서 (mode, query) 개별 항목 리스트로 변환
-            flat_queries = []
-            for group in query_groups:
-                mode = group.get("mode", "")
-                for q_text in group.get("queries", []):
-                    flat_queries.append({"mode": mode, "query": q_text})
+                    detailed_summary = summary_map.get((content_id, scene_idx), "")
 
-            pending = [q for q in flat_queries
-                       if (content_id, q["query"]) not in processed_pairs]
-            if not pending:
-                print(f"\n[Skip] '{content_id}' Scene {scene_idx}: 모든 질문 평가 완료")
-                continue
+                    # 그룹화된 포맷을 펼쳐서 (mode, query) 개별 항목 리스트로 변환
+                    flat_queries = []
+                    for group in query_groups:
+                        mode = group.get("mode", "")
+                        if mode not in args.modes:
+                            continue
+                        for q_text in group.get("queries", []):
+                            flat_queries.append({"mode": mode, "query": q_text})
 
-            start_time = float(scene_item.get("start_time", 0.0))
-            end_time = float(scene_item.get("end_time", 0.0))
-            print(f"\nEvaluating '{content_id}' Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] ({len(pending)}개 질문)")
+                    total_generated += len(flat_queries)
+                    pending = [q for q in flat_queries if (content_id, q["query"]) not in processed_pairs]
+                    
+                    if not pending:
+                        continue
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                futures = [
-                    executor.submit(
-                        judge_one, q, content_id, scene_idx, detailed_summary,
-                        client, args, judge_config, file_write_lock
-                    )
-                    for q in pending
-                ]
-                for future in concurrent.futures.as_completed(futures):
-                    future.result()
+                    start_time = float(scene_item.get("start_time", 0.0))
+                    end_time = float(scene_item.get("end_time", 0.0))
+                    print(f"\nEvaluating '{content_id}' Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] ({len(pending)}개 질문)")
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                        futures = [
+                            executor.submit(
+                                judge_one, q, content_id, scene_idx, detailed_summary,
+                                client, args, judge_config, file_write_lock
+                            )
+                            for q in pending
+                        ]
+                        for future in concurrent.futures.as_completed(futures):
+                            future.result()
+                            total_evaluated += 1
+                            
+                    processed_pairs.update((content_id, q["query"]) for q in pending)
+
+                # TODO List 현황 출력 (한 사이클 처리 후)
+                pending_count = total_generated - total_evaluated
+                print(f"\n▶ [Judging TODO List] Total Generated: {total_generated} | Evaluated: {total_evaluated} | Pending: {pending_count}")
+
+            if args.watch:
+                if pipeline_done:
+                    print("\n[Watch] Generation 파이프라인의 종료 시그널(pipeline_done)을 감지했습니다. 모든 처리를 완료하고 종료합니다.")
+                    break
+                time.sleep(3)
+            else:
+                break
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

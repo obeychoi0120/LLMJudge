@@ -93,8 +93,11 @@ def make_voice_hint_configs(thinking_level=0):
         "kss": make_generate_config(system_instruction=_VOICE_HINT_BASE_KSS, thinking_level=thinking_level)
     }
 
-def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, kss_summary_text, end_time):
-    """하나의 Keypoint에 대해 Voice Hint(img_desc, mm_desc, kss)를 병렬로 수행합니다."""
+def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, kss_summary_text, end_time, target_modes=None):
+    """하나의 Keypoint에 대해 Voice Hint를 지정된 모드에 대해서만 병렬 수행합니다."""
+    if target_modes is None:
+        target_modes = ["img_desc", "mm_desc", "kss"]
+        
     def generate_voice_hints(mode):
         contents = []
         if mode == "kss":
@@ -147,24 +150,21 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
         return {"queries": queries[:3], "rationale": rationale}, time.time() - t0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        f_vh_img  = executor.submit(generate_voice_hints, "img_desc")
-        f_vh_mm   = executor.submit(generate_voice_hints, "mm_desc")
-        f_vh_kss  = executor.submit(generate_voice_hints, "kss")
+        futures = {m: executor.submit(generate_voice_hints, m) for m in target_modes}
         
-        vh_res_img, elapsed_img = f_vh_img.result()
-        vh_res_mm, elapsed_mm = f_vh_mm.result()
-        vh_res_kss, elapsed_kss = f_vh_kss.result()
+        results = {}
+        elapseds = {}
+        for m in target_modes:
+            res, elapsed = futures[m].result()
+            results[m] = res
+            elapseds[m] = elapsed
 
-    return {
-        "img_desc": vh_res_img["queries"], 
-        "mm_desc": vh_res_mm["queries"],
-        "kss": vh_res_kss["queries"],
-        "rationales": {
-            "img_desc": vh_res_img["rationale"],
-            "mm_desc": vh_res_mm["rationale"],
-            "kss": vh_res_kss["rationale"]
-        }
-    }, {"img_desc": elapsed_img, "mm_desc": elapsed_mm, "kss": elapsed_kss}
+    out_dict = {"rationales": {}}
+    for m in target_modes:
+        out_dict[m] = results[m]["queries"]
+        out_dict["rationales"][m] = results[m]["rationale"]
+        
+    return out_dict, elapseds
 
 # ───────────────────────────────────────────────
 # Main
@@ -175,6 +175,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
+    parser.add_argument("--modes", nargs="+", default=["img_desc", "mm_desc", "kss"], choices=["img_desc", "mm_desc", "kss"], help="생성할 모드 직접 지정 (기본값: 모두 생성)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -211,8 +212,19 @@ def main():
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
-    # 기처리분 로드
-    vh_pairs = load_processed_pairs(args.output_file,  key_fields=("content_id", "scene_idx"))
+    # 기처리분 로드: 모드별로 개별 추적하도록 변경
+    # (content_id, scene_idx, mode)
+    done_modes_by_scene = set()
+    for rec in load_jsonl(args.output_file):
+        c_id = rec.get("content_id")
+        s_idx = rec.get("scene_idx")
+        for q_grp in rec.get("queries", []):
+            mode = q_grp.get("mode")
+            if c_id and s_idx is not None and mode:
+                done_modes_by_scene.add((c_id, s_idx, mode))
+
+    # 생성할 목표 모드 설정
+    target_modes = args.modes
 
     print("\n" + "="*50)
     print("Voice Hint 생성 파이프라인을 시작합니다.")
@@ -220,17 +232,30 @@ def main():
 
     try:
         for content_id, keypoints in keypoints_by_content.items():
-            done_scenes = {s_idx for (c_id, s_idx) in vh_pairs if c_id == content_id}
-            remaining = [kp for kp in keypoints if kp.get("scene_idx") not in done_scenes]
+            
+            # 각 Keypoint별로 생성되지 않은 (누락된) 모드 추적
+            remaining = []
+            fully_done_count = 0
+            
+            for kp in keypoints:
+                real_idx = keypoints.index(kp)
+                s_idx = kp.get("scene_idx", real_idx)
+                
+                missing_modes = [m for m in target_modes if (content_id, s_idx, m) not in done_modes_by_scene]
+                if missing_modes:
+                    remaining.append((kp, missing_modes))
+                else:
+                    fully_done_count += 1
 
             if not remaining:
-                print(f"\n[Skip] '{content_id}': 모든 Scene 완료")
+                print(f"\n[Skip] '{content_id}': 모든 Scene 완벽 (누락 모드 없음)")
                 continue
-            if done_scenes:
-                print(f"\n[Resume] '{content_id}': {len(done_scenes)}/{len(keypoints)}개 Scene 기완료, {len(remaining)}개 재개")
+
+            if fully_done_count > 0:
+                print(f"\n[Resume] '{content_id}': {fully_done_count}/{len(keypoints)}개 Scene 완벽 처리됨, {len(remaining)}개 Scene(부분 누락 포함) 재개")
 
             print(f"\n{'='*50}")
-            print(f"Processing Content: '{content_id}' ({len(remaining)}/{len(keypoints)}개 Keypoint)")
+            print(f"Processing Content: '{content_id}' ({len(remaining)}/{len(keypoints)}개 Keypoint 추가 처리)")
             print(f"{'='*50}")
 
             if not check_gcs_files_exist(args.gs_bucket_name, content_id):
@@ -239,21 +264,21 @@ def main():
             # JSONL 메타데이터 프리로드 (캐시 워밍업)
             preload_content_metadata(args.gs_bucket_name, content_id)
 
-            for kp in remaining:
+            for kp, missing_modes in remaining:
                 real_idx = keypoints.index(kp)
                 scene_idx = kp.get("scene_idx", real_idx)
                 start_time = float(kp.get("start_time", 0.0))
                 end_time = float(kp.get("end_time", 0.0))
                 kss_summary_text = kss_map.get((content_id, scene_idx), "")
 
-                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s]")
-                if kss_summary_text:
+                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
+                if kss_summary_text and "kss" in missing_modes:
                     current_scene_only = kss_summary_text.split("[2. 현재 장면 묘사]")[-1].strip() if "[2. 현재 장면 묘사]" in kss_summary_text else kss_summary_text.strip()
                     print(f"\n[ --- KSS 현재 장면 --- ]\n\n{current_scene_only}\n")
                 
                 # 로깅용 Desc 텍스트 추출 및 즉시 출력 (description-only 형식)
-                img_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", scene_idx, scene_idx)
-                mm_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "mm_desc", scene_idx, scene_idx)
+                img_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", scene_idx, scene_idx) if "img_desc" in missing_modes else ""
+                mm_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "mm_desc", scene_idx, scene_idx) if "mm_desc" in missing_modes else ""
 
                 def _run_keypoint():
                     # 과거 N개 구역(Scene)을 위한 scene_idx 계산 (Sliding Window)
@@ -273,7 +298,7 @@ def main():
                         "img_desc": img_desc_text,
                         "mm_desc": mm_desc_text,
                     }
-                    return process_vh_modes(client, args.vh_gen_model, vh_configs, past_parts, current_parts, kss_summary_text, end_time)
+                    return process_vh_modes(client, args.vh_gen_model, vh_configs, past_parts, current_parts, kss_summary_text, end_time, missing_modes)
 
                 try:
                     vh_dict, vh_elapsed_dict = _retry_api_call(
@@ -281,28 +306,28 @@ def main():
                         label=f"Voice Hint (Scene {scene_idx})"
                     )
 
-                    scene_key = (content_id, scene_idx)
+                    query_groups = []
+                    for mod in missing_modes:
+                        query_groups.append({
+                            "mode": mod,
+                            "queries": vh_dict.get(mod, []),
+                            "rationale": vh_dict.get("rationales", {}).get(mod, "")
+                        })
+                        
+                    scene_record = {
+                        "content_id": content_id,
+                        "scene_idx": scene_idx,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "queries": query_groups,
+                    }
+                    
+                    append_jsonl(args.output_file, scene_record)
+                    
+                    for mod in missing_modes:
+                        done_modes_by_scene.add((content_id, scene_idx, mod))
 
-                    # voice_hint.jsonl: 해당 파일에 없는 경우에만 기록
-                    if scene_key not in vh_pairs:
-                        query_groups = [
-                            {"mode": "img_desc", "queries": vh_dict["img_desc"], "rationale": vh_dict.get("rationales", {}).get("img_desc", "")},
-                            {"mode": "mm_desc", "queries": vh_dict["mm_desc"], "rationale": vh_dict.get("rationales", {}).get("mm_desc", "")}
-                        ]
-                        if vh_dict.get("kss"):
-                            query_groups.append({"mode": "kss", "queries": vh_dict["kss"], "rationale": vh_dict.get("rationales", {}).get("kss", "")})
-                            
-                        scene_record = {
-                            "content_id": content_id,
-                            "scene_idx": scene_idx,
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "queries": query_groups,
-                        }
-                        append_jsonl(args.output_file, scene_record)
-                        vh_pairs.add(scene_key)
-
-                    for mod in ["kss", "img_desc", "mm_desc"]:
+                    for mod in missing_modes:
                         if vh_dict.get(mod):
                             print(f"-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
                             if vh_dict.get("rationales", {}).get(mod):
@@ -316,12 +341,18 @@ def main():
                     print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")
                     continue
 
-            done_count = len({s_idx for (c_id, s_idx) in vh_pairs if c_id == content_id})
-            print(f"\n[OK] '{content_id}' - {done_count}개 Scene 완료")
+            done_count_now = len({s_idx for (c_id, s_idx, _) in done_modes_by_scene if c_id == content_id})
+            print(f"\n[OK] '{content_id}' - {done_count_now}개 Scene 처리 누적 확인됨")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
+
+    try:
+        append_jsonl(args.output_file, {"pipeline_done": True})
+        print("\n[Signal] Pipeline 완료 시그널을 출력 파일에 기록했습니다.")
+    except Exception as e:
+        print(f"\n[Warning] Pipeline 완료 시그널 기록 실패: {e}")
 
     print("\n" + "="*50)
     print(f"모든 작업이 완료되었습니다. 저장 위치: {args.output_file}")
