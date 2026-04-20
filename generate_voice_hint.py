@@ -3,7 +3,7 @@ import time
 import argparse
 import json
 import concurrent.futures
-from gemini_api_utils import (
+from utils import (
     get_common_argparser,
     make_generate_config,
     check_gcs_files_exist,
@@ -11,6 +11,9 @@ from gemini_api_utils import (
     ensure_output_dir, load_processed_pairs,
     preload_content_metadata, get_gcs_descriptions_by_scene_idx,
     init_pipeline, load_jsonl, append_jsonl,
+    sort_and_validate_jsonl,
+    load_keypoints_by_content, load_summary_map, check_input_file,
+    print_pipeline_banner, print_pipeline_done,
 )
 
 # ───────────────────────────────────────────────
@@ -188,30 +191,18 @@ def main():
 
     vh_configs = make_voice_hint_configs(thinking_level=args.vh_thinking_level)
 
-    if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")
+    if not check_input_file(args.input_file, hint="먼저 identify_keypoint.py를 실행하세요."):
         return
 
     # Keypoint 목록 로드
-    keypoints_by_content = {}
-    for data in load_jsonl(args.input_file):
-        c_id = data.get("content_id")
-        kps = data.get("keypoints", [])
-        if c_id and kps:
-            keypoints_by_content[c_id] = kps
-
+    keypoints_by_content = load_keypoints_by_content(args.input_file)
     if not keypoints_by_content:
         print(f"Error: {args.input_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
         return
 
     # KSS 맵 로드: (content_id, scene_idx) -> summary_text
-    kss_map = {}
-    if os.path.exists(args.kss_file):
-        for rec in load_jsonl(args.kss_file):
-            c_id = rec.get("content_id")
-            s_idx = rec.get("scene_idx")
-            if c_id and s_idx is not None:
-                kss_map[(c_id, s_idx)] = rec.get("summary", "")
+    kss_map = load_summary_map(args.kss_file)
+    if kss_map:
         print(f"[Summary] {len(kss_map)}개 Scene의 KSS 로드됨 ({args.kss_file})")
     else:
         print(f"[Warning] KSS 파일을 찾을 수 없습니다: {args.kss_file}")
@@ -233,9 +224,7 @@ def main():
     # 생성할 목표 모드 설정
     target_modes = args.modes
 
-    print("\n" + "="*50)
-    print("Voice Hint 생성 파이프라인을 시작합니다.")
-    print("="*50)
+    print_pipeline_banner("Voice Hint 생성 파이프라인을 시작합니다.")
 
     try:
         for content_id, keypoints in keypoints_by_content.items():
@@ -354,15 +343,24 @@ def main():
         print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
 
-    try:
-        append_jsonl(args.output_file, {"pipeline_done": True})
-        print("\n[Signal] Pipeline 완료 시그널을 출력 파일에 기록했습니다.")
-    except Exception as e:
-        print(f"\n[Warning] Pipeline 완료 시그널 기록 실패: {e}")
+    # 결과 파일 정렬 및 누락/모드 점검 (utils.py 활용)
+    is_perfect = sort_and_validate_jsonl(
+        args.output_file, 
+        keypoints_by_content, 
+        expected_modes=args.modes, 
+        mode_key="queries"
+    )
 
-    print("\n" + "="*50)
-    print(f"모든 작업이 완료되었습니다. 저장 위치: {args.output_file}")
-    print("="*50)
+    if is_perfect:
+        try:
+            append_jsonl(args.output_file, {"pipeline_done": True})
+            print(f"\n[Signal] 모든 모드({args.modes}) 처리가 완벽히 끝나 Pipeline 종료 시그널을 기록했습니다.")
+        except Exception as e:
+            print(f"\n[Warning] Pipeline 완료 시그널 기록 실패: {e}")
+    else:
+        print("\n[Info] 아직 누락된 Scene이나 모드가 있어 완료 시그널을 기록하지 않았습니다.")
+
+    print_pipeline_done(args.output_file)
 
 if __name__ == "__main__":
     main()

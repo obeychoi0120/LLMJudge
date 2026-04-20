@@ -1,7 +1,7 @@
 import pandas as pd
 import json
 import os
-from gemini_api_utils import load_jsonl
+from utils import load_jsonl
 
 def aggregate_uq_scores(input_dir):
     """UQ Score를 집계하여 JSON으로 저장합니다."""

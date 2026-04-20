@@ -539,3 +539,121 @@ def generate_single_turn_response(client: genai.Client, model: str, config: type
         lambda: client.models.generate_content(model=model, contents=contents, config=config),
         label="Generation API (Single-turn)",
     )
+
+
+# ============================================================
+# Post-processing / Validation
+# ============================================================
+
+def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None, mode_key=None):
+    """JSONL 파일을 content_id, scene_idx 순으로 정렬하고 누락된 Scene(및 모드)을 점검합니다.
+    - 기존의 'pipeline_done' 시그널은 정렬 과정에서 제거됩니다.
+    - expected_modes와 mode_key가 제공되면, 각 Scene 내에 해당 모드들이 모두 존재하는지도 체크합니다.
+    - 모든 데이터가 완벽하면 True, 누락이 있으면 False를 반환합니다.
+    """
+    if not os.path.exists(file_path):
+        print(f"[Warning] 파일을 찾을 수 없습니다: {file_path}")
+        return []
+
+    print(f"\n{'='*50}")
+    print(f"결과 파일 정렬 및 검증: {file_path}")
+    
+    data_records = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    obj = json.loads(line)
+                    if obj.get("pipeline_done"):
+                        continue
+                    data_records.append(obj)
+                except json.JSONDecodeError:
+                    pass
+    
+    # 정렬
+    data_records.sort(key=lambda x: (x.get("content_id", ""), x.get("scene_idx", 0)))
+    
+    # 덮어쓰기 (시그널 제거된 퓨어 데이터만)
+    with open(file_path, "w", encoding="utf-8") as f:
+        for rec in data_records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    print(f"-> 정렬 완료 ({len(data_records)}개 항목)")
+
+    # 누락 점검
+    print("\n[최종 누락분 점검]")
+    missing_scenes = []
+    done_set = { (x.get("content_id"), x.get("scene_idx")) for x in data_records }
+    
+    for c_id, kps in keypoints_by_content.items():
+        for kp in kps:
+            s_idx = kp.get("scene_idx", kps.index(kp))
+            if (c_id, s_idx) not in done_set:
+                missing_scenes.append((c_id, s_idx))
+    
+    if missing_scenes:
+        print(f"-> 총 {len(missing_scenes)}개의 Scene 처리가 누락되었습니다.")
+        for c_id, s_idx in missing_scenes:
+            print(f"    - ({c_id}, {s_idx})")
+    else:
+        print("-> 모든 Scene이 누락 없이 정상적으로 생성되었습니다.")
+    print("="*50 + "\n")
+    
+    return missing_scenes, data_records
+
+
+# ============================================================
+# Common Pipeline Helpers
+# ============================================================
+
+def load_keypoints_by_content(jsonl_path):
+    """Keypoint JSONL 파일을 파싱하여 {content_id: [kp, ...]} 딕셔너리로 반환합니다."""
+    keypoints_by_content = {}
+    for data in load_jsonl(jsonl_path):
+        c_id = data.get("content_id")
+        kps = data.get("keypoints", [])
+        if c_id and kps:
+            keypoints_by_content[c_id] = kps
+    return keypoints_by_content
+
+
+def load_summary_map(jsonl_path):
+    """KeyScene Summary JSONL을 파싱하여 {(content_id, scene_idx): summary_text} 맵을 반환합니다."""
+    summary_map = {}
+    if not os.path.exists(jsonl_path):
+        return summary_map
+    for rec in load_jsonl(jsonl_path):
+        c_id = rec.get("content_id")
+        s_idx = rec.get("scene_idx")
+        if c_id and s_idx is not None:
+            summary_map[(c_id, s_idx)] = rec.get("summary", "")
+    return summary_map
+
+
+def check_input_file(path, hint=""):
+    """입력 파일의 존재 여부를 확인합니다. 없으면 에러 출력 후 False 반환.
+
+    Args:
+        path: 확인할 파일 경로
+        hint: 에러 메시지에 참고로 출력할 선행 스크립트 안내 (예: "먼저 identify_keypoint.py를 실행하세요.")
+    """
+    if os.path.exists(path):
+        return True
+    msg = f"Error: {path} 파일이 존재하지 않습니다."
+    if hint:
+        msg += f" {hint}"
+    print(msg)
+    return False
+
+
+def print_pipeline_banner(title):
+    """파이프라인 시작 배너를 출력합니다."""
+    print("\n" + "=" * 50)
+    print(title)
+    print("=" * 50)
+
+
+def print_pipeline_done(output_path):
+    """파이프라인 완료 배너를 출력합니다."""
+    print("\n" + "=" * 50)
+    print(f"모든 작업이 완료되었습니다. 저장 위치: {output_path}")
+    print("=" * 50)

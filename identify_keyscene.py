@@ -3,7 +3,7 @@ import time
 import concurrent.futures
 import argparse
 import json
-from gemini_api_utils import (
+from utils import (
     get_common_argparser,
     make_generate_config,
     process_gcs_file, process_gcs_file_by_scene_idx, check_gcs_files_exist,
@@ -11,6 +11,7 @@ from gemini_api_utils import (
     _retry_api_call, load_scenes,
     ensure_output_dir, load_processed_content_ids,
     preload_content_metadata, init_pipeline, append_jsonl,
+    check_input_file, print_pipeline_banner, print_pipeline_done,
 )
 
 # ============================================================
@@ -288,8 +289,7 @@ def main():
     candidate_config = make_candidate_config(thinking_level=args.keypoint_thinking_level)
     selector_config = make_selector_config(thinking_level=args.keypoint_thinking_level)
 
-    if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
+    if not check_input_file(args.input_file):
         return
 
     with open(args.input_file, "r", encoding="utf-8") as f:
@@ -303,9 +303,7 @@ def main():
     if processed_ids:
         print(f"[{len(processed_ids)}] 개의 콘텐츠가 이미 처리되어 건너뜁니다.")
 
-    print("\n" + "="*50)
-    print("Keypoint Scene 식별 파이프라인을 시작합니다.")
-    print("="*50)
+    print_pipeline_banner("Keypoint Scene 식별 파이프라인을 시작합니다.")
 
     try:
         for item in input_list:
@@ -483,9 +481,7 @@ def main():
         print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
 
-    print("\n" + "="*50)
-    print(f"Keypoint 식별 완료. 저장 위치: {args.output_file}")
-    print("="*50)
+    print_pipeline_done(args.output_file)
 
 
 if __name__ == "__main__":

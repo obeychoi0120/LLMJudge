@@ -6,7 +6,7 @@ import subprocess
 import sys
 import concurrent.futures
 import threading
-from gemini_api_utils import (
+from utils import (
     get_common_argparser,
     make_generate_config,
     process_gcs_file, process_gcs_file_by_scene_idx,
@@ -14,6 +14,7 @@ from gemini_api_utils import (
     _retry_api_call, load_scenes,
     ensure_output_dir, preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
+    print_pipeline_banner,
 )
 
 # ============================================================
@@ -166,11 +167,9 @@ def main():
     for fpath in [args.output_file]:
         ensure_output_dir(fpath)
 
-    print("\n" + "=" * 50)
-    print("Gemini Inference 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
+    print_pipeline_banner("Gemini Inference 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
     if args.continuous:
         print("Continuous 모드가 활성화되었습니다. 다른 터미널의 출력을 기다리며 지속 처리합니다.")
-    print("=" * 50)
 
     try:
         while True:

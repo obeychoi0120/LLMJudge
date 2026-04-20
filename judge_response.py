@@ -6,7 +6,7 @@ import subprocess
 import sys
 import concurrent.futures
 import threading
-from gemini_api_utils import (
+from utils import (
     get_common_argparser,
     make_generate_config,
     start_chat_session,
@@ -14,6 +14,8 @@ from gemini_api_utils import (
     _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
     init_pipeline, load_jsonl, append_jsonl,
+    load_summary_map,
+    print_pipeline_banner, print_pipeline_done,
 )
 
 # ============================================================
@@ -90,11 +92,9 @@ def main():
     # 출력 폴더 생성
     ensure_output_dir(args.output_file)
 
-    print("\n" + "=" * 50)
-    print("Gemini Evaluation 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
+    print_pipeline_banner("Gemini Evaluation 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
     if args.continuous:
         print("Continuous 모드가 활성화되었습니다. 다른 터미널의 출력을 기다리며 지속 처리합니다.")
-    print("=" * 50)
 
     try:
         while True:
@@ -102,13 +102,7 @@ def main():
             processed_pairs = load_processed_pairs(args.output_file)
 
             # 2-1. KeyScene Summary 읽기
-            summary_map = {}  # (content_id, scene_idx) -> summary_text
-            for ref_data in load_jsonl(args.keyscene_summary_file):
-                r_cid = ref_data.get("content_id")
-                r_idx = ref_data.get("scene_idx")
-                r_text = ref_data.get("summary")
-                if r_cid and r_idx is not None and r_text:
-                    summary_map[(r_cid, r_idx)] = r_text
+            summary_map = load_summary_map(args.keyscene_summary_file)
 
             # 2-2. Input 읽기 - 새 포맷: 각 줄 = {"content_id", "query", "answers"}
             #    content_id별로 queries 리스트로 재그룹핑

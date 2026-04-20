@@ -2,7 +2,7 @@ import os
 import time
 import argparse
 import json
-from gemini_api_utils import (
+from utils import (
     get_common_argparser,
     make_generate_config,
     process_gcs_file_by_scene_idx,
@@ -11,6 +11,8 @@ from gemini_api_utils import (
     ensure_output_dir,
     preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
+    load_keypoints_by_content, load_summary_map, check_input_file,
+    print_pipeline_banner, print_pipeline_done,
 )
 
 # ───────────────────────────────────────────────
@@ -91,31 +93,15 @@ def main():
                                         thinking_level=args.uq_gen_thinking_level)
 
     # Keypoint 정보 로드
-    content_keypoints_map = {}
-    if not os.path.exists(args.keypoints_file):
-        print(f"Error: {args.keypoints_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")
+    if not check_input_file(args.keypoints_file, hint="먼저 identify_keypoint.py를 실행하세요."):
         return
 
     print(f"️  keypoint_scenes.jsonl을 사용: {args.keypoints_file}")
-    for data in load_jsonl(args.keypoints_file):
-        c_id = data.get("content_id")
-        keypoints = data.get("keypoints", [])
-        if c_id and keypoints:
-            content_keypoints_map[c_id] = [
-                {
-                    "scene_idx": kp.get("scene_idx"),
-                }
-                for kp in keypoints
-            ]
+    content_keypoints_map = load_keypoints_by_content(args.keypoints_file)
 
     # KeyScene Summary 맵 로드
-    summary_map = {}
-    if os.path.exists(args.keyscene_summary_file):
-        for data in load_jsonl(args.keyscene_summary_file):
-            c_id = data.get("content_id")
-            s_idx = data.get("scene_idx")
-            if c_id and s_idx is not None:
-                summary_map[(c_id, s_idx)] = data.get("summary", "")
+    summary_map = load_summary_map(args.keyscene_summary_file)
+    if summary_map:
         print(f"[Summary] {len(summary_map)}개 Scene의 Summary 로드됨 ({args.keyscene_summary_file})")
     else:
         print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.keyscene_summary_file}")
@@ -137,9 +123,7 @@ def main():
         processed_contents = set([c_id for c_id, _ in processed_scenes])
         print(f"[{len(processed_contents)}] 개의 콘텐츠(씬 부분 완료 포함)가 이미 {args.output_file}에 존재하여 건너뜁니다.")
 
-    print("\n" + "="*50)
-    print("User Query 생성 파이프라인을 시작합니다.")
-    print("="*50)
+    print_pipeline_banner("User Query 생성 파이프라인을 시작합니다.")
 
     try:
         for content_id, keypoints in content_keypoints_map.items():
@@ -185,27 +169,25 @@ def main():
                     for i, q in enumerate(scene_queries):
                         print(f"  {i+1}: {q}")
 
-                    with open(args.output_file, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({
-                            "content_id": content_id,
-                            "scene_idx": scene_idx,
-                            "queries": scene_queries
-                        }, ensure_ascii=False) + "\n")
+                    append_jsonl(args.output_file, {
+                        "content_id": content_id,
+                        "scene_idx": scene_idx,
+                        "queries": scene_queries
+                    })
 
                     processed_scenes.add((content_id, scene_idx))
 
                 except Exception as e:
-                    print(f"[ERROR] 질문 생성 실패 (end={end_time:.1f}s): {e}")
+                    print(f"[ERROR] 질문 생성 실패 (Scene {scene_idx}): {e}")
                     continue
 
             print(f"\n[OK] '{content_id}' - User Query 생성 세션 완료")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
+        os._exit(1)
 
-    print("\n" + "="*50)
-    print(f"모든 작업이 완료되었습니다. 저장 위치: {args.output_file}")
-    print("="*50)
+    print_pipeline_done(args.output_file)
 
 
 if __name__ == "__main__":

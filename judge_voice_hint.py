@@ -4,13 +4,15 @@ import json
 import time
 import concurrent.futures
 import threading
-from gemini_api_utils import (
+from utils import (
     get_common_argparser,
     make_generate_config,
     parse_json_response,
     _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
     init_pipeline, load_jsonl, append_jsonl,
+    load_summary_map, check_input_file,
+    print_pipeline_banner, print_pipeline_done,
 )
 
 # ───────────────────────────────────────────────
@@ -137,26 +139,17 @@ def main():
     if processed_pairs:
         print(f"[{len(processed_pairs)}] 개의 (content_id, query) 쌍이 이미 처리됨.")
 
-    if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 generate_voice_hint.py를 실행하세요.")
+    if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
         return
 
     # Summary 맵 로드: (content_id, scene_idx) -> summary_text
-    summary_map = {}
-    for rec in load_jsonl(args.kss_file):
-        key = (rec.get("content_id"), rec.get("scene_idx"))
-        if key[0] and key[1] is not None:
-            summary_map[key] = rec.get("summary", "")
+    summary_map = load_summary_map(args.kss_file)
     if summary_map:
         print(f"[Summary] {len(summary_map)}개 Scene의 Summary 로드됨 ({args.kss_file})")
-    elif os.path.exists(args.kss_file):
-        pass  # 파일은 있지만 비어 있음
-    else:
+    elif not os.path.exists(args.kss_file):
         print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.kss_file}")
 
-    print(f"\n{'='*50}")
-    print(f"Voice Hint 질문 품질 평가 프로세스 시작 (Watch 모드: {args.watch})")
-    print(f"{'='*50}")
+    print_pipeline_banner(f"Voice Hint 질문 품질 평가 프로세스 시작 (Watch 모드: {args.watch})")
 
     file_write_lock = threading.Lock()
     last_position = 0
@@ -251,9 +244,7 @@ def main():
         print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
 
-    print(f"\n{'='*50}")
-    print(f"Voice Hint 질문 평가 완료. 점수 기록: {args.scores_file}")
-    print(f"{'='*50}")
+    print_pipeline_done(args.scores_file)
 
 if __name__ == "__main__":
     main()

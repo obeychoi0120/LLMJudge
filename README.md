@@ -277,7 +277,7 @@ LLMJudge/
 ├── generate_user_query.py        # KeyScene + KSS → User Query 생성 (B-1)
 ├── generate_uq_response.py       # User Query → 4모드 병렬 답변 생성 (B-2)
 ├── judge_response.py             # 각 모드 답변에 대한 자동 품질 평가 (B-3)
-├── gemini_api_utils.py           # Gemini SDK, GCS 접근, 공통 유틸
+├── utils.py                     # Gemini SDK, GCS 접근, 공통 유틸
 ├── jsonl_to_json.py              # JSONL → 분석용 JSON 변환
 ├── aggregate_scores.py           # 점수 집계
 ├── export_to_excel.py            # Excel 리포트 생성

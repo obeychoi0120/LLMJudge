@@ -4,7 +4,7 @@ import argparse
 import json
 import concurrent.futures
 import threading
-from gemini_api_utils import (
+from utils import (
     get_common_argparser,
     make_generate_config,
     process_gcs_file_by_scene_idx, check_gcs_files_exist,
@@ -12,6 +12,9 @@ from gemini_api_utils import (
     ensure_output_dir, load_processed_pairs,
     preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
+    sort_and_validate_jsonl,
+    load_keypoints_by_content, check_input_file,
+    print_pipeline_banner, print_pipeline_done,
 )
 
 # ───────────────────────────────────────────────
@@ -158,18 +161,10 @@ def main():
     past_summary_config = make_past_summary_config(thinking_level=args.kss_past_summary_thinking_level)
     current_scene_config = make_current_scene_config(thinking_level=args.kss_current_scene_thinking_level)
 
-    if not os.path.exists(args.input_file):
-        print(f"Error: {args.input_file} 파일이 존재하지 않습니다. 먼저 identify_keypoint.py를 실행하세요.")
+    if not check_input_file(args.input_file, hint="먼저 identify_keypoint.py를 실행하세요."):
         return
 
-    # Keypoint 목록 로드
-    keypoints_by_content = {}
-    for data in load_jsonl(args.input_file):
-        c_id = data.get("content_id")
-        kps = data.get("keypoints", [])
-        if c_id and kps:
-            keypoints_by_content[c_id] = kps
-
+    keypoints_by_content = load_keypoints_by_content(args.input_file)
     if not keypoints_by_content:
         print(f"Error: {args.input_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
         return
@@ -188,9 +183,7 @@ def main():
             if c_id and s_idx is not None:
                 summary_texts_by_scene[(c_id, s_idx)] = data
 
-    print("\n" + "="*50)
-    print("KeyScene Summary 생성 파이프라인을 시작합니다.")
-    print("="*50)
+    print_pipeline_banner("KeyScene Summary 생성 파이프라인을 시작합니다.")
 
     file_lock = threading.Lock()
     stop_event = threading.Event()
@@ -366,45 +359,10 @@ def main():
     finally:
         executor.shutdown(wait=True)
 
-    print("\n" + "="*50)
-    print("결과 파일을 정렬합니다...")
-    if os.path.exists(args.keyscene_summary_file):
-        lines = []
-        with open(args.keyscene_summary_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        lines.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
-        
-        lines.sort(key=lambda x: (x.get("content_id", ""), x.get("scene_idx", 0)))
-        
-        with open(args.keyscene_summary_file, "w", encoding="utf-8") as f:
-            for line in lines:
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
-        print(f"-> 정렬 완료 ({len(lines)}개 항목)")
+    # 결과 파일 정렬 및 누락 점검 (utils.py 공통 함수 사용)
+    sort_and_validate_jsonl(args.keyscene_summary_file, keypoints_by_content)
 
-        print("\n[최종 누락분 점검]")
-        missing_scenes = []
-        done_set = { (x.get("content_id"), x.get("scene_idx")) for x in lines }
-        
-        for c_id, kps in keypoints_by_content.items():
-            for kp in kps:
-                s_idx = kp.get("scene_idx", kps.index(kp))
-                if (c_id, s_idx) not in done_set:
-                    missing_scenes.append((c_id, s_idx))
-        
-        if missing_scenes:
-            print(f"-> 총 {len(missing_scenes)}개의 Scene 처리가 누락되었습니다:")
-            for c_id, s_idx in missing_scenes:
-                print(f"    - ({c_id}, {s_idx})")
-        else:
-            print("-> 모든 Scene이 누락 없이 정상적으로 생성되었습니다.")
-
-    print("\n" + "="*50)
-    print(f"모든 작업이 완료되었습니다. 저장 위치: {args.keyscene_summary_file}")
-    print("="*50)
+    print_pipeline_done(args.keyscene_summary_file)
 
 
 if __name__ == "__main__":
