@@ -331,10 +331,9 @@ def main():
                         if vh_dict.get(mod):
                             print(f"-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
                             if vh_dict.get("rationales", {}).get(mod):
-                                print(f"[Rationale]: {vh_dict['rationales'][mod]}")
+                                print(f"[Rationale]: {vh_dict['rationales'][mod]}\n")
                             for qi, q in enumerate(vh_dict[mod], 1):
-                                print(f"    {qi}. {q}")
-                            print("")
+                                print(f"{qi}. {q}")
                     print(f"------------------------------------------------------\n")
 
                 except Exception as e:
