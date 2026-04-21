@@ -155,19 +155,16 @@ def main():
     parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 KeyScene Summary를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary 별도 저장 경로")
+    parser.add_argument("--watch", action="store_true", help="입력 파일에 새로운 데이터가 추가되는지 주기적으로 감지하고 계속 처리합니다.")
 
     args, client = init_pipeline(parser.parse_args())
 
     past_summary_config = make_past_summary_config(thinking_level=args.kss_past_summary_thinking_level)
     current_scene_config = make_current_scene_config(thinking_level=args.kss_current_scene_thinking_level)
 
-    if not check_input_file(args.input_file, hint="먼저 identify_keypoint.py를 실행하세요."):
-        return
-
-    keypoints_by_content = load_keypoints_by_content(args.input_file)
-    if not keypoints_by_content:
-        print(f"Error: {args.input_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
-        return
+    if not args.watch:
+        if not check_input_file(args.input_file, hint="먼저 identify_keypoint.py를 실행하세요."):
+            return
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.keyscene_summary_file)
@@ -339,16 +336,43 @@ def main():
         print(f"\n[OK] '{content_id}' - {done_count}개 Scene 완료")
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    last_processed_ids = set()
+
     try:
-        futures = []
-        for content_id, keypoints in keypoints_by_content.items():
-            futures.append(executor.submit(process_content, content_id, keypoints))
-        
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-            except Exception as e:
-                print(f"[ERROR] Content 처리 중 예외 발생: {e}")
+        while not stop_event.is_set():
+            if os.path.exists(args.input_file):
+                keypoints_by_content = load_keypoints_by_content(args.input_file)
+            else:
+                keypoints_by_content = {}
+            
+            if not args.watch and not keypoints_by_content:
+                print(f"Error: {args.input_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
+                break
+
+            new_contents = {c_id: k_pts for c_id, k_pts in keypoints_by_content.items() if c_id not in last_processed_ids}
+
+            if new_contents:
+                if args.watch and last_processed_ids:
+                    print(f"\n[Watch] 새로운 데이터 {len(new_contents)}건이 발견되었습니다. 처리를 시작합니다...")
+                
+                futures = []
+                for content_id, keypoints in new_contents.items():
+                    futures.append(executor.submit(process_content, content_id, keypoints))
+                    last_processed_ids.add(content_id)
+                
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        print(f"[ERROR] Content 처리 중 예외 발생: {e}")
+
+            if not args.watch:
+                # 결과 파일 정렬 및 누락 점검 (utils.py 공통 함수 사용)
+                sort_and_validate_jsonl(args.keyscene_summary_file, keypoints_by_content)
+                break
+            
+            # Watch 모드인 경우 주기적으로 확인
+            time.sleep(5)
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
@@ -358,9 +382,6 @@ def main():
         os._exit(1)
     finally:
         executor.shutdown(wait=True)
-
-    # 결과 파일 정렬 및 누락 점검 (utils.py 공통 함수 사용)
-    sort_and_validate_jsonl(args.keyscene_summary_file, keypoints_by_content)
 
     print_pipeline_done(args.keyscene_summary_file)
 
