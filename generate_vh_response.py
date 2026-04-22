@@ -1,3 +1,4 @@
+import os
 import time
 import concurrent.futures
 import threading
@@ -314,9 +315,6 @@ def main():
 
             if pending:
                 print(f"\n[TODO] 처리할 Query: {len(pending)}개")
-                for item in pending:
-                    print(f"  - [{item['content_id']}] Scene {item['scene_idx']} | \"{item['query'][:50]}\"")
-                print("-" * 60)
 
             new_data_processed = False
 
@@ -342,7 +340,7 @@ def main():
                     if (content_id, query) in completed_pairs:
                         continue
 
-                    print(f"\n  [Scene {scene_idx}] Query: \"{query[:60]}\"")
+                    print(f"\n[Scene {scene_idx}] Query: {query}")
 
                     # Source 빌드 (4개 모드 모두)
                     _MODES = ("img_desc", "mm_desc", "video", "raw")
@@ -355,7 +353,7 @@ def main():
                                 max_past_scenes=args.max_past_scenes,
                             )
                     except Exception as e:
-                        print(f"  [ERROR] Source 빌드 실패 (Scene {scene_idx}): {e}")
+                        print(f"[ERROR] Source 빌드 실패 (Scene {scene_idx}): {e}")
                         continue
 
                     # 4개 모드 병렬 Response 생성
@@ -396,8 +394,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
-        import os as _os
-        _os.exit(1)
+        os._exit(1)
 
     print_pipeline_done(args.output_file)
 

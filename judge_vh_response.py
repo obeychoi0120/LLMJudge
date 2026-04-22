@@ -1,16 +1,11 @@
 import os
-import argparse
 import json
 import time
-import subprocess
-import sys
 import concurrent.futures
 import threading
 from utils import (
     get_common_argparser,
     make_generate_config,
-    start_chat_session,
-    parse_json_response,
     _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
     init_pipeline, load_jsonl, append_jsonl,
@@ -22,59 +17,83 @@ from utils import (
 # Judge Prompts
 # ============================================================
 
-_JUDGE_PROMPT = """\
-당신은 AI 모델이 특정한 영상에 대해 생성한 답변의 품질을 평가하는 객관적이고 전문적인 평가자입니다.
-해당 AI 모델은 원본 영상의 시각적, 청각적 정보를 바탕으로 답변을 생성합니다.
+_JUDGE_SYSTEM_PROMPT = """\
+You are an objective, expert evaluator assessing the quality of AI-generated responses about video content.
+The AI model generates answers based on various representations of the original video (visual frames, audio, text metadata, or multimodal descriptions).
 
-당신의 목표는 영상의 실제 내용인 [영상 컨텍스트 (KeyScene Summary)]를 유일한 사실적 근거(Ground Truth Anchor)로 삼아, 
-[사용자 질문]에 대한 [평가 대상 답변]이 얼마나 정확하고 훌륭한지 평가하는 것입니다.
-[영상 컨텍스트]는 과거 사건의 요약과 현재 장면의 상세한 묘사를 포함하고 있습니다.
-외부 검색은 허용하지 않습니다.
+Your goal is to evaluate how well the [Candidate Answer] responds to the [User Question], using the [Anchor (KeyScene Summary)] as the sole ground-truth reference.
+The Anchor contains a summary of past events and a detailed description of the current scene.
+Do NOT use external knowledge — evaluate strictly against the Anchor.
 
-[데이터 목록]
-- 영상 컨텍스트 (KeyScene Summary): 평가의 기준이 되는 영상의 실제 내용 (과거 장면 요약 및 현재 장면 묘사)
-- 사용자 질문
-- 평가 대상 답변
+Evaluate across 3 criteria, each scored 1–5:
 
-[평가 기준]
-아래 세 가지 항목에 대해 1점부터 5점까지 점수를 매겨주세요. (1점: 매우 나쁨, 3점: 보통/수용 가능함, 5점: 완벽함)
-1. 정확성 (Accuracy): 평가 대상 답변이 [영상 컨텍스트]의 핵심 사실과 일치하는가? [영상 컨텍스트]에 언급된 정보와 모순되거나 사실과 다른 내용(환각)이 포함되어 있지는 않은가?
-2. 포괄성 (Completeness): [사용자 질문]에 대답하기 위해 [영상 컨텍스트]에서 반드시 언급되어야 할 핵심 단서를 평가 대상 답변도 누락 없이 포함했는가?
-3. 가독성 (Helpfulness): 정보가 장황하게 나열되지 않고, 시간의 흐름이나 인과관계에 맞게 자연스럽고 이해하기 쉽게 작성되었는가? 시청자 관점에서 자연스러운 문장인가? (만약 평가 대상 답변이 부자연스럽게 메타데이터 구조나 필드명, '현재 장면', '과거 장면' 등의 시스템적인 용어를 직접 언급했다면 이 항목에서 감점을 고려하세요.)"""
+**1. Answer Relevance**
+Does the Candidate directly and substantively answer the User Question using information from the Anchor?
+- 5: Directly addresses the question with precise, relevant information that fully satisfies the query.
+- 4: Addresses the question well with minor gaps in relevance or slight tangential content.
+- 3: Partially answers the question but includes noticeable irrelevant content or misses the question's focus.
+- 2: Only loosely related to the question; significant portions are off-topic.
+- 1: Fails to address the question or provides a completely unrelated response.
 
-_JUDGE_FORMAT_PROMPT = """\
-[출력 형식]
-반드시 아래의 JSON 형식으로만 출력하세요. 다른 설명은 덧붙이지 마십시오.
+**2. Factual Precision**
+How accurately does the Candidate reflect verifiable facts from the Anchor: proper nouns, events, dialogue content, numbers, and specific claims?
+- 5: All key facts, names, and events match the Anchor with high fidelity.
+- 4: Most facts are correct with minor omissions, but NO fabricated information.
+- 3: Gets core facts right but omits several important details, or contains 1–2 minor inaccuracies.
+- 2: Contains multiple factual errors or significant omissions.
+- 1: Fabricates facts not present in the Anchor or severely misidentifies key entities.
+IMPORTANT: Fabrication (inventing facts not in the Anchor) must be penalized MORE harshly than omission (failing to mention facts). A response that omits a detail is better than one that invents a wrong detail.
+
+**3. Response Quality**
+Is the response well-structured, natural, and appropriate for a viewer?
+- 5: Reads naturally, is well-organized with logical flow, and uses no system terminology.
+- 4: Mostly natural with minor awkwardness in phrasing or structure.
+- 3: Understandable but noticeably awkward, verbose, or poorly organized.
+- 2: Difficult to follow, excessively verbose, or contains system terminology leakage (e.g., 'metadata', 'current scene', 'field name').
+- 1: Incoherent, unreadable, or dominated by system/internal terminology.
+
+Output ONLY the following JSON. No other text.
 {
-    "rationale": "<각 점수를 부여한 논리적인 이유. 감점 요인이 있다면 명확히 서술하세요.>",
-    "scores": {
-        "accuracy": <1~5 사이의 정수>,
-        "completeness": <1~5 사이의 정수>,
-        "helpfulness": <1~5 사이의 정수>
+    "answer_relevance": {
+        "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
+        "score": <integer 1-5>
     },
-    "total_score": <세 항목 점수의 합계, 최대 15점>
+    "factual_precision": {
+        "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
+        "score": <integer 1-5>
+    },
+    "response_quality": {
+        "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
+        "score": <integer 1-5>
+    }
 }"""
 
+
 def make_judge_config(thinking_level=None):
-    return make_generate_config(system_instruction=_JUDGE_PROMPT, thinking_level=thinking_level)
+    return make_generate_config(system_instruction=_JUDGE_SYSTEM_PROMPT, thinking_level=thinking_level)
 
 
-def evaluate_answer_session(client, model_name, judge_config, user_prompt, generated_answer, keyscene_summary):
+def evaluate_answer(client, model_name, judge_config, user_prompt, generated_answer, keyscene_summary):
     """
     Judge 모델이 KeyScene Summary를 기준으로 generated_answer를 비교 평가합니다.
     """
-    user_content = (
-        f"[평가 대상 답변]\n{generated_answer}\n\n"
-        f"[Reference: 영상 컨텍스트 (KeyScene Summary)]\n{keyscene_summary}\n\n"
-        f"위 영상 컨텍스트를 근거로 삼아, 아래 [사용자 질문]에 대한 평가 대상 답변의 품질을 평가하세요.\n"
-        f"[사용자 질문]: {user_prompt}\n\n"
-        f"{_JUDGE_FORMAT_PROMPT}"
-    )
-
-    judge_chat = start_chat_session(client, model_name, judge_config)
     return _retry_api_call(
-        lambda: judge_chat.send_message([user_content]).text,
-        label="Judge API",
+        lambda: client.models.generate_content(
+            model=model_name,
+            contents=[
+                "--- [Anchor] (Ground-truth KeyScene Summary, Korean) ---",
+                keyscene_summary,
+                "--- [Candidate Answer] ---",
+                generated_answer,
+                "--- Request ---",
+                f"Evaluate the Candidate Answer to the following User Question against the Anchor "
+                f"using the 3 criteria defined in the system prompt.\n"
+                f"[User Question]: {user_prompt}\n\n"
+                f"Output ONLY the JSON with answer_relevance, factual_precision, and response_quality scores.",
+            ],
+            config=judge_config
+        ).text,
+        label="VH Response Judge API",
     )
 
 
@@ -187,19 +206,17 @@ def main():
                         print(f"[{content_id}]  [Warning] KeyScene Summary가 없거나 오류입니다. 이 쿼리를 건너뜁니다.")
                         continue
                     
+                    _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
+                    _MODE_ORDER = ["video", "raw", "img_desc", "mm_desc"]
                     judge_results = {}  # mode -> score_dict
-                    
+
                     def judge_for_mode(mode):
                         generated_answer = answers.get(mode)
                         if not generated_answer or not str(generated_answer).strip() or str(generated_answer).startswith("Error"):
-                            print(f"[{content_id}]  Evaluating [{mode}] skipped (no valid answer).")
                             return mode, None
 
-                        print(f"[{content_id}]  Evaluating [{mode}]...")
-                        time.sleep(1)
-
                         score_dict = retry_parse_json(
-                            lambda: evaluate_answer_session(
+                            lambda: evaluate_answer(
                                 client=client,
                                 model_name=args.uq_judge_model,
                                 judge_config=judge_config,
@@ -207,21 +224,42 @@ def main():
                                 generated_answer=generated_answer,
                                 keyscene_summary=reference_answer
                             ),
-                            label=f"[{content_id}] [{mode}] Judge",
+                            label=f"VH Judge ({content_id}, {mode})",
                         )
                         return mode, score_dict
 
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as mode_executor:
-                        futures = [mode_executor.submit(judge_for_mode, m) for m in ["video", "raw", "img_desc", "mm_desc"]]
-                        for future in concurrent.futures.as_completed(futures):
-                            mode, score_dict = future.result()
-                            if score_dict is not None:
-                                judge_results[mode] = score_dict
-                    
+                    # 4모드 병렬 Judge
+                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+                    try:
+                        futures = {m: executor.submit(judge_for_mode, m) for m in _MODE_ORDER}
+
+                        # 정규 순서로 결과 수집 & 출력
+                        for mode in _MODE_ORDER:
+                            mode_result, score_dict = futures[mode].result()
+                            if score_dict is None:
+                                print(f"[{mode}] Skip (no valid answer)")
+                                continue
+
+                            judge_results[mode] = score_dict
+                            total = sum(
+                                (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
+                                for k in _SCORE_KEYS
+                            )
+                            scores_str = " | ".join(
+                                f"{k}={score_dict.get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
+                            )
+                            print(f"[{mode}] Total: {total}/15 | {scores_str}")
+                            for k in _SCORE_KEYS:
+                                item = score_dict.get(k, {})
+                                rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
+                                score = item.get("score", "?") if isinstance(item, dict) else "?"
+                                print(f"- {k} ({score}/5): {rationale}")
+                    finally:
+                        executor.shutdown(wait=False, cancel_futures=True)
+
                     # 쿼리 한 개 평가가 끝나면 (content_id, query) 단위로 1줄 append
                     if judge_results:
-                        # mode 순서 정렬 (video, raw, img_desc, mm_desc)
-                        ordered_judge = {m: judge_results[m] for m in ["video", "raw", "img_desc", "mm_desc"] if m in judge_results}
+                        ordered_judge = {m: judge_results[m] for m in _MODE_ORDER if m in judge_results}
                         score_record = {
                             "content_id": content_id,
                             "query": user_prompt,
@@ -229,7 +267,7 @@ def main():
                         }
                         append_jsonl(args.output_file, score_record, lock=file_write_lock)
                         processed_pairs.add((content_id, user_prompt))
-                    print(f"[{content_id}]  -> Score 저장 완료: {args.output_file}")
+                    print(f"\n[{content_id}] -> Score 저장 완료")
                     print("-" * 50)
 
                 return True
