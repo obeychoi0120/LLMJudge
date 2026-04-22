@@ -80,9 +80,9 @@ def evaluate_answer_session(client, model_name, judge_config, user_prompt, gener
 
 def main():
     parser = get_common_argparser(description="Evaluate Responses using Judge model")
-    parser.add_argument("--answers_file", default="assets/uq_responses.jsonl", help="답변 목록 JSONL 파일 경로")
+    parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="답변 목록 JSONL 파일 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 파일 경로")
-    parser.add_argument("--output_file", default="assets/uq_response_scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
+    parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
     parser.add_argument("--skip_aggregate", action="store_true", help="수행 완료 후 자동 집계 로직을 건너뜁니다.")
 

@@ -7,6 +7,7 @@ from utils import (
     get_common_argparser,
     make_generate_config,
     process_gcs_file_by_scene_idx, check_gcs_files_exist,
+    get_gcs_descriptions_by_scene_idx,
     _retry_api_call,
     ensure_output_dir, load_processed_pairs,
     preload_content_metadata,
@@ -20,47 +21,76 @@ from utils import (
 # Prompt: Video-based Description (영어)
 # ───────────────────────────────────────────────
 
-_VIDEO_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed, accurate description of the provided video clip.
+_VIDEO_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed, accurate English description of the provided video clip.
 
-Describe the following aspects in a single cohesive paragraph or structured text:
-- **Visual Elements**: Scene composition, camera angles, environment/background, lighting
-- **Characters & Actions**: Who appears, what they are doing, any notable behaviors or interactions
-- **On-screen Text**: Any subtitles, captions, logos, or text overlays visible
-- **Audio Cues** (if inferable from visuals): Any apparent dialogue, narration, or sound context
+Your description must cover the following aspects, in this order:
+
+1. **Scene & Visual Elements**
+   - Setting, environment, lighting, camera angles, and scene composition.
+   - Characters present: appearance, clothing, positioning, and spatial relationships.
+   - Key actions and interactions between characters or with objects.
+   - Any on-screen text: subtitles, captions, logos, lower-thirds, or text overlays.
+
+2. **Dialogue & Factual Details**
+   - Listen carefully to the audio. Transcribe or closely paraphrase all dialogue and narration.
+   - Capture every proper noun: person names, place names, brand names, program titles, and any specific terms mentioned.
+   - Record specific numbers, dates, or quantities if mentioned.
+   - If a name is spoken but unclear, provide your best interpretation rather than omitting it.
+
+3. **Narrative & Emotional Context**
+   - Describe the narrative progression: what is happening and why.
+   - Note cause-effect relationships between events in the scene.
+   - Capture the emotional tone and atmosphere (e.g., tense, celebratory, melancholic).
+   - Identify any thematic elements or recurring motifs.
 
 Guidelines:
-- Be precise and objective. Avoid speculation beyond what is clearly visible.
+- Be precise and comprehensive. Vague summaries are unacceptable.
 - Include specific details: colors, quantities, spatial relationships, identifiable objects.
-- Do NOT summarize vaguely. Capture as much detail as possible."""
+- Actively use BOTH visual AND audio information from the video.
+- Do NOT omit dialogue or proper nouns — these are critical."""
 
 # ───────────────────────────────────────────────
-# Prompt: Ref JSON-based Description (영어)
+# Prompt: Raw JSON-based Description (영어)
 # ───────────────────────────────────────────────
 
-_REF_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed scene description based solely on the provided metadata.
+_RAW_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided speech transcript and on-screen text metadata.
 
 You will receive a JSON record containing:
-- **speech**: Dialogue or narration transcribed from the audio (may contain ASR errors)
-- **texts**: On-screen text, subtitles, or OCR-extracted captions (may contain OCR errors)
+- **speech**: Dialogue or narration transcribed from audio (may contain ASR errors)
+- **texts**: On-screen text detected via OCR (may contain recognition errors)
 
-Your task:
-1. Correct obvious transcription/OCR errors using context clues.
-2. Based on the speech and texts, describe the scene in as much detail as possible:
-   - What is being said or narrated, and by whom (if identifiable)
-   - What the on-screen text indicates about the scene context
-   - What can be inferred about the visual setting from the dialogue/narration
+Your description must cover the following aspects, in this order:
+
+1. **Scene & Setting Inference**
+   - Based on the dialogue content and on-screen text, infer what kind of scene this is (interview, cooking segment, outdoor exploration, etc.).
+   - Describe the likely setting and context as implied by the speech and text clues.
+   - Do NOT fabricate specific visual details (colors, camera angles, etc.) that cannot be inferred from the text.
+
+2. **Dialogue & Factual Details**
+   - Correct obvious ASR/OCR errors using context clues before describing the content.
+   - Reproduce or closely paraphrase all key dialogue and narration.
+   - Capture every proper noun: person names, place names, brand names, and specific terms.
+   - Record specific numbers, dates, or quantities if mentioned.
+   - If a name appears garbled, provide your best corrected interpretation rather than omitting it.
+
+3. **Narrative & Emotional Context**
+   - Describe the narrative progression as conveyed through the dialogue.
+   - Note cause-effect relationships between events discussed in the speech.
+   - Capture the emotional tone implied by the dialogue (e.g., excitement, concern, humor).
+   - Identify any thematic elements or recurring topics.
 
 Guidelines:
-- Acknowledge that you are working from transcripts only (no video).
-- Be as specific as possible about names, places, objects mentioned in the speech/texts.
-- Do NOT fabricate visual details not implied by the text."""
+- Be precise and comprehensive. Vague summaries are unacceptable.
+- Prioritize factual accuracy — proper nouns and dialogue content are critical.
+- Write the description naturally, as if you had full knowledge of the scene.
+- Do NOT mention that you are working from transcripts or metadata."""
 
 
 def make_kd_gen_config(thinking_level=None):
     """KeyScene Description 생성용 GenerateContentConfig를 반환합니다."""
     return {
         "video": make_generate_config(system_instruction=_VIDEO_DESC_SYSTEM_PROMPT, thinking_level=thinking_level),
-        "ref":   make_generate_config(system_instruction=_REF_DESC_SYSTEM_PROMPT,   thinking_level=thinking_level),
+        "raw":   make_generate_config(system_instruction=_RAW_DESC_SYSTEM_PROMPT,   thinking_level=thinking_level),
     }
 
 
@@ -83,11 +113,11 @@ def generate_video_desc(client, model_name, config, video_part, end_time):
     return text, time.time() - t0
 
 
-def generate_ref_desc(client, model_name, config, ref_part, end_time):
-    """Ref JSONL(speech + texts)만 보고 장면을 영어로 묘사합니다."""
+def generate_raw_desc(client, model_name, config, raw_part, end_time):
+    """Raw JSONL(speech + texts)만 보고 장면을 영어로 묘사합니다."""
     contents = [
         "--- [Current Scene Metadata (speech & texts)] ---",
-        ref_part,
+        raw_part,
         "--- Request ---",
         "Based solely on the provided speech transcript and on-screen text metadata above, "
         "generate a detailed English description of what is happening in this scene. "
@@ -98,7 +128,7 @@ def generate_ref_desc(client, model_name, config, ref_part, end_time):
         lambda: client.models.generate_content(
             model=model_name, contents=contents, config=config
         ).text,
-        label=f"KD ref_desc API (end={end_time:.1f}s)"
+        label=f"KD raw_desc API (end={end_time:.1f}s)"
     )
     return text, time.time() - t0
 
@@ -113,9 +143,9 @@ def main():
                         help="Keypoint Scene 목록 JSONL 경로 (identify_keyscene.py 출력)")
     parser.add_argument("--output_file", default="assets/keyscene_description.jsonl",
                         help="KeyScene Description 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video_desc", "ref_desc"],
-                        choices=["video_desc", "ref_desc"],
-                        help="생성할 모드 직접 지정 (기본값: 모두 생성)")
+    parser.add_argument("--modes", nargs="+", default=["video_desc", "raw_desc"],
+                        choices=["video_desc", "raw_desc", "img_desc", "mm_desc"],
+                        help="생성할 모드 직접 지정 (img_desc/mm_desc는 GCS에서 읽어와 기록)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -192,14 +222,14 @@ def main():
 
                 # GCS Part 사전 로드
                 video_part = None
-                ref_part   = None
+                raw_part   = None
                 if "video_desc" in missing_modes:
                     video_part = process_gcs_file_by_scene_idx(
                         args.gs_bucket_name, content_id, "video", scene_idx, scene_idx
                     )
-                if "ref_desc" in missing_modes:
-                    ref_part = process_gcs_file_by_scene_idx(
-                        args.gs_bucket_name, content_id, "ref", scene_idx, scene_idx
+                if "raw_desc" in missing_modes:
+                    raw_part = process_gcs_file_by_scene_idx(
+                        args.gs_bucket_name, content_id, "raw", scene_idx, scene_idx
                     )
 
                 def _run_mode(mode):
@@ -207,10 +237,23 @@ def main():
                         return generate_video_desc(
                             client, args.kd_gen_model, gen_configs["video"], video_part, end_time
                         )
-                    else:  # ref_desc
-                        return generate_ref_desc(
-                            client, args.kd_gen_model, gen_configs["ref"], ref_part, end_time
+                    elif mode == "raw_desc":
+                        return generate_raw_desc(
+                            client, args.kd_gen_model, gen_configs["raw"], raw_part, end_time
                         )
+                    elif mode in ("img_desc", "mm_desc"):
+                        # GCS에서 description 텍스트를 읽어와 로컬 JSONL에 기록 (AI 생성 없음)
+                        gcs_mode = mode  # img_desc / mm_desc
+                        t0 = time.time()
+                        desc_text = get_gcs_descriptions_by_scene_idx(
+                            args.gs_bucket_name, content_id, gcs_mode, scene_idx, scene_idx
+                        )
+                        # [Scene N] 태그 제거하여 순수 description만 추출
+                        desc_text = "\n".join(
+                            line for line in desc_text.split("\n")
+                            if not line.startswith(f"[Scene {scene_idx}]")
+                        ).strip()
+                        return desc_text, time.time() - t0
 
                 try:
                     # 2개 모드 병렬 생성

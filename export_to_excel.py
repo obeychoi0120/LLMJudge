@@ -183,7 +183,7 @@ def aggregate_desc_scores(input_dir):
         print(f"Error: Failed to parse {scores_file}: {e}")
         return
 
-    metrics = ["visual_accuracy", "contextual_detail", "total_score"]
+    metrics = ["scene_understanding", "factual_precision", "narrative_completeness", "total_score"]
 
     # by_video_raw[content_id][mode][metric] = [values...]
     by_video_raw = {}
@@ -206,7 +206,7 @@ def aggregate_desc_scores(input_dir):
         if m not in overall_raw:
             overall_raw[m] = {met: [] for met in metrics}
 
-        # 개별 메트릭 수집 (visual_accuracy, contextual_detail)
+        # 개별 메트릭 수집 (scene_understanding, factual_precision, narrative_completeness)
         for met in metrics[:-1]:
             if met in judge and isinstance(judge[met], dict):
                 val = judge[met].get("score")
@@ -519,7 +519,7 @@ def export_desc_details(input_dir, output_dir):
         return
 
     data = load_jsonl(scores_path)
-    metrics = ["visual_accuracy", "contextual_detail"]
+    metrics = ["scene_understanding", "factual_precision", "narrative_completeness"]
 
     flat_rows = []
     for item in data:
@@ -553,8 +553,9 @@ def export_desc_details(input_dir, output_dir):
     worksheet = writer.sheets["Desc Details"]
     col_widths = {
         "content_id": 22, "scene_idx": 10, "mode": 12,
-        "rationale_visual_accuracy": 45, "visual_accuracy": 14,
-        "rationale_contextual_detail": 45, "contextual_detail": 14,
+        "rationale_scene_understanding": 45, "scene_understanding": 16,
+        "rationale_factual_precision": 45, "factual_precision": 16,
+        "rationale_narrative_completeness": 45, "narrative_completeness": 20,
         "total_score": 12,
     }
     for idx, col in enumerate(df.columns):

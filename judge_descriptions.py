@@ -29,31 +29,44 @@ You will be given:
 
 Your task is to evaluate how accurately and completely the Candidate captures the key information from the Anchor.
 
-Evaluate across 2 criteria, each scored 1–5:
+Evaluate across 3 criteria, each scored 1–5:
 
-**1. Visual Accuracy**
-How accurately does the Candidate describe the visual elements present in the scene?
-- 5: Captures nearly all visual elements from the Anchor — scene composition, camera angles, character actions, objects, environment, colors, and on-screen text — with high precision.
+**1. Scene Understanding**
+How accurately does the Candidate identify and describe the visual scene: setting, characters, actions, objects, spatial layout, and camera composition?
+- 5: Captures nearly all visual elements — scene composition, camera angles, character actions, objects, environment, colors, and on-screen text — with high precision.
 - 4: Captures most visual elements with minor omissions or slight inaccuracies that do not distort the overall picture.
 - 3: Captures the general visual situation but misses several specific details or contains noticeable inaccuracies.
 - 2: Only captures basic or surface-level visual elements; significant details are missing or incorrect.
 - 1: Mostly inaccurate, missing critical visual information, or contradicts what the Anchor describes.
 
-**2. Contextual Detail**
-How well does the Candidate reflect the contextual information: dialogue content, proper nouns (names, places, objects), narrative progression, and emotional/thematic nuances?
-- 5: Accurately reflects key dialogue or narration, correct proper nouns, narrative context, and emotional/thematic nuances as described in the Anchor.
-- 4: Captures most contextual details with minor omissions (e.g., a name missing or a dialogue paraphrase that slightly shifts meaning).
-- 3: Gets the basic narrative right but misses important dialogue, misidentifies proper nouns, or lacks emotional nuance.
-- 2: Captures only a fragment of the contextual information; significant facts, names, or narrative details are wrong or absent.
-- 1: Fails to convey meaningful context, contains significant factual errors, or is entirely unrelated to the Anchor's content.
+**2. Factual Precision**
+How accurately does the Candidate reflect verifiable facts: proper nouns (person names, place names, brand names), dialogue/narration content, numbers, and specific claims?
+- 5: All key proper nouns, dialogue quotes, and factual claims match the Anchor with high fidelity.
+- 4: Most facts are correct with minor omissions (e.g., one name missing), but NO fabricated information.
+- 3: Gets core facts right but omits several important details, or contains 1–2 minor factual inaccuracies.
+- 2: Contains multiple factual errors or significant omissions; some names, quotes, or claims are wrong.
+- 1: Fabricates facts not present in the Anchor, severely misidentifies key entities, or is factually unreliable.
+IMPORTANT: Fabrication (inventing facts not in the Anchor) must be penalized MORE harshly than omission (failing to mention facts). A description that omits a name is better than one that invents a wrong name.
+
+**3. Narrative Completeness**
+How completely does the Candidate cover the narrative arc of the scene: story progression, cause-effect relationships, emotional tone, and thematic nuances?
+- 5: Fully captures the scene's narrative flow, cause-effect dynamics, emotional atmosphere, and thematic depth as described in the Anchor.
+- 4: Covers the main narrative arc with minor gaps in emotional nuance or thematic depth.
+- 3: Captures the basic storyline but misses important narrative transitions, emotional shifts, or thematic elements.
+- 2: Only conveys a fragmented or superficial version of the narrative; major story beats or emotional context are absent.
+- 1: Fails to convey any coherent narrative, or the described narrative contradicts the Anchor entirely.
 
 Output ONLY the following JSON. No other text.
 {
-    "visual_accuracy": {
+    "scene_understanding": {
         "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
         "score": <integer 1-5>
     },
-    "contextual_detail": {
+    "factual_precision": {
+        "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
+        "score": <integer 1-5>
+    },
+    "narrative_completeness": {
         "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
         "score": <integer 1-5>
     }
@@ -103,8 +116,8 @@ def judge_one_description(
                         "--- [Candidate] (AI-generated Description, English) ---",
                         candidate_text,
                         "--- Request ---",
-                        "Evaluate the Candidate description against the Anchor using the 2 criteria defined in the system prompt. "
-                        "Output ONLY the JSON with visual_accuracy and contextual_detail scores.",
+                        "Evaluate the Candidate description against the Anchor using the 3 criteria defined in the system prompt. "
+                        "Output ONLY the JSON with scene_understanding, factual_precision, and narrative_completeness scores.",
                     ],
                     config=judge_config
                 ).text,
@@ -114,7 +127,7 @@ def judge_one_description(
         )
 
         # 점수 집계
-        _SCORE_KEYS = ["visual_accuracy", "contextual_detail"]
+        _SCORE_KEYS = ["scene_understanding", "factual_precision", "narrative_completeness"]
         total = sum(
             (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
             for k in _SCORE_KEYS
@@ -130,8 +143,9 @@ def judge_one_description(
 
         # 콘솔 출력
         _ITEM_LABELS = [
-            ("visual_accuracy",   "Visual Accuracy (시각 정확도)"),
-            ("contextual_detail", "Contextual Detail (컨텍스트 디테일)"),
+            ("scene_understanding",    "Scene Understanding"),
+            ("factual_precision",      "Factual Precision"),
+            ("narrative_completeness", "Narrative Completeness"),
         ]
         print(f"\n[Judge] Scene {scene_idx} | mode={mode}")
         if score_dict:
@@ -140,7 +154,7 @@ def judge_one_description(
                 rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
                 score     = item.get("score",     "N/A") if isinstance(item, dict) else "N/A"
                 print(f"- {label} ({score}/5): {rationale}")
-        print(f"-> Total Score: {total}/10")
+        print(f"-> Total Score: {total}/15")
 
         append_jsonl(args.output_file, record, lock=file_write_lock)
 
@@ -157,16 +171,16 @@ def main():
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl",
                         help="KeyScene Summary JSONL 경로 (Anchor)")
     parser.add_argument("--kd_file", default="assets/keyscene_description.jsonl",
-                        help="KeyScene Description JSONL 경로 (video_desc / ref_desc 소스)")
+                        help="KeyScene Description JSONL 경로 (video_desc / raw_desc 소스)")
     parser.add_argument("--output_file", default="assets/description_scores.jsonl",
                         help="Description Judge 점수 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl",
                         help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--watch", action="store_true",
-                        help="kd_file을 모니터링하며 새로운 video_desc/ref_desc를 실시간으로 평가합니다.")
+                        help="kd_file을 모니터링하며 새로운 video_desc/raw_desc를 실시간으로 평가합니다.")
     parser.add_argument("--modes", nargs="+",
-                        default=["img_desc", "mm_desc", "video_desc", "ref_desc"],
-                        choices=["img_desc", "mm_desc", "video_desc", "ref_desc"],
+                        default=["img_desc", "mm_desc", "video_desc", "raw_desc"],
+                        choices=["img_desc", "mm_desc", "video_desc", "raw_desc"],
                         help="평가할 모드 직접 지정 (기본값: 4종 모두)")
 
     args, client = init_pipeline(parser.parse_args())
@@ -265,8 +279,8 @@ def main():
     # GCS 소스 우선 처리 (생성 스크립트와 독립적으로 즉시 평가 가능)
     process_gcs_modes()
 
-    # ── keyscene_description.jsonl 기반 소스 (video_desc, ref_desc) ──
-    local_modes = [m for m in args.modes if m in ("video_desc", "ref_desc")]
+    # ── keyscene_description.jsonl 기반 소스 (video_desc, raw_desc) ──
+    local_modes = [m for m in args.modes if m in ("video_desc", "raw_desc")]
 
     if not local_modes:
         print_pipeline_done(args.output_file)

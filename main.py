@@ -15,10 +15,12 @@ def main():
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="KeyScene 목록 저장 경로")
     parser.add_argument("--voice_hint_scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 파일 경로")
         
-    # User Query 입출력 설정
-    parser.add_argument("--user_queries_file", default="assets/user_query.jsonl", help="User Query 생성된 질문 목록 경로")
-    parser.add_argument("--responses_file", default="assets/uq_responses.jsonl", help="User Query 생성/통합된 답변 목록 경로")
-    parser.add_argument("--scores_file", default="assets/uq_response_scores.jsonl", help="User Query 최종 답변 평가 결과 경로")
+    # User Query (Deprecated — VH 기반 파이프라인으로 대체됨)
+    # parser.add_argument("--user_queries_file", ...) # 더 이상 사용되지 않음
+
+    # VH Response 입출력 설정 (B-track 신규)
+    parser.add_argument("--vh_responses_file",  default="assets/vh_responses.jsonl",      help="VH Response 저장 경로 (generate_vh_response.py 출력)")
+    parser.add_argument("--vh_scores_file",      default="assets/vh_response_scores.jsonl", help="VH Response Judge 점수 저장 경로")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -106,53 +108,47 @@ def main():
     print(f"-> Voice Hint 평가 점수 저장 완료: {args.voice_hint_scores_file}")
 
     # ───────────────────────────────────────────────
-    # B-1: User Query 생성 (generate_user_query.py)
+    # [DEPRECATED] B-1: User Query 생성 (generate_user_query.py)
+    #   → VH(KSS 모드) 질문을 직접 사용하므로 이 단계는 건너뜁니다.
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-1. User Query 생성 (generate_user_query.py)")
+    print(">>> B-1. [DEPRECATED] User Query 생성 단계 건너뜀 (VH를 Query로 직접 사용)")
     print("="*60)
-    cmd_user = [
-        sys.executable, "generate_user_query.py",
-        "--keypoints_file", args.keypoints_file,
-        "--output_file", args.user_queries_file,
-        "--uq_gen_model", args.uq_gen_model,
-        "--uq_gen_thinking_level", str(args.uq_gen_thinking_level),
-    ] + common_project_args
-    subprocess.run(cmd_user, check=True)
-    print(f"-> User Query 저장 완료: {args.user_queries_file}")
 
     # ───────────────────────────────────────────────
-    # B-2: User Query 답변 생성 (generate_uq_response.py)
+    # B-2: VH(KSS) Response 생성 (generate_vh_response.py)
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-2. User Query 답변 생성 (generate_uq_response.py)")
+    print(">>> B-2. VH Response 생성 (generate_vh_response.py)")
     print("="*60)
     cmd = [
-        sys.executable, "generate_uq_response.py",
-        "--json_file", args.user_queries_file,
-        "--output_file", args.responses_file,
-        "--uq_response_model", args.uq_response_model,
-        "--uq_response_thinking_level", str(args.uq_response_thinking_level),
-        "--skip_aggregate"
+        sys.executable, "generate_vh_response.py",
+        "--input_file",      args.voice_hints_file,
+        "--output_file",     args.vh_responses_file,
+        "--keypoints_file",  args.keypoints_file,
+        "--vh_response_model",           args.vh_response_model,
+        "--vh_response_thinking_level",  str(args.vh_response_thinking_level),
     ] + common_project_args
     subprocess.run(cmd, check=True)
+    print(f"-> VH Response 저장 완료: {args.vh_responses_file}")
 
     # ───────────────────────────────────────────────
-    # B-3: User Query 답변 Judge (judge_response.py)
+    # B-3: VH Response Judge (judge_response.py)
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-3. User Query 답변 Judge (judge_response.py)")
+    print(">>> B-3. VH Response Judge (judge_response.py)")
     print("="*60)
     cmd = [
         sys.executable, "judge_response.py",
-        "--answers_file", args.responses_file,
+        "--answers_file",          args.vh_responses_file,
         "--keyscene_summary_file", args.keyscene_summary_file,
-        "--output_file", args.scores_file,
-        "--uq_judge_model", args.uq_judge_model,
-        "--uq_judge_thinking_level", str(args.uq_judge_thinking_level),
+        "--output_file",           args.vh_scores_file,
+        "--uq_judge_model",              args.uq_judge_model,
+        "--uq_judge_thinking_level",     str(args.uq_judge_thinking_level),
         "--skip_aggregate"
     ] + common_project_args
     subprocess.run(cmd, check=True)
+    print(f"-> VH Response 점수 저장 완료: {args.vh_scores_file}")
 
     # ───────────────────────────────────────────────
     # B-4: JSONL → JSON 집계 + 엑셀 내보내기

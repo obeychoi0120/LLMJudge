@@ -25,6 +25,8 @@ _CONFIG_KEYS = [
     "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
     "uq_gen_thinking_level", "uq_response_thinking_level", "uq_reference_thinking_level", "uq_judge_thinking_level",
     "use_ref_for_uq_reference",
+    # B-track: VH Response (신규)
+    "vh_response_model", "vh_response_thinking_level",
     # C-track: KeyScene Description
     "kd_gen_model", "kd_gen_thinking_level",
     "kd_judge_model", "kd_judge_thinking_level",
@@ -440,6 +442,36 @@ def get_gcs_text_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_i
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
     return truncate_jsonl_by_scene_idx(jsonl_text, start_idx, end_idx)
+
+
+_RAW_KEEP_FIELDS = ("scene_idx", "start_time", "end_time", "speech", "texts")
+
+def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
+    """*_ref.jsonl에서 주요 필드(scene_idx, start_time, end_time, speech, texts)만
+    추출하여 정제된 JSON Lines 텍스트로 반환합니다.
+
+    generate_vh_response.py의 'raw' 모드 Source로 사용됩니다.
+    전체 JSONL을 반환하는 get_gcs_text_by_scene_idx()와 달리, 불필요한 필드
+    (sounds, shots, vectors 등)를 제거하여 컨텍스트 토큰을 절약합니다.
+    """
+    path_template, _ = _GCS_MODE_MAP["ref"]
+    blob_path = path_template.format(cid=content_id)
+    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
+
+    lines = []
+    for line in jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            s_idx = scene.get("scene_idx")
+            if s_idx is None or not (start_idx <= s_idx <= end_idx):
+                continue
+            filtered = {k: scene[k] for k in _RAW_KEEP_FIELDS if k in scene}
+            lines.append(json.dumps(filtered, ensure_ascii=False))
+        except json.JSONDecodeError:
+            continue
+    return "\n".join(lines)
 
 
 def process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time):
