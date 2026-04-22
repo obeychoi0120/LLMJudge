@@ -143,7 +143,7 @@ def main():
                         help="Keypoint Scene 목록 JSONL 경로 (identify_keyscene.py 출력)")
     parser.add_argument("--output_file", default="assets/keyscene_description.jsonl",
                         help="KeyScene Description 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video_desc", "raw_desc"],
+    parser.add_argument("--modes", nargs="+", default=["video_desc", "raw_desc", "img_desc", "mm_desc"],
                         choices=["video_desc", "raw_desc", "img_desc", "mm_desc"],
                         help="생성할 모드 직접 지정 (img_desc/mm_desc는 GCS에서 읽어와 기록)")
 
@@ -172,7 +172,9 @@ def main():
         if c_id and s_idx is not None and mode:
             done_modes_by_scene.add((c_id, s_idx, mode))
 
-    target_modes = args.modes
+    # 정규 모드 순서: JSONL에 쓰는 순서를 보장합니다.
+    _MODE_ORDER = ["video_desc", "raw_desc", "img_desc", "mm_desc"]
+    target_modes = sorted(args.modes, key=lambda m: _MODE_ORDER.index(m) if m in _MODE_ORDER else 99)
 
     print_pipeline_banner("KeyScene Description 생성 파이프라인을 시작합니다.")
 
@@ -217,7 +219,7 @@ def main():
                 start_time = float(kp.get("start_time", 0.0))
                 end_time   = float(kp.get("end_time",   0.0))
 
-                print(f"\n[{real_idx}/{len(keypoints)}] Scene {scene_idx} | "
+                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | "
                       f"Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
 
                 # GCS Part 사전 로드
@@ -257,10 +259,13 @@ def main():
 
                 try:
                     # 2개 모드 병렬 생성
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                        futures = {m: executor.submit(_run_mode, m) for m in missing_modes}
-
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(missing_modes)) as executor:
+                        futures = {}
                         for mode in missing_modes:
+                            futures[mode] = executor.submit(_run_mode, mode)
+
+                        # 정규 순서(video_desc → raw_desc → img_desc → mm_desc)로 결과를 수집하여 쓰기
+                        for mode in missing_modes:  # 이미 _MODE_ORDER로 정렬된 상태
                             desc_text, elapsed = futures[mode].result()
 
                             record = {

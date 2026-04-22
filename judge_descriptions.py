@@ -11,8 +11,6 @@ from utils import (
     ensure_output_dir, load_processed_pairs,
     init_pipeline, load_jsonl, append_jsonl,
     load_summary_map, check_input_file,
-    get_gcs_descriptions_by_scene_idx,
-    preload_content_metadata,
     load_keypoints_by_content,
     print_pipeline_banner, print_pipeline_done,
 )
@@ -93,15 +91,13 @@ def judge_one_description(
     client, args, judge_config,
     content_id, scene_idx, mode,
     candidate_text, anchor_text,
-    file_write_lock
 ):
-    """단일 (scene_idx, mode) Description을 평가하고 결과를 기록합니다."""
+    """단일 (scene_idx, mode) Description을 평가하고 결과 record를 반환합니다.
+    콘솔 출력과 파일 쓰기는 호출측에서 수행합니다."""
     if not anchor_text:
-        print(f"  [Warning] Scene {scene_idx}에 KSS Anchor가 없습니다. mode={mode} 스킵.")
-        return
+        return {"skipped": True, "reason": f"Scene {scene_idx}에 KSS Anchor 없음", "mode": mode}
     if not candidate_text or not candidate_text.strip():
-        print(f"  [Warning] Scene {scene_idx} mode={mode}의 Candidate가 비어있습니다. 스킵.")
-        return
+        return {"skipped": True, "reason": f"Scene {scene_idx} mode={mode} Candidate 비어있음", "mode": mode}
 
     try:
         time.sleep(1)
@@ -133,33 +129,53 @@ def judge_one_description(
             for k in _SCORE_KEYS
         ) if score_dict else 0
 
-        record = {
+        return {
             "content_id":  content_id,
             "scene_idx":   scene_idx,
             "mode":        mode,
-            "judge":       score_dict,
             "total_score": total,
+            "judge":       score_dict,
         }
 
-        # 콘솔 출력
-        _ITEM_LABELS = [
-            ("scene_understanding",    "Scene Understanding"),
-            ("factual_precision",      "Factual Precision"),
-            ("narrative_completeness", "Narrative Completeness"),
-        ]
-        print(f"\n[Judge] Scene {scene_idx} | mode={mode}")
-        if score_dict:
-            for key, label in _ITEM_LABELS:
-                item      = score_dict.get(key, {})
-                rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
-                score     = item.get("score",     "N/A") if isinstance(item, dict) else "N/A"
-                print(f"- {label} ({score}/5): {rationale}")
-        print(f"-> Total Score: {total}/15")
-
-        append_jsonl(args.output_file, record, lock=file_write_lock)
-
     except Exception as e:
-        print(f"  [Error] Judge 최종 실패 (Scene {scene_idx}, mode={mode}): {e}")
+        return {"error": True, "reason": str(e), "mode": mode, "scene_idx": scene_idx}
+
+
+def _print_judge_result(record):
+    """Judge 결과 한 건을 콘솔에 출력합니다."""
+    _ITEM_LABELS = [
+        ("scene_understanding",    "Scene Understanding"),
+        ("factual_precision",      "Factual Precision"),
+        ("narrative_completeness", "Narrative Completeness"),
+    ]
+    mode  = record.get("mode", "?")
+    s_idx = record.get("scene_idx", "?")
+
+    if record.get("skipped"):
+        print(f"[{mode}] Skip: {record.get('reason', '')}")
+        return
+    if record.get("error"):
+        print(f"[{mode}] Error: {record.get('reason', '')}")
+        return
+
+    score_dict = record.get("judge", {})
+    total      = record.get("total_score", 0)
+    print(f"\n[{mode}] ", end="")
+    if score_dict:
+        scores = []
+        for key, label in _ITEM_LABELS:
+            item  = score_dict.get(key, {})
+            score = item.get("score", "?") if isinstance(item, dict) else "?"
+            scores.append(f"{label}={score}")
+        print(f"Total: {total}/15 | " + " | ".join(scores))
+        # rationale 상세 출력
+        for key, label in _ITEM_LABELS:
+            item      = score_dict.get(key, {})
+            rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
+            score     = item.get("score",     "?") if isinstance(item, dict) else "?"
+            print(f"- {label} ({score}/5): {rationale}")
+    else:
+        print(f"No scores (Total: {total}/15)")
 
 
 # ───────────────────────────────────────────────
@@ -217,72 +233,15 @@ def main():
 
     file_write_lock = threading.Lock()
 
-    # ── GCS 기반 소스 (img_desc, mm_desc) 처리 ──────────────────
-    gcs_modes = [m for m in args.modes if m in ("img_desc", "mm_desc")]
+    # 정규 모드 순서
+    _MODE_ORDER = ["video_desc", "raw_desc", "img_desc", "mm_desc"]
 
-    def process_gcs_modes():
-        """GCS에 저장된 img_desc / mm_desc를 content별로 평가합니다."""
-        if not gcs_modes or not keypoints_by_content:
-            return
+    # ── keyscene_description.jsonl에서 4모드 통합 Judge ──────────────
+    # generate_keyscene_description.py가 video_desc/raw_desc/img_desc/mm_desc를
+    # 모두 동일 파일에 기록하므로, 소스를 분리할 필요 없이 한 루프로 처리합니다.
 
-        for content_id, keypoints in keypoints_by_content.items():
-            # GCS 메타데이터 프리로드
-            preload_content_metadata(args.gs_bucket_name, content_id)
-
-            for kp in keypoints:
-                real_idx  = keypoints.index(kp)
-                scene_idx = kp.get("scene_idx", real_idx)
-
-                # Anchor 추출 (현재 장면 묘사만 사용)
-                kss_raw = summary_map.get((content_id, scene_idx), "")
-                anchor  = extract_current_scene_desc(kss_raw) if kss_raw else ""
-
-                pending_modes = [
-                    m for m in gcs_modes
-                    if (content_id, scene_idx, m) not in processed_triples
-                ]
-                if not pending_modes:
-                    continue
-
-                print(f"\nEvaluating '{content_id}' Scene {scene_idx} GCS modes={pending_modes}")
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=len(pending_modes)) as executor:
-                    futures = []
-                    for mode in pending_modes:
-                        # GCS에서 해당 scene_idx의 description 텍스트 추출
-                        candidate = get_gcs_descriptions_by_scene_idx(
-                            args.gs_bucket_name, content_id, mode, scene_idx, scene_idx
-                        )
-                        # [Scene N]\n... 태그 제거하여 순수 텍스트만 사용
-                        candidate = "\n".join(
-                            line for line in candidate.split("\n")
-                            if not line.startswith(f"[Scene {scene_idx}]")
-                        ).strip()
-
-                        futures.append(executor.submit(
-                            judge_one_description,
-                            client, args, judge_config,
-                            content_id, scene_idx, mode,
-                            candidate, anchor,
-                            file_write_lock
-                        ))
-                    for f in concurrent.futures.as_completed(futures):
-                        try:
-                            f.result()
-                        except Exception as e:
-                            print(f"  [Error] GCS mode 평가 실패: {e}")
-
-                with file_write_lock:
-                    for mode in pending_modes:
-                        processed_triples.add((content_id, scene_idx, mode))
-
-    # GCS 소스 우선 처리 (생성 스크립트와 독립적으로 즉시 평가 가능)
-    process_gcs_modes()
-
-    # ── keyscene_description.jsonl 기반 소스 (video_desc, raw_desc) ──
-    local_modes = [m for m in args.modes if m in ("video_desc", "raw_desc")]
-
-    if not local_modes:
+    if not os.path.exists(args.kd_file) and not args.watch:
+        print(f"[Info] {args.kd_file} 파일이 존재하지 않습니다. 평가를 건너뜁니다.")
         print_pipeline_done(args.output_file)
         return
 
@@ -290,83 +249,116 @@ def main():
     pipeline_done   = False
     total_evaluated = len(processed_triples)
 
+    # Scene 단위로 후보 모드를 누적하는 버퍼: {(c_id, s_idx): {mode: candidate_text}}
+    scene_buffer = {}
+
     try:
         while True:
             if not os.path.exists(args.kd_file):
-                if not args.watch:
-                    print(f"[Info] {args.kd_file} 파일이 존재하지 않습니다. local mode 평가를 건너뜁니다.")
-                    break
                 time.sleep(3)
                 continue
 
             with open(args.kd_file, "r", encoding="utf-8") as f:
                 f.seek(last_position)
-                new_lines    = f.readlines()
+                new_lines     = f.readlines()
                 last_position = f.tell()
 
-            new_items = []
             for line in new_lines:
                 if not line.strip():
                     continue
                 try:
                     obj = json.loads(line)
-                    if obj.get("pipeline_done"):
-                        pipeline_done = True
-                    else:
-                        new_items.append(obj)
                 except json.JSONDecodeError:
-                    pass
+                    continue
 
-            if new_items:
-                pending = []
-                for item in new_items:
-                    c_id  = item.get("content_id")
-                    s_idx = item.get("scene_idx")
-                    mode  = item.get("mode")
-                    if not c_id or s_idx is None or not mode:
-                        continue
-                    if mode not in local_modes:
-                        continue
-                    if (c_id, s_idx, mode) in processed_triples:
-                        continue
-                    pending.append(item)
+                if obj.get("pipeline_done"):
+                    pipeline_done = True
+                    continue
 
-                if pending:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                        futures = []
-                        for item in pending:
-                            c_id      = item["content_id"]
-                            s_idx     = item["scene_idx"]
-                            mode      = item["mode"]
-                            candidate = item.get("description", "")
-                            kss_raw   = summary_map.get((c_id, s_idx), "")
-                            anchor    = extract_current_scene_desc(kss_raw) if kss_raw else ""
+                c_id  = obj.get("content_id")
+                s_idx = obj.get("scene_idx")
+                mode  = obj.get("mode")
+                desc  = obj.get("description", "")
 
-                            print(f"\nEvaluating '{c_id}' Scene {s_idx} | mode={mode}")
-                            futures.append(executor.submit(
+                if not c_id or s_idx is None or not mode:
+                    continue
+                if mode not in args.modes:
+                    continue
+                if (c_id, s_idx, mode) in processed_triples:
+                    continue
+
+                scene_buffer.setdefault((c_id, s_idx), {})[mode] = desc
+
+            # Scene 단위로 4모드가 모두 준비된 것(또는 pipeline_done 시 남은 것) Judge
+            ready_scenes = []
+            for (c_id, s_idx), mode_map in list(scene_buffer.items()):
+                pending_modes = [
+                    m for m in args.modes
+                    if m in mode_map and (c_id, s_idx, m) not in processed_triples
+                ]
+                all_arrived = all(m in mode_map for m in args.modes)
+                if all_arrived or pipeline_done:
+                    if pending_modes:
+                        ready_scenes.append((c_id, s_idx, pending_modes, mode_map))
+
+            if ready_scenes:
+                # Scene 단위로 병렬 Judge 후 정규 순서로 출력
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+                try:
+                    futures = {}
+                    for c_id, s_idx, pending_modes, mode_map in ready_scenes:
+                        kss_raw = summary_map.get((c_id, s_idx), "")
+                        anchor  = extract_current_scene_desc(kss_raw) if kss_raw else ""
+                        ordered = [m for m in _MODE_ORDER if m in pending_modes]
+
+                        for mode in ordered:
+                            candidate = mode_map[mode]
+                            key = (c_id, s_idx, mode)
+                            futures[key] = executor.submit(
                                 judge_one_description,
                                 client, args, judge_config,
                                 c_id, s_idx, mode,
                                 candidate, anchor,
-                                file_write_lock
-                            ))
+                            )
 
-                        for f in concurrent.futures.as_completed(futures):
+                    # Scene 단위로 정규 순서 출력 & 파일 쓰기
+                    for c_id, s_idx, pending_modes, _ in ready_scenes:
+                        ordered = [m for m in _MODE_ORDER if m in pending_modes]
+
+                        print(f"\n{'='*60}")
+                        print(f"[Judge] '{c_id}' | Scene {s_idx}")
+                        print(f"{'='*60}")
+
+                        for mode in ordered:
+                            key = (c_id, s_idx, mode)
                             try:
-                                f.result()
-                                total_evaluated += 1
+                                record = futures[key].result()
                             except Exception as e:
-                                print(f"  [Error] local mode 평가 실패: {e}")
+                                print(f"[{mode}] ❌ Error: {e}")
+                                continue
 
-                    with file_write_lock:
-                        for item in pending:
-                            processed_triples.add((item["content_id"], item["scene_idx"], item["mode"]))
+                            _print_judge_result(record)
 
-                    print(f"\n▶ [Judge TODO] Evaluated so far: {total_evaluated}")
+                            # 유효한 결과만 파일에 기록
+                            if record and not record.get("skipped") and not record.get("error"):
+                                with file_write_lock:
+                                    append_jsonl(args.output_file, record)
+                                total_evaluated += 1
+
+                            with file_write_lock:
+                                processed_triples.add(key)
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
+
+                # 버퍼에서 완료된 Scene 제거
+                for c_id, s_idx, pending_modes, _ in ready_scenes:
+                    scene_buffer.pop((c_id, s_idx), None)
+
+                print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
 
             if args.watch:
-                if pipeline_done:
-                    print("\n[Watch] Generation 파이프라인 종료 시그널(pipeline_done) 감지. 모든 처리를 완료하고 종료합니다.")
+                if pipeline_done and not scene_buffer:
+                    print("\n[Watch] pipeline_done 시그널 감지 및 버퍼 소진 완료. 종료합니다.")
                     break
                 time.sleep(3)
             else:
@@ -374,8 +366,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
-        import os as _os
-        _os.exit(1)
+        os._exit(1)
 
     print_pipeline_done(args.output_file)
 

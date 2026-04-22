@@ -611,8 +611,13 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
                 except json.JSONDecodeError:
                     pass
     
-    # content_id → scene_idx → mode 순으로 정렬
-    data_records.sort(key=lambda x: (x.get("content_id", ""), x.get("scene_idx", 0), x.get("mode", "")))
+    # content_id → scene_idx → 정규 모드 순서(video_desc → raw_desc → img_desc → mm_desc)로 정렬
+    _MODE_SORT_ORDER = {"video_desc": 0, "raw_desc": 1, "img_desc": 2, "mm_desc": 3}
+    data_records.sort(key=lambda x: (
+        x.get("content_id", ""),
+        x.get("scene_idx", 0),
+        _MODE_SORT_ORDER.get(x.get("mode", ""), 99)
+    ))
     
     # 덮어쓰기 (시그널 제거된 퓨어 데이터만)
     with open(file_path, "w", encoding="utf-8") as f:
