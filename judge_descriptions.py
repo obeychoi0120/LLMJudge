@@ -27,6 +27,11 @@ You will be given:
 
 Your task is to evaluate how accurately and completely the Candidate captures the key information from the Anchor.
 
+NOTE ON EXTERNAL KNOWLEDGE IN DESCRIPTIONS:
+- If the Candidate correctly identifies a person, place, or entity by their known name (using World Knowledge) that the Anchor also references, this should be evaluated positively.
+- However, if the Candidate adds significant factual claims or contextual information NOT present in the Anchor AND NOT directly observable from the source input, treat this as potential hallucination and penalize under Factual Precision.
+- The key distinction: Correct identification/naming = good. Invented narrative or unverifiable claims = bad.
+
 Evaluate across 3 criteria, each scored 1–5:
 
 **1. Scene Understanding**
@@ -45,6 +50,7 @@ How accurately does the Candidate reflect verifiable facts: proper nouns (person
 - 2: Contains multiple factual errors or significant omissions; some names, quotes, or claims are wrong.
 - 1: Fabricates facts not present in the Anchor, severely misidentifies key entities, or is factually unreliable.
 IMPORTANT: Fabrication (inventing facts not in the Anchor) must be penalized MORE harshly than omission (failing to mention facts). A description that omits a name is better than one that invents a wrong name.
+CLARIFICATION: If the Candidate correctly identifies an entity using World Knowledge (e.g., recognizing a celebrity by face), and this identification is consistent with the Anchor, it should be scored positively. Penalize only verifiably incorrect or fabricated information.
 
 **3. Narrative Completeness**
 How completely does the Candidate cover the narrative arc of the scene: story progression, cause-effect relationships, emotional tone, and thematic nuances?
@@ -142,8 +148,8 @@ def judge_one_description(
 def _print_judge_result(record):
     """Judge 결과 한 건을 콘솔에 출력합니다."""
     _ITEM_LABELS = [
-        ("scene_understanding",    "Scene Understanding"),
-        ("factual_precision",      "Factual Precision"),
+        ("scene_understanding", "Scene Understanding"),
+        ("factual_precision", "Factual Precision"),
         ("narrative_completeness", "Narrative Completeness"),
     ]
     mode  = record.get("mode", "?")
@@ -168,9 +174,9 @@ def _print_judge_result(record):
         print(f"Total: {total}/15 | " + " | ".join(scores))
         # rationale 상세 출력
         for key, label in _ITEM_LABELS:
-            item      = score_dict.get(key, {})
+            item = score_dict.get(key, {})
             rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
-            score     = item.get("score",     "?") if isinstance(item, dict) else "?"
+            score = item.get("score", "?") if isinstance(item, dict) else "?"
             print(f"- {label} ({score}/5): {rationale}")
     else:
         print(f"No scores (Total: {total}/15)")
@@ -186,7 +192,7 @@ def main():
                         help="KeyScene Summary JSONL 경로 (Anchor)")
     parser.add_argument("--kd_file", default="assets/keyscene_description.jsonl",
                         help="KeyScene Description JSONL 경로 (video_desc / raw_desc 소스)")
-    parser.add_argument("--output_file", default="assets/description_scores.jsonl",
+    parser.add_argument("--output_file", default="assets/keyscene_description_scores.jsonl",
                         help="Description Judge 점수 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl",
                         help="Keypoint Scene 목록 JSONL 경로")

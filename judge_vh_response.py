@@ -21,28 +21,33 @@ _JUDGE_SYSTEM_PROMPT = """\
 You are an objective, expert evaluator assessing the quality of AI-generated responses about video content.
 The AI model generates answers based on various representations of the original video (visual frames, audio, text metadata, or multimodal descriptions).
 
-Your goal is to evaluate how well the [Candidate Answer] responds to the [User Question], using the [Anchor (KeyScene Summary)] as the sole ground-truth reference.
-The Anchor contains a summary of past events and a detailed description of the current scene.
-Do NOT use external knowledge — evaluate strictly against the Anchor.
+Your goal is to evaluate how well the [Candidate Answer] responds to the [User Question].
+The [Anchor (KeyScene Summary)] provides a summary of past events and a detailed description of the current scene. Use the Anchor as a factual reference, but NOT as the only acceptable source of information.
+
+IMPORTANT EVALUATION PHILOSOPHY:
+- The Candidate is expected to combine video-derived context with its own World Knowledge to provide the most helpful and satisfying answer to the viewer.
+- Information from external knowledge that is factually accurate and relevant to the question should NOT be penalized, even if it is absent from the Anchor.
+- However, information that CONTRADICTS the Anchor (i.e., conflicts with what is shown/said in the video) must be penalized.
+- The primary evaluation question is: "Would a knowledgeable viewer find this answer helpful, accurate, and satisfying?"
 
 Evaluate across 3 criteria, each scored 1–5:
 
 **1. Answer Relevance**
-Does the Candidate directly and substantively answer the User Question using information from the Anchor?
-- 5: Directly addresses the question with precise, relevant information that fully satisfies the query.
+Does the Candidate directly and substantively answer the User Question?
+- 5: Directly addresses the question with precise, relevant information that fully satisfies the query. May enrich the answer with accurate supplementary knowledge.
 - 4: Addresses the question well with minor gaps in relevance or slight tangential content.
 - 3: Partially answers the question but includes noticeable irrelevant content or misses the question's focus.
 - 2: Only loosely related to the question; significant portions are off-topic.
 - 1: Fails to address the question or provides a completely unrelated response.
 
 **2. Factual Precision**
-How accurately does the Candidate reflect verifiable facts from the Anchor: proper nouns, events, dialogue content, numbers, and specific claims?
-- 5: All key facts, names, and events match the Anchor with high fidelity.
-- 4: Most facts are correct with minor omissions, but NO fabricated information.
-- 3: Gets core facts right but omits several important details, or contains 1–2 minor inaccuracies.
-- 2: Contains multiple factual errors or significant omissions.
-- 1: Fabricates facts not present in the Anchor or severely misidentifies key entities.
-IMPORTANT: Fabrication (inventing facts not in the Anchor) must be penalized MORE harshly than omission (failing to mention facts). A response that omits a detail is better than one that invents a wrong detail.
+How factually accurate is the Candidate's response, considering both the Anchor and general World Knowledge?
+- 5: All stated facts are accurate — both video-derived facts (matching the Anchor) and any supplementary World Knowledge are correct and well-integrated.
+- 4: Most facts are correct with minor omissions; any external knowledge used is accurate and relevant.
+- 3: Gets core facts right but contains 1–2 minor inaccuracies, or external knowledge is partially incorrect.
+- 2: Contains multiple factual errors — either misrepresents video content or provides incorrect external information.
+- 1: Severely misidentifies key entities from the video, or provides dangerously incorrect external knowledge.
+IMPORTANT: Information that CONTRADICTS the Anchor (i.e., conflicts with what the video shows) must be penalized MORE harshly than inaccurate external knowledge. Accurate external knowledge that supplements the Anchor should be rewarded, not penalized.
 
 **3. Response Quality**
 Is the response well-structured, natural, and appropriate for a viewer?
@@ -55,15 +60,15 @@ Is the response well-structured, natural, and appropriate for a viewer?
 Output ONLY the following JSON. No other text.
 {
     "answer_relevance": {
-        "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
+        "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
         "score": <integer 1-5>
     },
     "factual_precision": {
-        "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
+        "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
         "score": <integer 1-5>
     },
     "response_quality": {
-        "rationale": "<Concise evaluation reasoning in English, citing specific evidence from Anchor vs Candidate>",
+        "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
         "score": <integer 1-5>
     }
 }"""
@@ -98,209 +103,171 @@ def evaluate_answer(client, model_name, judge_config, user_prompt, generated_ans
 
 
 def main():
-    parser = get_common_argparser(description="Evaluate Responses using Judge model")
-    parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="답변 목록 JSONL 파일 경로 (generate_vh_response.py 출력)")
-    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 파일 경로")
-    parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="최종 평가 결과 저장 경로 (.jsonl)")
-    parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
-    parser.add_argument("--skip_aggregate", action="store_true", help="수행 완료 후 자동 집계 로직을 건너뜁니다.")
+    parser = get_common_argparser(description="Evaluate VH Responses using Judge model")
+    parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="VH Response JSONL 경로 (generate_vh_response.py 출력)")
+    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
+    parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
+    parser.add_argument("--watch", action="store_true", help="answers_file을 모니터링하며 새로운 Response를 실시간으로 평가합니다.")
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_judge_config(thinking_level=args.uq_judge_thinking_level)
-    
-    # 출력 폴더 생성
+
     ensure_output_dir(args.output_file)
 
-    print_pipeline_banner("Gemini Evaluation 프로세스를 시작합니다 (Session-based, JSONL Pipeline).")
-    if args.continuous:
-        print("Continuous 모드가 활성화되었습니다. 다른 터미널의 출력을 기다리며 지속 처리합니다.")
+    # 기처리분 로드: (content_id, query) 단위
+    processed_pairs = set()
+    for rec in load_jsonl(args.output_file):
+        c_id  = rec.get("content_id")
+        query = rec.get("query")
+        if c_id and query:
+            processed_pairs.add((c_id, query))
+    if processed_pairs:
+        print(f"[기처리] {len(processed_pairs)}개 (content_id, query) 쌍이 이미 처리됨.")
+
+    # KSS Anchor 로드
+    summary_map = load_summary_map(args.keyscene_summary_file)
+    if summary_map:
+        print(f"[KSS Anchor] {len(summary_map)}개 Scene의 Summary 로드됨.")
+    else:
+        print(f"[Warning] KSS 파일을 찾을 수 없거나 비어있습니다: {args.keyscene_summary_file}")
+
+    print_pipeline_banner(f"VH Response 품질 평가 파이프라인을 시작합니다. (Watch 모드: {args.watch})")
+
+    file_write_lock = threading.Lock()
+    _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
+    _MODE_ORDER = ["video", "raw", "img_desc", "mm_desc"]
+
+    if not os.path.exists(args.answers_file) and not args.watch:
+        print(f"[Info] {args.answers_file} 파일이 존재하지 않습니다. 평가를 건너뜁니다.")
+        print_pipeline_done(args.output_file)
+        return
+
+    last_position = 0
+    pipeline_done = False
+    total_evaluated = 0
+
+    def judge_query_item(data):
+        """단일 {content_id, scene_idx, query, answers} 레코드를 평가합니다."""
+        c_id = data["content_id"]
+        s_idx = data.get("scene_idx")
+        query = data["query"]
+        answers = data.get("answers", {})
+        anchor = summary_map.get((c_id, s_idx), "")
+
+        if not anchor:
+            print(f"[Warning] ({c_id}, Scene {s_idx}) KSS Anchor 없음 — 스킵")
+            return None
+
+        print(f"\n{'='*60}")
+        print(f"[Judge] '{c_id}' | Scene {s_idx}")
+        print(f"Query: {query}")
+        print(f"{'='*60}")
+
+        def judge_for_mode(mode):
+            generated_answer = answers.get(mode)
+            if not generated_answer or str(generated_answer).startswith("Error"):
+                return mode, None
+            score_dict = retry_parse_json(
+                lambda: evaluate_answer(
+                    client=client,
+                    model_name=args.uq_judge_model,
+                    judge_config=judge_config,
+                    user_prompt=query,
+                    generated_answer=generated_answer,
+                    keyscene_summary=anchor,
+                ),
+                label=f"VH Judge ({c_id}, {mode})",
+            )
+            return mode, score_dict
+
+        judge_results = {}
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        try:
+            futures = {m: executor.submit(judge_for_mode, m) for m in _MODE_ORDER}
+            for mode in _MODE_ORDER:
+                _, score_dict = futures[mode].result()
+                if score_dict is None:
+                    print(f"[{mode}] Skip (no valid answer)")
+                    continue
+                judge_results[mode] = score_dict
+                total = sum(
+                    (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
+                    for k in _SCORE_KEYS
+                )
+                scores_str = " | ".join(
+                    f"{k}={score_dict.get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
+                )
+                print(f"\n[{mode}] Total: {total}/15 | {scores_str}")
+                for k in _SCORE_KEYS:
+                    item = score_dict.get(k, {})
+                    score = item.get("score", "?") if isinstance(item, dict) else "?"
+                    rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
+                    print(f"- {k} ({score}/5): {rationale}")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        if not judge_results:
+            return None
+
+        record = {
+            "content_id": c_id,
+            "query":       query,
+            "judge":       {m: judge_results[m] for m in _MODE_ORDER if m in judge_results},
+        }
+        with file_write_lock:
+            append_jsonl(args.output_file, record)
+            processed_pairs.add((c_id, query))
+        return record
 
     try:
         while True:
-            # 1. Output (진행률) 읽기 - (content_id, query) 쌍 단위로 추적
-            processed_pairs = load_processed_pairs(args.output_file)
+            if not os.path.exists(args.answers_file):
+                time.sleep(3)
+                continue
 
-            # 2-1. KeyScene Summary 읽기
-            summary_map = load_summary_map(args.keyscene_summary_file)
+            with open(args.answers_file, "r", encoding="utf-8") as f:
+                f.seek(last_position)
+                new_lines     = f.readlines()
+                last_position = f.tell()
 
-            # 2-2. Input 읽기 - 새 포맷: 각 줄 = {"content_id", "query", "answers"}
-            #    content_id별로 queries 리스트로 재그룹핑
-            content_answers_dict = {}  # content_id -> {"content_id": ..., "queries": [...]}
-            content_query_order = {}   # content_id -> [query, ...] (순서 보존)
-            for data in load_jsonl(args.answers_file):
-                c_id = data.get("content_id")
-                query = data.get("query")
-                scene_idx = data.get("scene_idx")
-                answers = data.get("answers")
-                if c_id and query and answers:
-                    if c_id not in content_answers_dict:
-                        content_answers_dict[c_id] = {"content_id": c_id, "queries": []}
-                        content_query_order[c_id] = []
-                    if query not in content_query_order[c_id]:
-                        content_query_order[c_id].append(query)
-                        ref_text = summary_map.get((c_id, scene_idx), data.get("reference", ""))
-                        content_answers_dict[c_id]["queries"].append({
-                            "query": query,
-                            "scene_idx": scene_idx,
-                            "reference": ref_text,
-                            "answers": answers
-                        })
-            content_answers_list = list(content_answers_dict.values())
-            if not content_answers_list and not args.continuous:
-                print(f"Error: {args.answers_file} 파일이 존재하지 않거나 비어 있습니다.")
-                return
+            for line in new_lines:
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-            new_data_processed = False
+                if obj.get("pipeline_done"):
+                    pipeline_done = True
+                    continue
 
-            # Resume Plan 계산 및 출력 - (content_id, query) 쌍 단위
-            pending_work = {}
-            for content_answers in content_answers_list:
-                c_id = content_answers["content_id"]
-                
-                c_pending = []
-                for query_item in content_answers.get("queries", []):
-                    q_str = query_item["query"]
-                    answers = query_item.get("answers", {})
-                    # 평가 가능한 유효 답변이 하나라도 있고, 아직 처리 안 된 쌍이면 pending
-                    has_valid_answer = any(
-                        answers.get(m) and not str(answers.get(m, "")).startswith("Error")
-                        for m in ["video", "raw", "img_desc", "mm_desc"]
-                    )
-                    if has_valid_answer and (c_id, q_str) not in processed_pairs:
-                        c_pending.append(q_str)
-                if c_pending:
-                    pending_work[c_id] = c_pending
-                    
-            if pending_work:
-                print("\n[TODO] 작업 목록:")
-                for c_id, queries in pending_work.items():
-                    print(f"- content_id '{c_id}':")
-                    for q in queries:
-                        print(f"    - query \"{q}\"")
-                print("-" * 50)
+                c_id  = obj.get("content_id")
+                query = obj.get("query")
+                if not c_id or not query:
+                    continue
+                if (c_id, query) in processed_pairs:
+                    continue
 
-            file_write_lock = threading.Lock()
+                result = judge_query_item(obj)
+                if result:
+                    total_evaluated += 1
+                    print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
 
-            def process_item(content_answers):
-                content_id = content_answers["content_id"]
-                if content_id not in pending_work:
-                    return False
-                    
-                print(f"\nEvaluating Content: '{content_id}'")
-
-                pending_queries = pending_work[content_id]
-                
-                for query_item in content_answers.get("queries", []):
-                    user_prompt = query_item["query"]
-                    answers = query_item.get("answers", {})
-                    reference_answer = query_item.get("reference", "")
-                    
-                    # 이미 처리된 (content_id, query) 쌍이면 건너뜀
-                    if user_prompt not in pending_queries:
-                        print(f"[{content_id}] Scoring Query: '{user_prompt[:30]}...' -> already completed (skip)")
-                        continue
-                    
-                    print(f"[{content_id}] Scoring Query: '{user_prompt[:30]}...'")
-                    
-                    if not reference_answer or str(reference_answer).startswith("Error") or str(reference_answer).startswith("Warning"):
-                        print(f"[{content_id}]  [Warning] KeyScene Summary가 없거나 오류입니다. 이 쿼리를 건너뜁니다.")
-                        continue
-                    
-                    _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
-                    _MODE_ORDER = ["video", "raw", "img_desc", "mm_desc"]
-                    judge_results = {}  # mode -> score_dict
-
-                    def judge_for_mode(mode):
-                        generated_answer = answers.get(mode)
-                        if not generated_answer or not str(generated_answer).strip() or str(generated_answer).startswith("Error"):
-                            return mode, None
-
-                        score_dict = retry_parse_json(
-                            lambda: evaluate_answer(
-                                client=client,
-                                model_name=args.uq_judge_model,
-                                judge_config=judge_config,
-                                user_prompt=user_prompt,
-                                generated_answer=generated_answer,
-                                keyscene_summary=reference_answer
-                            ),
-                            label=f"VH Judge ({content_id}, {mode})",
-                        )
-                        return mode, score_dict
-
-                    # 4모드 병렬 Judge
-                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-                    try:
-                        futures = {m: executor.submit(judge_for_mode, m) for m in _MODE_ORDER}
-
-                        # 정규 순서로 결과 수집 & 출력
-                        for mode in _MODE_ORDER:
-                            mode_result, score_dict = futures[mode].result()
-                            if score_dict is None:
-                                print(f"[{mode}] Skip (no valid answer)")
-                                continue
-
-                            judge_results[mode] = score_dict
-                            total = sum(
-                                (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
-                                for k in _SCORE_KEYS
-                            )
-                            scores_str = " | ".join(
-                                f"{k}={score_dict.get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
-                            )
-                            print(f"[{mode}] Total: {total}/15 | {scores_str}")
-                            for k in _SCORE_KEYS:
-                                item = score_dict.get(k, {})
-                                rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
-                                score = item.get("score", "?") if isinstance(item, dict) else "?"
-                                print(f"- {k} ({score}/5): {rationale}")
-                    finally:
-                        executor.shutdown(wait=False, cancel_futures=True)
-
-                    # 쿼리 한 개 평가가 끝나면 (content_id, query) 단위로 1줄 append
-                    if judge_results:
-                        ordered_judge = {m: judge_results[m] for m in _MODE_ORDER if m in judge_results}
-                        score_record = {
-                            "content_id": content_id,
-                            "query": user_prompt,
-                            "judge": ordered_judge
-                        }
-                        append_jsonl(args.output_file, score_record, lock=file_write_lock)
-                        processed_pairs.add((content_id, user_prompt))
-                    print(f"\n[{content_id}] -> Score 저장 완료")
-                    print("-" * 50)
-
-                return True
-
-            for content_answers in content_answers_list:
-                if process_item(content_answers):
-                    new_data_processed = True
-
-            if not args.continuous:
+            if args.watch:
+                if pipeline_done:
+                    print("\n[Watch] pipeline_done 시그널 감지. 종료합니다.")
+                    break
+                time.sleep(3)
+            else:
                 break
-                
-            if not new_data_processed:
-                # 새 데이터가 없으면 5초 대기
-                time.sleep(5)
 
     except KeyboardInterrupt:
-        print("\n\n사용자에 의해 모니터링 루프가 중단되었습니다.")
+        print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
-        
-    if not args.continuous:
-        if not args.skip_aggregate:
-            print("\n[Aggregation] JSONL 결과를 분석용 JSON 형식으로 병합합니다...")
-            output_dir = os.path.dirname(args.output_file) or "assets"
-            subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir])
-            
-            # 추가 집계: aggregate_scores.py 호출
-            scores_json = os.path.join(output_dir, "scores.json")
-            if os.path.exists(scores_json):
-                subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
-                # 엑셀 변환 추가
-                subprocess.run([sys.executable, "export_to_excel.py"])
 
-    print("\n모든 평가 처리가 완료/종료되었습니다.\n" + "=" * 50)
+    print_pipeline_done(args.output_file)
+
 
 if __name__ == "__main__":
     main()

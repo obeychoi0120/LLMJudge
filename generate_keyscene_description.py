@@ -47,7 +47,9 @@ Guidelines:
 - Be precise and comprehensive. Vague summaries are unacceptable.
 - Include specific details: colors, quantities, spatial relationships, identifiable objects.
 - Actively use BOTH visual AND audio information from the video.
-- Do NOT omit dialogue or proper nouns — these are critical."""
+- Do NOT omit dialogue or proper nouns — these are critical.
+- If you recognize a person, place, or brand from the video, use their correct known name even if not explicitly stated on screen.
+- Focus on describing what is observable in the video. Do NOT add speculative interpretations or external context beyond proper identification."""
 
 # ───────────────────────────────────────────────
 # Prompt: Raw JSON-based Description (영어)
@@ -83,7 +85,9 @@ Guidelines:
 - Be precise and comprehensive. Vague summaries are unacceptable.
 - Prioritize factual accuracy — proper nouns and dialogue content are critical.
 - Write the description naturally, as if you had full knowledge of the scene.
-- Do NOT mention that you are working from transcripts or metadata."""
+- Do NOT mention that you are working from transcripts or metadata.
+- If contextual clues allow you to identify a specific person, place, or brand, use their correct known name.
+- Focus on describing the scene as conveyed through the provided data. Do NOT add speculative context beyond proper identification."""
 
 
 def make_kd_gen_config(thinking_level=None):
