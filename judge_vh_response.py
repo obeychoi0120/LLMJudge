@@ -110,7 +110,7 @@ def main():
     parser.add_argument("--watch", action="store_true", help="answers_file을 모니터링하며 새로운 Response를 실시간으로 평가합니다.")
 
     args, client = init_pipeline(parser.parse_args())
-    judge_config = make_judge_config(thinking_level=args.uq_judge_thinking_level)
+    judge_config = make_judge_config(thinking_level=args.vh_response_judge_thinking_level)
 
     ensure_output_dir(args.output_file)
 
@@ -170,7 +170,7 @@ def main():
             score_dict = retry_parse_json(
                 lambda: evaluate_answer(
                     client=client,
-                    model_name=args.uq_judge_model,
+                    model_name=args.vh_response_judge_model,
                     judge_config=judge_config,
                     user_prompt=query,
                     generated_answer=generated_answer,

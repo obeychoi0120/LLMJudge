@@ -132,37 +132,30 @@ def main():
     subprocess.run(cmd, check=True)
     print(f"-> VH Response 저장 완료: {args.vh_responses_file}")
 
-    # ───────────────────────────────────────────────
-    # B-3: VH Response Judge (judge_response.py)
-    # ───────────────────────────────────────────────
+    # ──────────────────────────────────────────────
+    # B-3: VH Response Judge (judge_vh_response.py)
+    # ──────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-3. VH Response Judge (judge_response.py)")
+    print(">>> B-3. VH Response Judge (judge_vh_response.py)")
     print("="*60)
     cmd = [
-        sys.executable, "judge_response.py",
-        "--answers_file",          args.vh_responses_file,
+        sys.executable, "judge_vh_response.py",
+        "--answers_file", args.vh_responses_file,
         "--keyscene_summary_file", args.keyscene_summary_file,
-        "--output_file",           args.vh_scores_file,
-        "--uq_judge_model",              args.uq_judge_model,
-        "--uq_judge_thinking_level",     str(args.uq_judge_thinking_level),
-        "--skip_aggregate"
+        "--output_file", args.vh_scores_file,
+        "--vh_response_judge_model", args.vh_response_judge_model,
+        "--vh_response_judge_thinking_level", str(args.vh_response_judge_thinking_level),
     ] + common_project_args
     subprocess.run(cmd, check=True)
     print(f"-> VH Response 점수 저장 완료: {args.vh_scores_file}")
 
-    # ───────────────────────────────────────────────
-    # B-4: JSONL → JSON 집계 + 엑셀 내보내기
-    # ───────────────────────────────────────────────
+    # ──────────────────────────────────────────────
+    # B-4: 엑셀 내보내기
+    # ──────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-4. JSONL 집계 및 엑셀 내보내기")
+    print(">>> B-4. 엑셀 리포트 내보내기")
     print("="*60)
-    output_dir = os.path.dirname(args.scores_file) or "assets"
-    subprocess.run([sys.executable, "jsonl_to_json.py", "--input_dir", output_dir], check=True)
-
-    scores_json = os.path.join(output_dir, "scores.json")
-    if os.path.exists(scores_json):
-        subprocess.run([sys.executable, "aggregate_scores.py", "--scores_file", scores_json])
-        subprocess.run([sys.executable, "export_to_excel.py"])
+    subprocess.run([sys.executable, "export_to_excel.py"])
 
     print("\n\nEnd-to-End Pipeline Completed Successfully!")
 

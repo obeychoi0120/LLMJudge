@@ -90,7 +90,7 @@ Guidelines:
 - Focus on describing the scene as conveyed through the provided data. Do NOT add speculative context beyond proper identification."""
 
 
-def make_kd_gen_config(thinking_level=None):
+def make_ksd_gen_config(thinking_level=None):
     """KeyScene Description 생성용 GenerateContentConfig를 반환합니다."""
     return {
         "video": make_generate_config(system_instruction=_VIDEO_DESC_SYSTEM_PROMPT, thinking_level=thinking_level),
@@ -153,7 +153,7 @@ def main():
 
     args, client = init_pipeline(parser.parse_args())
 
-    gen_configs = make_kd_gen_config(thinking_level=args.kd_gen_thinking_level)
+    gen_configs = make_ksd_gen_config(thinking_level=args.ksd_gen_thinking_level)
 
     if not check_input_file(args.input_file, hint="먼저 identify_keyscene.py를 실행하세요."):
         return
@@ -241,11 +241,11 @@ def main():
                 def _run_mode(mode):
                     if mode == "video_desc":
                         return generate_video_desc(
-                            client, args.kd_gen_model, gen_configs["video"], video_part, end_time
+                            client, args.ksd_gen_model, gen_configs["video"], video_part, end_time
                         )
                     elif mode == "raw_desc":
                         return generate_raw_desc(
-                            client, args.kd_gen_model, gen_configs["raw"], raw_part, end_time
+                            client, args.ksd_gen_model, gen_configs["raw"], raw_part, end_time
                         )
                     elif mode in ("img_desc", "mm_desc"):
                         # GCS에서 description 텍스트를 읽어와 로컬 JSONL에 기록 (AI 생성 없음)

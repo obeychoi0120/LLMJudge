@@ -17,19 +17,16 @@ _CONFIG_KEYS = [
     "vh_gen_model", "vh_judge_model",
     "vh_thinking_level", "vh_judge_thinking_level",
     "vh_gen_past_scenes_size",
-    # A-track: KeyScene Summary (Session별 분리)
+    # A-track: KeyScene Summary
     "kss_past_summary_model", "kss_past_summary_thinking_level",
     "kss_current_scene_model", "kss_current_scene_thinking_level",
     "use_ref_for_keyscene_summary",
-    # B-track: User Query
-    "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
-    "uq_gen_thinking_level", "uq_response_thinking_level", "uq_reference_thinking_level", "uq_judge_thinking_level",
-    "use_ref_for_uq_reference",
-    # B-track: VH Response (신규)
+    # B-track: VH Response
     "vh_response_model", "vh_response_thinking_level",
+    "vh_response_judge_model", "vh_response_judge_thinking_level",
     # C-track: KeyScene Description
-    "kd_gen_model", "kd_gen_thinking_level",
-    "kd_judge_model", "kd_judge_thinking_level",
+    "ksd_gen_model", "ksd_gen_thinking_level",
+    "ksd_judge_model", "ksd_judge_thinking_level",
 ]
 
 
@@ -79,24 +76,17 @@ def get_common_argparser(description=""):
     parser.add_argument("--vh_judge_model", default="gemini-3.1-pro-preview", help="Voice Hint 질문 Judge 모델명")
     parser.add_argument("--vh_judge_thinking_level", default="high", help="Voice Hint Judge 모델의 Thinking Level (low/medium/high)")
 
-    # 모델 공통 (B-track)
-    parser.add_argument("--uq_gen_model", default="gemini-3.1-pro-preview", help="User Query 생성 모델명")
-    parser.add_argument("--uq_gen_thinking_level", default="high", help="UQ 생성 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--uq_reference_model", default="gemini-3.1-pro-preview", help="User Query Reference Answer 생성 모델명")
-    parser.add_argument("--uq_reference_thinking_level", default="high", help="UQ Reference Answer 생성 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--use_ref_for_uq_reference", type=lambda x: str(x).lower() == 'true', default=False, help="Reference 생성 시 Ref JSONL 참조 여부")
-    parser.add_argument("--uq_response_model", default="gemini-3.1-flash-lite-preview", help="User Query 답변 생성 모델명")
-    parser.add_argument("--uq_response_thinking_level", default="medium", help="UQ Response 생성 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--uq_judge_model", default="gemini-3.1-pro-preview", help="User Query 답변 평가 모델명")
-    parser.add_argument("--uq_judge_thinking_level", default="high", help="UQ Response Judge 모델의 Thinking Level (low/medium/high)")
+    # 모델 공통 (B-track: VH Response)
     parser.add_argument("--vh_response_model", default="gemini-3.1-flash-lite-preview", help="VH Response 생성 모델명")
     parser.add_argument("--vh_response_thinking_level", default="low", help="VH Response 생성 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--vh_response_judge_model", default="gemini-3.1-pro-preview", help="VH Response Judge 모델명")
+    parser.add_argument("--vh_response_judge_thinking_level", default="high", help="VH Response Judge 모델의 Thinking Level (low/medium/high)")
 
     # 모델 공통 (C-track: KeyScene Description)
-    parser.add_argument("--kd_gen_model", default="gemini-3.1-flash-lite-preview", help="KeyScene Description 생성 모델명")
-    parser.add_argument("--kd_gen_thinking_level", default="low", help="KeyScene Description 생성 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--kd_judge_model", default="gemini-3.1-pro-preview", help="KeyScene Description 평가 모델명")
-    parser.add_argument("--kd_judge_thinking_level", default="high", help="KeyScene Description Judge 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--ksd_gen_model", default="gemini-3.1-flash-lite-preview", help="KeyScene Description 생성 모델명")
+    parser.add_argument("--ksd_gen_thinking_level", default="low", help="KeyScene Description 생성 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--ksd_judge_model", default="gemini-3.1-pro-preview", help="KeyScene Description 평가 모델명")
+    parser.add_argument("--ksd_judge_thinking_level", default="high", help="KeyScene Description Judge 모델의 Thinking Level (low/medium/high)")
 
     return parser
 

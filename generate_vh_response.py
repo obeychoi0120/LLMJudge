@@ -192,8 +192,8 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
         else:
             label_map = {
                 "img_desc": "Image-based Description (처음부터 현재 장면까지)",
-                "mm_desc":  "Multimodal Description (처음부터 현재 장면까지)",
-                "raw":      "Raw Metadata (speech & texts, 처음부터 현재 장면까지)",
+                "mm_desc": "Multimodal Description (처음부터 현재 장면까지)",
+                "raw": "Raw Metadata (speech & texts, 처음부터 현재 장면까지)",
             }
             contents = [
                 f"--- [{label_map.get(mode, mode)}] ---",
@@ -247,13 +247,11 @@ def _load_completed_pairs(output_path):
 
 def main():
     parser = get_common_argparser(description="Voice Hint (KSS 모드) 질문에 대해 4가지 Source 모드로 Response를 생성합니다.")
-    parser.add_argument("--input_file",     default="assets/voice_hint.jsonl",   help="Voice Hint JSONL 경로 (KSS 모드만 사용)")
-    parser.add_argument("--output_file",    default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
+    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로 (KSS 모드만 사용)")
+    parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
-    parser.add_argument("--max_past_scenes", type=int, default=None,
-                        help="현재 KeyScene 기준 최근 N개 KeyPoint 내의 Scene만 Source로 사용 (기본값: 제한 없음)")
-    parser.add_argument("--continuous", action="store_true",
-                        help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
+    parser.add_argument("--max_past_scenes", type=int, default=None, help="현재 KeyScene 기준 최근 N개 KeyPoint 내의 Scene만 Source로 사용 (기본값: 제한 없음)")
+    parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
 
     args, client = init_pipeline(parser.parse_args())
 

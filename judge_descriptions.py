@@ -77,7 +77,7 @@ Output ONLY the following JSON. No other text.
 }"""
 
 
-def make_kd_judge_config(thinking_level=None):
+def make_ksd_judge_config(thinking_level=None):
     """KeyScene Description Judge용 GenerateContentConfig를 반환합니다."""
     return make_generate_config(
         system_instruction=_DESC_JUDGE_SYSTEM_PROMPT,
@@ -109,7 +109,7 @@ def judge_one_description(
         score_dict = retry_parse_json(
             lambda: _retry_api_call(
                 lambda: client.models.generate_content(
-                    model=args.kd_judge_model,
+                    model=args.ksd_judge_model,
                     contents=[
                         "--- [Anchor] (Ground-truth KeyScene Summary, Korean) ---",
                         anchor_text,
@@ -190,21 +190,21 @@ def main():
     parser = get_common_argparser(description="KeyScene Description 4종을 KSS 앵커 기반으로 품질 평가합니다.")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl",
                         help="KeyScene Summary JSONL 경로 (Anchor)")
-    parser.add_argument("--kd_file", default="assets/keyscene_description.jsonl",
+    parser.add_argument("--ksd_file", default="assets/keyscene_description.jsonl",
                         help="KeyScene Description JSONL 경로 (video_desc / raw_desc 소스)")
     parser.add_argument("--output_file", default="assets/keyscene_description_scores.jsonl",
                         help="Description Judge 점수 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl",
                         help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--watch", action="store_true",
-                        help="kd_file을 모니터링하며 새로운 video_desc/raw_desc를 실시간으로 평가합니다.")
+                        help="ksd_file을 모니터링하며 새로운 video_desc/raw_desc를 실시간으로 평가합니다.")
     parser.add_argument("--modes", nargs="+",
                         default=["img_desc", "mm_desc", "video_desc", "raw_desc"],
                         choices=["img_desc", "mm_desc", "video_desc", "raw_desc"],
                         help="평가할 모드 직접 지정 (기본값: 4종 모두)")
 
     args, client = init_pipeline(parser.parse_args())
-    judge_config = make_kd_judge_config(thinking_level=args.kd_judge_thinking_level)
+    judge_config = make_ksd_judge_config(thinking_level=args.ksd_judge_thinking_level)
 
     ensure_output_dir(args.output_file)
 
@@ -244,8 +244,8 @@ def main():
     # generate_keyscene_description.py가 video_desc/raw_desc/img_desc/mm_desc를
     # 모두 동일 파일에 기록하므로, 소스를 분리할 필요 없이 한 루프로 처리합니다.
 
-    if not os.path.exists(args.kd_file) and not args.watch:
-        print(f"[Info] {args.kd_file} 파일이 존재하지 않습니다. 평가를 건너뜁니다.")
+    if not os.path.exists(args.ksd_file) and not args.watch:
+        print(f"[Info] {args.ksd_file} 파일이 존재하지 않습니다. 평가를 건너뜁니다.")
         print_pipeline_done(args.output_file)
         return
 
@@ -258,11 +258,11 @@ def main():
 
     try:
         while True:
-            if not os.path.exists(args.kd_file):
+            if not os.path.exists(args.ksd_file):
                 time.sleep(3)
                 continue
 
-            with open(args.kd_file, "r", encoding="utf-8") as f:
+            with open(args.ksd_file, "r", encoding="utf-8") as f:
                 f.seek(last_position)
                 new_lines     = f.readlines()
                 last_position = f.tell()
