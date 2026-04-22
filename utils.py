@@ -89,6 +89,8 @@ def get_common_argparser(description=""):
     parser.add_argument("--uq_response_thinking_level", default="medium", help="UQ Response 생성 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--uq_judge_model", default="gemini-3.1-pro-preview", help="User Query 답변 평가 모델명")
     parser.add_argument("--uq_judge_thinking_level", default="high", help="UQ Response Judge 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--vh_response_model", default="gemini-3.1-flash-lite-preview", help="VH Response 생성 모델명")
+    parser.add_argument("--vh_response_thinking_level", default="low", help="VH Response 생성 모델의 Thinking Level (low/medium/high)")
 
     # 모델 공통 (C-track: KeyScene Description)
     parser.add_argument("--kd_gen_model", default="gemini-3.1-flash-lite-preview", help="KeyScene Description 생성 모델명")

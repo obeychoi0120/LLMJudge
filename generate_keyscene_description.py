@@ -258,8 +258,8 @@ def main():
                         return desc_text, time.time() - t0
 
                 try:
-                    # 2개 모드 병렬 생성
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(missing_modes)) as executor:
+                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(missing_modes))
+                    try:
                         futures = {}
                         for mode in missing_modes:
                             futures[mode] = executor.submit(_run_mode, mode)
@@ -281,6 +281,8 @@ def main():
                                 done_modes_by_scene.add((content_id, scene_idx, mode))
 
                             print(f"  -> [{mode}] 완료 (~{len(desc_text.split())}단어, {elapsed:.2f}초)")
+                    finally:
+                        executor.shutdown(wait=False, cancel_futures=True)
 
                     print("--------------------------------------------------------------------------------")
 
@@ -293,8 +295,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
-        import os as _os
-        _os.exit(1)
+        os._exit(1)
 
     # 결과 파일 정렬 및 누락 점검
     sort_and_validate_jsonl(

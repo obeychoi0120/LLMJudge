@@ -100,8 +100,6 @@ def judge_one_description(
         return {"skipped": True, "reason": f"Scene {scene_idx} mode={mode} Candidate 비어있음", "mode": mode}
 
     try:
-        time.sleep(1)
-
         score_dict = retry_parse_json(
             lambda: _retry_api_call(
                 lambda: client.models.generate_content(
@@ -303,52 +301,50 @@ def main():
 
             if ready_scenes:
                 # Scene 단위로 병렬 Judge 후 정규 순서로 출력
-                executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-                try:
-                    futures = {}
-                    for c_id, s_idx, pending_modes, mode_map in ready_scenes:
-                        kss_raw = summary_map.get((c_id, s_idx), "")
-                        anchor  = extract_current_scene_desc(kss_raw) if kss_raw else ""
-                        ordered = [m for m in _MODE_ORDER if m in pending_modes]
+                for c_id, s_idx, pending_modes, mode_map in ready_scenes:
+                    kss_raw = summary_map.get((c_id, s_idx), "")
+                    anchor  = extract_current_scene_desc(kss_raw) if kss_raw else ""
+                    ordered = [m for m in _MODE_ORDER if m in pending_modes]
 
+                    # Scene 단위 executor: 4모드 병렬 실행 → 전부 완료 후 출력
+                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(ordered))
+                    try:
+                        futures = {}
                         for mode in ordered:
                             candidate = mode_map[mode]
-                            key = (c_id, s_idx, mode)
-                            futures[key] = executor.submit(
+                            futures[mode] = executor.submit(
                                 judge_one_description,
                                 client, args, judge_config,
                                 c_id, s_idx, mode,
                                 candidate, anchor,
                             )
 
-                    # Scene 단위로 정규 순서 출력 & 파일 쓰기
-                    for c_id, s_idx, pending_modes, _ in ready_scenes:
-                        ordered = [m for m in _MODE_ORDER if m in pending_modes]
-
+                        # Scene 헤더 출력
                         print(f"\n{'='*60}")
                         print(f"[Judge] '{c_id}' | Scene {s_idx}")
                         print(f"{'='*60}")
 
+                        # 정규 순서로 결과 수집 & 출력
                         for mode in ordered:
-                            key = (c_id, s_idx, mode)
                             try:
-                                record = futures[key].result()
+                                record = futures[mode].result()
                             except Exception as e:
-                                print(f"[{mode}] ❌ Error: {e}")
+                                print(f"[{mode}] Error: {e}")
+                                with file_write_lock:
+                                    processed_triples.add((c_id, s_idx, mode))
                                 continue
 
                             _print_judge_result(record)
 
-                            # 유효한 결과만 파일에 기록
                             if record and not record.get("skipped") and not record.get("error"):
                                 with file_write_lock:
                                     append_jsonl(args.output_file, record)
                                 total_evaluated += 1
 
                             with file_write_lock:
-                                processed_triples.add(key)
-                finally:
-                    executor.shutdown(wait=False, cancel_futures=True)
+                                processed_triples.add((c_id, s_idx, mode))
+                    finally:
+                        executor.shutdown(wait=False, cancel_futures=True)
 
                 # 버퍼에서 완료된 Scene 제거
                 for c_id, s_idx, pending_modes, _ in ready_scenes:
