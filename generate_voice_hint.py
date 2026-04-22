@@ -48,7 +48,7 @@ _VOICE_HINT_BASE_DESC = """당신은 제공되는 메타데이터를 기반으�
 
 [JSON 형식 예시]
 {
-    "rationale": "1. 오류 교정: 묘사 중 '봄고레 때'는 문맥상 '범고래 떼'의 오탈자이므로 교정함.\n2. 과거 정보 차단: 혹등고래가 굶주리고 있다는 사실은 이전 장면에서 파악됨. 이 정보는 질문 소재에서 제외함.\n3. 미래 추측 차단: '범고래의 사냥 결과' 같은 미래 서사는 답을 알 수 없으므로 묻지 않음.\n4. 질문 기획: 대신 시청자가 현재 접한 '범고래 떼의 소리'나 '생태계 특성' 등 당장 답변할 수 있는 배경지식에 대한 호기심으로 질문을 기획함.",
+    "rationale": "1) 오류 교정: 묘사 중 '봄고레 때'는 문맥상 '범고래 떼'의 오탈자이므로 교정함. 2) 과거 정보 차단: 혹등고래가 굶주리고 있다는 사실은 이전 장면에서 파악됨. 이 정보는 질문 소재에서 제외함. 3) 미래 추측 차단: '범고래의 사냥 결과' 같은 미래 서사는 답을 알 수 없으므로 묻지 않음. 4) 질문 기획: 대신 시청자가 현재 접한 '범고래 떼의 소리'나 '생태계 특성' 등 당장 답변할 수 있는 배경지식에 대한 호기심으로 질문을 기획함.",
     "queries": [
         "방금 나타난 범고래 떼는 어떤 먹이 사냥 방식을 가지고 있을까요?",
         "지금 범고래들이 내는 저 독특한 소리는 무리 안에서 어떤 의미를 가질까요?"
@@ -80,7 +80,7 @@ _VOICE_HINT_BASE_KSS = """당신은 제공되는 영상 요약을 기반으로 �
 
 [JSON 형식 예시]
 {
-    "rationale": "1. 과거 정보 차단: 혹등고래가 굶주리고 있다는 사실은 이전 장면에서 파악됨. 이 정보는 질문 소재에서 제외함.\n2. 미래 추측 차단: '범고래의 사냥 결과' 같은 미래 서사는 답을 알 수 없으므로 묻지 않음.\n3. 질문 기획: 대신 시청자가 현재 접한 '범고래 떼의 소리'나 '생태계 특성' 등 당장 답변할 수 있는 배경지식에 대한 호기심으로 질문을 기획함.",
+    "rationale": "1) 과거 정보 차단: 혹등고래가 굶주리고 있다는 사실은 이전 장면에서 파악됨. 이 정보는 질문 소재에서 제외함. 2) 미래 추측 차단: '범고래의 사냥 결과' 같은 미래 서사는 답을 알 수 없으므로 묻지 않음. 3) 질문 기획: 대신 시청자가 현재 접한 '범고래 떼의 소리'나 '생태계 특성' 등 당장 답변할 수 있는 배경지식에 대한 호기심으로 질문을 기획함.",
     "queries": [
         "방금 나타난 범고래 떼는 어떤 먹이 사냥 방식을 가지고 있을까요?",
         "지금 범고래들이 내는 저 독특한 소리는 무리 안에서 어떤 의미를 가질까요?"
@@ -206,16 +206,15 @@ def main():
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
-    # 기처리분 로드: 모드별로 개별 추적하도록 변경
-    # (content_id, scene_idx, mode)
+    # 기처리분 로드: 모드별로 개별 추적
+    # 각 줄이 (content_id, scene_idx, mode) 단위로 저장되므로 최상위 'mode' 필드로 판별
     done_modes_by_scene = set()
     for rec in load_jsonl(args.output_file):
         c_id = rec.get("content_id")
         s_idx = rec.get("scene_idx")
-        for q_grp in rec.get("queries", []):
-            mode = q_grp.get("mode")
-            if c_id and s_idx is not None and mode:
-                done_modes_by_scene.add((c_id, s_idx, mode))
+        mode = rec.get("mode")
+        if c_id and s_idx is not None and mode:
+            done_modes_by_scene.add((c_id, s_idx, mode))
 
     # 생성할 목표 모드 설정
     target_modes = args.modes
@@ -264,11 +263,10 @@ def main():
                 kss_summary_text = kss_map.get((content_id, scene_idx), "")
 
                 print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
-                if kss_summary_text and "kss" in missing_modes:
-                    current_scene_only = kss_summary_text.split("[2. 현재 장면 묘사]")[-1].strip() if "[2. 현재 장면 묘사]" in kss_summary_text else kss_summary_text.strip()
-                    print(f"\n[ --- KSS 현재 장면 --- ]\n\n{current_scene_only}")
+                # if kss_summary_text and "kss" in missing_modes:
+                #     current_scene_only = kss_summary_text.split("[2. 현재 장면 묘사]")[-1].strip() if "[2. 현재 장면 묘사]" in kss_summary_text else kss_summary_text.strip()
+                #     print(f"\n[ --- KSS 현재 장면 --- ]\n\n{current_scene_only}")
                 
-                # 로깅용 Desc 텍스트 추출 및 즉시 출력 (description-only 형식)
                 img_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", scene_idx, scene_idx) if "img_desc" in missing_modes else ""
                 mm_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "mm_desc", scene_idx, scene_idx) if "mm_desc" in missing_modes else ""
 
@@ -298,25 +296,18 @@ def main():
                         label=f"Voice Hint (Scene {scene_idx})"
                     )
 
-                    query_groups = []
+                    # 각 mode별로 별도의 줄로 저장 (content_id + scene_idx + mode = 1 line)
                     for mod in missing_modes:
-                        query_groups.append({
+                        mode_record = {
+                            "content_id": content_id,
+                            "scene_idx": scene_idx,
                             "mode": mod,
+                            "start_time": start_time,
+                            "end_time": end_time,
                             "queries": vh_dict.get(mod, []),
-                            "rationale": vh_dict.get("rationales", {}).get(mod, "")
-                        })
-                        
-                    scene_record = {
-                        "content_id": content_id,
-                        "scene_idx": scene_idx,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "queries": query_groups,
-                    }
-                    
-                    append_jsonl(args.output_file, scene_record)
-                    
-                    for mod in missing_modes:
+                            "rationale": vh_dict.get("rationales", {}).get(mod, ""),
+                        }
+                        append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
                     for mod in missing_modes:
@@ -326,7 +317,7 @@ def main():
                                 print(f"[Rationale]: {vh_dict['rationales'][mod]}\n")
                             for qi, q in enumerate(vh_dict[mod], 1):
                                 print(f"{qi}. {q}")
-                    print(f"------------------------------------------------------\n")
+                    print(f"------------------------------------------------------------------------------------------------------------\n")
 
                 except Exception as e:
                     print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")

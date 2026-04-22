@@ -25,6 +25,9 @@ _CONFIG_KEYS = [
     "uq_gen_model", "uq_response_model", "uq_reference_model", "uq_judge_model",
     "uq_gen_thinking_level", "uq_response_thinking_level", "uq_reference_thinking_level", "uq_judge_thinking_level",
     "use_ref_for_uq_reference",
+    # C-track: KeyScene Description
+    "kd_gen_model", "kd_gen_thinking_level",
+    "kd_judge_model", "kd_judge_thinking_level",
 ]
 
 
@@ -84,6 +87,12 @@ def get_common_argparser(description=""):
     parser.add_argument("--uq_response_thinking_level", default="medium", help="UQ Response 생성 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--uq_judge_model", default="gemini-3.1-pro-preview", help="User Query 답변 평가 모델명")
     parser.add_argument("--uq_judge_thinking_level", default="high", help="UQ Response Judge 모델의 Thinking Level (low/medium/high)")
+
+    # 모델 공통 (C-track: KeyScene Description)
+    parser.add_argument("--kd_gen_model", default="gemini-3.1-flash-lite-preview", help="KeyScene Description 생성 모델명")
+    parser.add_argument("--kd_gen_thinking_level", default="low", help="KeyScene Description 생성 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--kd_judge_model", default="gemini-3.1-pro-preview", help="KeyScene Description 평가 모델명")
+    parser.add_argument("--kd_judge_thinking_level", default="high", help="KeyScene Description Judge 모델의 Thinking Level (low/medium/high)")
 
     return parser
 
@@ -546,9 +555,9 @@ def generate_single_turn_response(client: genai.Client, model: str, config: type
 # ============================================================
 
 def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None, mode_key=None):
-    """JSONL 파일을 content_id, scene_idx 순으로 정렬하고 누락된 Scene(및 모드)을 점검합니다.
+    """JSONL 파일을 content_id, scene_idx, mode 순으로 정렬하고 누락된 Scene/모드을 점검합니다.
     - 기존의 'pipeline_done' 시그널은 정렬 과정에서 제거됩니다.
-    - expected_modes와 mode_key가 제공되면, 각 Scene 내에 해당 모드들이 모두 존재하는지도 체크합니다.
+    - 각 줄이 (content_id, scene_idx, mode) 단위의 flat 포맷임을 가정합니다.
     - 모든 데이터가 완벽하면 True, 누락이 있으면 False를 반환합니다.
     """
     if not os.path.exists(file_path):
@@ -570,8 +579,8 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
                 except json.JSONDecodeError:
                     pass
     
-    # 정렬
-    data_records.sort(key=lambda x: (x.get("content_id", ""), x.get("scene_idx", 0)))
+    # content_id → scene_idx → mode 순으로 정렬
+    data_records.sort(key=lambda x: (x.get("content_id", ""), x.get("scene_idx", 0), x.get("mode", "")))
     
     # 덮어쓰기 (시그널 제거된 퓨어 데이터만)
     with open(file_path, "w", encoding="utf-8") as f:
@@ -579,23 +588,28 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     print(f"-> 정렬 완료 ({len(data_records)}개 항목)")
 
-    # 누락 점검
+    # 누락 점검: (content_id, scene_idx, mode) 3-tuple 단위
     print("\n[최종 누락분 점검]")
-    missing_scenes = []
-    done_set = { (x.get("content_id"), x.get("scene_idx")) for x in data_records }
+    modes_to_check = expected_modes or ["img_desc", "mm_desc", "kss"]
+    done_set_modes = {
+        (x.get("content_id"), x.get("scene_idx"), x.get("mode"))
+        for x in data_records
+    }
     
+    missing_scenes = []
     for c_id, kps in keypoints_by_content.items():
         for kp in kps:
             s_idx = kp.get("scene_idx", kps.index(kp))
-            if (c_id, s_idx) not in done_set:
-                missing_scenes.append((c_id, s_idx))
+            for m in modes_to_check:
+                if (c_id, s_idx, m) not in done_set_modes:
+                    missing_scenes.append((c_id, s_idx, m))
     
     if missing_scenes:
-        print(f"-> 총 {len(missing_scenes)}개의 Scene 처리가 누락되었습니다.")
-        for c_id, s_idx in missing_scenes:
-            print(f"    - ({c_id}, {s_idx})")
+        print(f"-> 총 {len(missing_scenes)}개의 (Scene, Mode) 처리가 누락되었습니다.")
+        for c_id, s_idx, m in missing_scenes:
+            print(f"    - ({c_id}, scene={s_idx}, mode={m})")
     else:
-        print("-> 모든 Scene이 누락 없이 정상적으로 생성되었습니다.")
+        print("-> 모든 Scene/Mode가 누락 없이 정상적으로 생성되었습니다.")
     print("="*50 + "\n")
     
     return missing_scenes, data_records

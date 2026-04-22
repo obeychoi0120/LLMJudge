@@ -98,61 +98,62 @@ def aggregate_vh_scores(input_dir):
         return
 
     metrics = ["curiosity_and_hook", "temporal_immersion", "total_score"]
-    modes = []
-    results_by_video = {}
+
+    # JSONL은 (content_id, scene_idx, mode, query, judge, total_score) flat 구조
+    # by_video_raw[content_id][mode][metric] = [values...]
+    by_video_raw = {}
     overall_raw = {}
 
-    for video_item in data:
-        c_id = video_item.get("content_id")
-        if not c_id: continue
-        
-        video_raw = {}
-        
-        items = video_item.get("queries", [])
-        if not items and "query" in video_item: 
-            items = [video_item]
+    for record in data:
+        c_id = record.get("content_id")
+        if not c_id:
+            continue
 
-        for query_item in items:
-            m = query_item.get("mode", "unknown")
-            if m not in video_raw:
-                video_raw[m] = {met: [] for met in metrics}
-            if m not in overall_raw:
-                overall_raw[m] = {met: [] for met in metrics}
-                if m not in modes:
-                    modes.append(m)
+        m = record.get("mode", "unknown")
+        judge_data = record.get("judge", {})
+        ts = record.get("total_score")
 
-            judge_data = query_item.get("judge", {})
-            ts = query_item.get("total_score")
+        # content_id / mode 버킷 초기화
+        if c_id not in by_video_raw:
+            by_video_raw[c_id] = {}
+        if m not in by_video_raw[c_id]:
+            by_video_raw[c_id][m] = {met: [] for met in metrics}
+        if m not in overall_raw:
+            overall_raw[m] = {met: [] for met in metrics}
 
-            for met in metrics[:-1]:
-                if met in judge_data:
-                    val = judge_data[met].get("score")
-                    if isinstance(val, (int, float)):
-                        video_raw[m][met].append(val)
-                        overall_raw[m][met].append(val)
-            
-            if isinstance(ts, (int, float)):
-                video_raw[m]["total_score"].append(ts)
-                overall_raw[m]["total_score"].append(ts)
+        # 개별 메트릭 수집
+        for met in metrics[:-1]:
+            if met in judge_data:
+                val = judge_data[met].get("score")
+                if isinstance(val, (int, float)):
+                    by_video_raw[c_id][m][met].append(val)
+                    overall_raw[m][met].append(val)
 
+        if isinstance(ts, (int, float)):
+            by_video_raw[c_id][m]["total_score"].append(ts)
+            overall_raw[m]["total_score"].append(ts)
+
+    # content_id별 평균 계산
+    results_by_video = {}
+    for c_id, modes_data in by_video_raw.items():
         avg_video = {}
-        for m in video_raw:
+        for m, raw in modes_data.items():
             avg_mode = {}
             for met in metrics:
-                s_list = video_raw[m][met]
+                s_list = raw[met]
                 if s_list:
                     avg_mode[met] = round(sum(s_list) / len(s_list), 2)
             if avg_mode:
                 avg_video[m] = avg_mode
-        
         if avg_video:
             results_by_video[c_id] = avg_video
 
+    # 전체 평균 계산
     results_overall = {}
-    for m in overall_raw:
+    for m, raw in overall_raw.items():
         avg_mode = {}
         for met in metrics:
-            s_list = overall_raw[m][met]
+            s_list = raw[met]
             if s_list:
                 avg_mode[met] = round(sum(s_list) / len(s_list), 2)
         if avg_mode:
@@ -163,6 +164,91 @@ def aggregate_vh_scores(input_dir):
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(final_output, f, indent=4, ensure_ascii=False)
     print(f"[Done] VH Score Aggregation: {output_file}")
+
+
+
+def aggregate_desc_scores(input_dir):
+    """Description Score(description_scores.jsonl)를 집계하여 JSON으로 저장합니다."""
+    scores_file = os.path.join(input_dir, "description_scores.jsonl")
+    output_file = os.path.join(input_dir, "description_scores_aggregated.json")
+
+    if not os.path.exists(scores_file):
+        print(f"[Skip] {scores_file} 파일이 없어 Description Score Aggregation을 건너뜁니다.")
+        return
+
+    print(f"Aggregating Description scores from {scores_file}...")
+    try:
+        data = load_jsonl(scores_file)
+    except Exception as e:
+        print(f"Error: Failed to parse {scores_file}: {e}")
+        return
+
+    metrics = ["visual_accuracy", "contextual_detail", "total_score"]
+
+    # by_video_raw[content_id][mode][metric] = [values...]
+    by_video_raw = {}
+    overall_raw  = {}
+
+    for record in data:
+        c_id = record.get("content_id")
+        if not c_id:
+            continue
+
+        m        = record.get("mode", "unknown")
+        judge    = record.get("judge", {})
+        ts       = record.get("total_score")
+
+        # content_id / mode 버킷 초기화
+        if c_id not in by_video_raw:
+            by_video_raw[c_id] = {}
+        if m not in by_video_raw[c_id]:
+            by_video_raw[c_id][m] = {met: [] for met in metrics}
+        if m not in overall_raw:
+            overall_raw[m] = {met: [] for met in metrics}
+
+        # 개별 메트릭 수집 (visual_accuracy, contextual_detail)
+        for met in metrics[:-1]:
+            if met in judge and isinstance(judge[met], dict):
+                val = judge[met].get("score")
+                if isinstance(val, (int, float)):
+                    by_video_raw[c_id][m][met].append(val)
+                    overall_raw[m][met].append(val)
+
+        if isinstance(ts, (int, float)):
+            by_video_raw[c_id][m]["total_score"].append(ts)
+            overall_raw[m]["total_score"].append(ts)
+
+    # content_id별 평균 계산
+    results_by_video = {}
+    for c_id, modes_data in by_video_raw.items():
+        avg_video = {}
+        for m, raw in modes_data.items():
+            avg_mode = {}
+            for met in metrics:
+                s_list = raw[met]
+                if s_list:
+                    avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+            if avg_mode:
+                avg_video[m] = avg_mode
+        if avg_video:
+            results_by_video[c_id] = avg_video
+
+    # 전체 평균 계산
+    results_overall = {}
+    for m, raw in overall_raw.items():
+        avg_mode = {}
+        for met in metrics:
+            s_list = raw[met]
+            if s_list:
+                avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+        if avg_mode:
+            results_overall[m] = avg_mode
+
+    final_output = {"by_video": results_by_video, "overall": results_overall}
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(final_output, f, indent=4, ensure_ascii=False)
+    print(f"[Done] Description Score Aggregation: {output_file}")
 
 
 def export_uq_details(input_dir, output_dir):
@@ -425,6 +511,107 @@ def export_vh_scores(input_dir, output_dir):
     if exported_count == 0:
         print("[Skip] Voice Hint Aggregated Score 데이터가 비어 있습니다.")
 
+def export_desc_details(input_dir, output_dir):
+    """Description Judge 상세 결과를 Excel로 내보냅니다."""
+    scores_path = os.path.join(input_dir, "description_scores.jsonl")
+    if not os.path.exists(scores_path):
+        print(f"[Skip] {scores_path} 파일이 없어 Description Details 내보내기를 건너뜁니다.")
+        return
+
+    data = load_jsonl(scores_path)
+    metrics = ["visual_accuracy", "contextual_detail"]
+
+    flat_rows = []
+    for item in data:
+        c_id     = item.get("content_id", "")
+        s_idx    = item.get("scene_idx")
+        mode     = item.get("mode", "")
+        judge    = item.get("judge", {})
+        total    = item.get("total_score", "")
+
+        row = {
+            "content_id": c_id,
+            "scene_idx":  s_idx,
+            "mode":       mode,
+        }
+        for met in metrics:
+            met_data = judge.get(met, {}) if isinstance(judge, dict) else {}
+            row[f"rationale_{met}"] = met_data.get("rationale", "") if isinstance(met_data, dict) else ""
+            row[met]               = met_data.get("score", "")     if isinstance(met_data, dict) else ""
+        row["total_score"] = total
+        flat_rows.append(row)
+
+    if not flat_rows:
+        print("[Skip] Description Score 데이터가 비어 있습니다.")
+        return
+
+    df = pd.DataFrame(flat_rows)
+    out_path = os.path.join(output_dir, "desc_details.xlsx")
+
+    writer = pd.ExcelWriter(out_path, engine="openpyxl")
+    df.to_excel(writer, index=False, sheet_name="Desc Details")
+    worksheet = writer.sheets["Desc Details"]
+    col_widths = {
+        "content_id": 22, "scene_idx": 10, "mode": 12,
+        "rationale_visual_accuracy": 45, "visual_accuracy": 14,
+        "rationale_contextual_detail": 45, "contextual_detail": 14,
+        "total_score": 12,
+    }
+    for idx, col in enumerate(df.columns):
+        width = col_widths.get(col, 15)
+        worksheet.column_dimensions[chr(65 + idx)].width = width
+    writer.close()
+    print(f"Created: {out_path}")
+
+
+def export_desc_scores(input_dir, output_dir):
+    """Description Judge 집계 점수를 모드별 시트로 Excel에 내보냅니다."""
+    agg_path = os.path.join(input_dir, "description_scores_aggregated.json")
+    if not os.path.exists(agg_path):
+        print(f"[Skip] {agg_path} 파일이 없어 Description Scores 내보내기를 건너뜁니다.")
+        return
+
+    with open(agg_path, "r", encoding="utf-8") as f:
+        agg = json.load(f)
+
+    data_by_mode = {}
+
+    for c_id, modes_data in agg.get("by_video", {}).items():
+        for mode, metrics in modes_data.items():
+            if mode not in data_by_mode:
+                data_by_mode[mode] = []
+            row = {"content_id": c_id}
+            row.update(metrics)
+            data_by_mode[mode].append(row)
+
+    for mode, metrics in agg.get("overall", {}).items():
+        if mode not in data_by_mode:
+            data_by_mode[mode] = []
+        row = {"content_id": "OVERALL"}
+        row.update(metrics)
+        data_by_mode[mode].append(row)
+
+    exported_count = 0
+    for mode, rows in data_by_mode.items():
+        if not rows:
+            continue
+        df_scores = pd.DataFrame(rows)
+        safe_mode = mode.replace("_", "")
+        out_path  = os.path.join(output_dir, f"desc_scores_{safe_mode}.xlsx")
+
+        writer = pd.ExcelWriter(out_path, engine="openpyxl")
+        df_scores.to_excel(writer, index=False, sheet_name="Desc Scores")
+        worksheet = writer.sheets["Desc Scores"]
+        for idx, col in enumerate(df_scores.columns):
+            worksheet.column_dimensions[chr(65 + idx)].width = 15
+        writer.close()
+        print(f"Created: {out_path}")
+        exported_count += 1
+
+    if exported_count == 0:
+        print("[Skip] Description Aggregated Score 데이터가 비어 있습니다.")
+
+
 if __name__ == "__main__":
     assets_dir = "assets"
     results_dir = "results"
@@ -437,6 +624,7 @@ if __name__ == "__main__":
     print("="*60)
     aggregate_uq_scores(assets_dir)
     aggregate_vh_scores(assets_dir)
+    aggregate_desc_scores(assets_dir)
 
     print("\n" + "="*60)
     print("2. Excel Export Phase")
@@ -445,5 +633,7 @@ if __name__ == "__main__":
     export_uq_scores(assets_dir, results_dir)
     export_vh_details(assets_dir, results_dir)
     export_vh_scores(assets_dir, results_dir)
+    export_desc_details(assets_dir, results_dir)
+    export_desc_scores(assets_dir, results_dir)
 
     print("\nAll pipeline tasks completed.")

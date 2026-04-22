@@ -32,20 +32,9 @@ def clean_file(filepath, remove_modes):
             removed_pipeline_done = True
             continue
             
-        # 1. Generate Voice Hint 포맷 (queries 배열 내부의 dict 제거)
-        if "queries" in obj:
-            original_len = len(obj["queries"])
-            obj["queries"] = [q for q in obj["queries"] if q.get("mode") not in remove_modes]
-            
-            if len(obj["queries"]) < original_len:
-                removed_mode_count += (original_len - len(obj["queries"]))
-            
-            # 남은 모드가 하나도 없다면 해당 scene 객체를 아예 삭제
-            if not obj["queries"]:
-                continue
-        
-        # 2. Judge Voice Hint Scores 포맷 (루트 영역에 mode가 있는 단일 평가 형태)
-        elif "mode" in obj:
+        # voice_hint.jsonl (flat 포맷) 및 voice_hint_scores.jsonl 모두
+        # 최상위 'mode' 필드로 판별하여 제거
+        if "mode" in obj:
             if obj["mode"] in remove_modes:
                 removed_mode_count += 1
                 continue

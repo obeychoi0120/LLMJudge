@@ -188,21 +188,18 @@ def main():
                 for scene_item in new_items:
                     content_id = scene_item.get("content_id")
                     scene_idx  = scene_item.get("scene_idx")
-                    query_groups = scene_item.get("queries", [])
+                    # 새 flat 포맷: 각 줄이 단일 (content_id, scene_idx, mode) 레코드
+                    mode        = scene_item.get("mode", "")
+                    queries_list = scene_item.get("queries", [])
 
-                    if not content_id or scene_idx is None or not query_groups:
+                    if not content_id or scene_idx is None or not mode or not queries_list:
+                        continue
+                    if mode not in args.modes:
                         continue
 
                     detailed_summary = summary_map.get((content_id, scene_idx), "")
 
-                    # 그룹화된 포맷을 펼쳐서 (mode, query) 개별 항목 리스트로 변환
-                    flat_queries = []
-                    for group in query_groups:
-                        mode = group.get("mode", "")
-                        if mode not in args.modes:
-                            continue
-                        for q_text in group.get("queries", []):
-                            flat_queries.append({"mode": mode, "query": q_text})
+                    flat_queries = [{"mode": mode, "query": q_text} for q_text in queries_list]
 
                     total_generated += len(flat_queries)
                     pending = [q for q in flat_queries if (content_id, q["query"]) not in processed_pairs]
@@ -212,7 +209,7 @@ def main():
 
                     start_time = float(scene_item.get("start_time", 0.0))
                     end_time = float(scene_item.get("end_time", 0.0))
-                    print(f"\nEvaluating '{content_id}' Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] ({len(pending)}개 질문)")
+                    print(f"\nEvaluating '{content_id}' Scene {scene_idx} [{mode}] | Range=[{start_time:.1f}s ~ {end_time:.1f}s] ({len(pending)}개 질문)")
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                         futures = [
