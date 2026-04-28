@@ -7,7 +7,7 @@ from utils import (
     get_common_argparser,
     make_generate_config,
     process_gcs_file_by_scene_idx, check_gcs_files_exist,
-    get_gcs_descriptions_by_scene_idx,
+    get_processed_vlm_descriptions_by_scene_idx,
     _retry_api_call,
     ensure_output_dir, load_processed_pairs,
     preload_content_metadata,
@@ -55,28 +55,29 @@ Guidelines:
 # Prompt: Raw JSON-based Description (영어)
 # ───────────────────────────────────────────────
 
-_RAW_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided speech transcript and on-screen text metadata.
+_RAW_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided fragmented speech and on-screen text metadata.
 
-You will receive a JSON record containing:
-- **speech**: Dialogue or narration transcribed from audio (may contain ASR errors)
-- **texts**: On-screen text detected via OCR (may contain recognition errors)
+You will receive a JSON record containing a timeline of shots, where each shot includes:
+- **speech_fragments**: Alphabetically sorted word fragments extracted from ASR transcription. The original sentence order has been intentionally destroyed for copyright protection.
+- **text_fragments**: Alphabetically sorted word fragments extracted from OCR detection. The original order has been destroyed.
+
+IMPORTANT: The fragments are intentionally shuffled into a Bag-of-Words format. You must reconstruct the likely meaning by analyzing the word set as a whole, using contextual clues and common sense to infer the original sentences.
 
 Your description must cover the following aspects, in this order:
 
 1. **Scene & Setting Inference**
-   - Based on the dialogue content and on-screen text, infer what kind of scene this is (interview, cooking segment, outdoor exploration, etc.).
-   - Describe the likely setting and context as implied by the speech and text clues.
+   - Based on the reconstructed dialogue content and on-screen text, infer what kind of scene this is (interview, cooking segment, outdoor exploration, etc.).
+   - Describe the likely setting and context as implied by the speech fragments and text clues.
    - Do NOT fabricate specific visual details (colors, camera angles, etc.) that cannot be inferred from the text.
 
 2. **Dialogue & Factual Details**
-   - Correct obvious ASR/OCR errors using context clues before describing the content.
-   - Reproduce or closely paraphrase all key dialogue and narration.
-   - Capture every proper noun: person names, place names, brand names, and specific terms.
-   - Record specific numbers, dates, or quantities if mentioned.
-   - If a name appears garbled, provide your best corrected interpretation rather than omitting it.
+   - Reconstruct the likely dialogue or narration from the shuffled speech fragments using context and common sense.
+   - Capture every proper noun: person names, place names, brand names, and specific terms you can identify from the fragments.
+   - Record specific numbers, dates, or quantities if identifiable.
+   - If a name appears fragmented or garbled, provide your best corrected interpretation rather than omitting it.
 
 3. **Narrative & Emotional Context**
-   - Describe the narrative progression as conveyed through the dialogue.
+   - Describe the narrative progression as inferred from the reconstructed dialogue.
    - Note cause-effect relationships between events discussed in the speech.
    - Capture the emotional tone implied by the dialogue (e.g., excitement, concern, humor).
    - Identify any thematic elements or recurring topics.
@@ -85,7 +86,7 @@ Guidelines:
 - Be precise and comprehensive. Vague summaries are unacceptable.
 - Prioritize factual accuracy — proper nouns and dialogue content are critical.
 - Write the description naturally, as if you had full knowledge of the scene.
-- Do NOT mention that you are working from transcripts or metadata.
+- Do NOT mention that you are working from fragments, transcripts, or metadata.
 - If contextual clues allow you to identify a specific person, place, or brand, use their correct known name.
 - Focus on describing the scene as conveyed through the provided data. Do NOT add speculative context beyond proper identification."""
 
@@ -118,14 +119,16 @@ def generate_video_desc(client, model_name, config, video_part, end_time):
 
 
 def generate_raw_desc(client, model_name, config, raw_part, end_time):
-    """Raw JSONL(speech + texts)만 보고 장면을 영어로 묘사합니다."""
+    """Processed JSONL(speech_fragments + text_fragments)만 보고 장면을 영어로 묘사합니다."""
     contents = [
-        "--- [Current Scene Metadata (speech & texts)] ---",
+        "--- [Current Scene Metadata (speech_fragments & text_fragments)] ---",
         raw_part,
         "--- Request ---",
-        "Based solely on the provided speech transcript and on-screen text metadata above, "
-        "generate a detailed English description of what is happening in this scene. "
-        "Correct any obvious ASR/OCR errors using context. Do not fabricate visual details beyond what the text implies.",
+        "Based solely on the provided speech fragments and text fragments metadata above, "
+        "reconstruct the likely dialogue and scene context, then generate a detailed English description "
+        "of what is happening in this scene. The fragments are alphabetically sorted and their original "
+        "order has been destroyed — use context and common sense to reconstruct meaning. "
+        "Do not fabricate visual details beyond what the text implies.",
     ]
     t0 = time.time()
     text = _retry_api_call(
@@ -149,7 +152,7 @@ def main():
                         help="KeyScene Description 저장 경로")
     parser.add_argument("--modes", nargs="+", default=["video_desc", "raw_desc", "img_desc", "mm_desc"],
                         choices=["video_desc", "raw_desc", "img_desc", "mm_desc"],
-                        help="생성할 모드 직접 지정 (img_desc/mm_desc는 GCS에서 읽어와 기록)")
+                        help="생성할 모드 직접 지정 (img_desc/mm_desc는 _processed.jsonl에서 VLM 구조 데이터를 읽어 기록)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -235,7 +238,7 @@ def main():
                     )
                 if "raw_desc" in missing_modes:
                     raw_part = process_gcs_file_by_scene_idx(
-                        args.gs_bucket_name, content_id, "raw", scene_idx, scene_idx
+                        args.gs_bucket_name, content_id, "processed", scene_idx, scene_idx
                     )
 
                 def _run_mode(mode):
@@ -248,11 +251,11 @@ def main():
                             client, args.ksd_gen_model, gen_configs["raw"], raw_part, end_time
                         )
                     elif mode in ("img_desc", "mm_desc"):
-                        # GCS에서 description 텍스트를 읽어와 로컬 JSONL에 기록 (AI 생성 없음)
-                        gcs_mode = mode  # img_desc / mm_desc
+                        # _processed.jsonl에서 VLM 구조화 데이터를 읽어 텍스트로 변환하여 기록
                         t0 = time.time()
-                        desc_text = get_gcs_descriptions_by_scene_idx(
-                            args.gs_bucket_name, content_id, gcs_mode, scene_idx, scene_idx
+                        vlm_key = "vlm_img_structure" if mode == "img_desc" else "vlm_mm_structure"
+                        desc_text = get_processed_vlm_descriptions_by_scene_idx(
+                            args.gs_bucket_name, content_id, vlm_key, scene_idx, scene_idx
                         )
                         # [Scene N] 태그 제거하여 순수 description만 추출
                         desc_text = "\n".join(

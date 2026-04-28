@@ -168,9 +168,9 @@ def aggregate_vh_scores(input_dir):
 
 
 def aggregate_desc_scores(input_dir):
-    """Description Score(description_scores.jsonl)를 집계하여 JSON으로 저장합니다."""
-    scores_file = os.path.join(input_dir, "description_scores.jsonl")
-    output_file = os.path.join(input_dir, "description_scores_aggregated.json")
+    """Description Score(keyscene_description_scores.jsonl)를 집계하여 JSON으로 저장합니다."""
+    scores_file = os.path.join(input_dir, "keyscene_description_scores.jsonl")
+    output_file = os.path.join(input_dir, "keyscene_description_scores_aggregated.json")
 
     if not os.path.exists(scores_file):
         print(f"[Skip] {scores_file} 파일이 없어 Description Score Aggregation을 건너뜁니다.")
@@ -513,7 +513,7 @@ def export_vh_scores(input_dir, output_dir):
 
 def export_desc_details(input_dir, output_dir):
     """Description Judge 상세 결과를 Excel로 내보냅니다."""
-    scores_path = os.path.join(input_dir, "description_scores.jsonl")
+    scores_path = os.path.join(input_dir, "keyscene_description_scores.jsonl")
     if not os.path.exists(scores_path):
         print(f"[Skip] {scores_path} 파일이 없어 Description Details 내보내기를 건너뜁니다.")
         return
@@ -567,7 +567,7 @@ def export_desc_details(input_dir, output_dir):
 
 def export_desc_scores(input_dir, output_dir):
     """Description Judge 집계 점수를 모드별 시트로 Excel에 내보냅니다."""
-    agg_path = os.path.join(input_dir, "description_scores_aggregated.json")
+    agg_path = os.path.join(input_dir, "keyscene_description_scores_aggregated.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 Description Scores 내보내기를 건너뜁니다.")
         return
@@ -613,6 +613,280 @@ def export_desc_scores(input_dir, output_dir):
         print("[Skip] Description Aggregated Score 데이터가 비어 있습니다.")
 
 
+def aggregate_vh_response_scores(input_dir):
+    """VH Response Score(vh_response_scores.jsonl)를 집계하여 JSON으로 저장합니다."""
+    scores_file = os.path.join(input_dir, "vh_response_scores.jsonl")
+    output_file = os.path.join(input_dir, "vh_response_scores_aggregated.json")
+
+    if not os.path.exists(scores_file):
+        print(f"[Skip] {scores_file} 파일이 없어 VH Response Score Aggregation을 건너뜁니다.")
+        return
+
+    print(f"Aggregating VH Response scores from {scores_file}...")
+    try:
+        data = load_jsonl(scores_file)
+    except Exception as e:
+        print(f"Error: Failed to parse {scores_file}: {e}")
+        return
+
+    metrics = ["answer_relevance", "factual_precision", "response_quality", "total_score"]
+
+    # by_video_raw[content_id][mode][metric] = [values...]
+    by_video_raw = {}
+    overall_raw  = {}
+
+    for record in data:
+        c_id = record.get("content_id")
+        if not c_id:
+            continue
+
+        judge = record.get("judge", {})
+
+        for mode, mode_data in judge.items():
+            if not isinstance(mode_data, dict):
+                continue
+
+            # total_score: 3개 metric 합계
+            ts = sum(
+                mode_data.get(k, {}).get("score", 0)
+                for k in metrics[:-1]
+                if isinstance(mode_data.get(k), dict)
+            )
+
+            if c_id not in by_video_raw:
+                by_video_raw[c_id] = {}
+            if mode not in by_video_raw[c_id]:
+                by_video_raw[c_id][mode] = {met: [] for met in metrics}
+            if mode not in overall_raw:
+                overall_raw[mode] = {met: [] for met in metrics}
+
+            for met in metrics[:-1]:
+                val = mode_data.get(met, {}).get("score") if isinstance(mode_data.get(met), dict) else None
+                if isinstance(val, (int, float)):
+                    by_video_raw[c_id][mode][met].append(val)
+                    overall_raw[mode][met].append(val)
+
+            by_video_raw[c_id][mode]["total_score"].append(ts)
+            overall_raw[mode]["total_score"].append(ts)
+
+    # content_id별 평균 계산
+    results_by_video = {}
+    for c_id, modes_data in by_video_raw.items():
+        avg_video = {}
+        for mode, raw in modes_data.items():
+            avg_mode = {}
+            for met in metrics:
+                s_list = raw[met]
+                if s_list:
+                    avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+            if avg_mode:
+                avg_video[mode] = avg_mode
+        if avg_video:
+            results_by_video[c_id] = avg_video
+
+    # 전체 평균 계산
+    results_overall = {}
+    for mode, raw in overall_raw.items():
+        avg_mode = {}
+        for met in metrics:
+            s_list = raw[met]
+            if s_list:
+                avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+        if avg_mode:
+            results_overall[mode] = avg_mode
+
+    final_output = {"by_video": results_by_video, "overall": results_overall}
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(final_output, f, indent=4, ensure_ascii=False)
+    print(f"[Done] VH Response Score Aggregation: {output_file}")
+
+
+def export_vh_response_details(input_dir, output_dir):
+    """VH Response Judge 상세 결과를 Excel로 내보냅니다."""
+    scores_path = os.path.join(input_dir, "vh_response_scores.jsonl")
+    if not os.path.exists(scores_path):
+        print(f"[Skip] {scores_path} 파일이 없어 VH Response Details 내보내기를 건너뜁니다.")
+        return
+
+    # (content_id, query) → scene_idx 보조 매핑 (기존 JSONL에 scene_idx가 없는 경우 대비)
+    scene_idx_map = {}
+    responses_path = os.path.join(input_dir, "vh_responses.jsonl")
+    if os.path.exists(responses_path):
+        for r in load_jsonl(responses_path):
+            c = r.get("content_id")
+            q = r.get("query")
+            s = r.get("scene_idx")
+            if c and q and s is not None:
+                scene_idx_map[(c, q)] = s
+
+    data = load_jsonl(scores_path)
+    score_keys = ["answer_relevance", "factual_precision", "response_quality"]
+    mode_order = ["video", "raw", "img_desc", "mm_desc"]
+
+    flat_rows = []
+    for item in data:
+        c_id    = item.get("content_id", "")
+        s_idx   = item.get("scene_idx") or scene_idx_map.get((c_id, item.get("query", "")))
+        query   = item.get("query", "")
+        judge   = item.get("judge", {})
+
+        for mode in mode_order:
+            mode_data = judge.get(mode, {})
+            if not isinstance(mode_data, dict):
+                continue
+            ts = sum(
+                mode_data.get(k, {}).get("score", 0)
+                for k in score_keys
+                if isinstance(mode_data.get(k), dict)
+            )
+            row = {"content_id": c_id, "scene_idx": s_idx, "query": query, "mode": mode}
+            for k in score_keys:
+                met_data = mode_data.get(k, {})
+                row[f"rationale_{k}"] = met_data.get("rationale", "") if isinstance(met_data, dict) else ""
+                row[k]               = met_data.get("score", "")     if isinstance(met_data, dict) else ""
+            row["total_score"] = ts
+            flat_rows.append(row)
+
+    if not flat_rows:
+        print("[Skip] VH Response Score 데이터가 비어 있습니다.")
+        return
+
+    df = pd.DataFrame(flat_rows)
+    out_path = os.path.join(output_dir, "vh_response_details.xlsx")
+
+    writer = pd.ExcelWriter(out_path, engine="openpyxl")
+    df.to_excel(writer, index=False, sheet_name="VH Response Details")
+    worksheet = writer.sheets["VH Response Details"]
+    col_widths = {
+        "content_id": 22, "scene_idx": 10, "query": 40, "mode": 12,
+        "rationale_answer_relevance": 45,  "answer_relevance": 16,
+        "rationale_factual_precision": 45, "factual_precision": 16,
+        "rationale_response_quality": 45,  "response_quality": 16,
+        "total_score": 12,
+    }
+    for idx, col in enumerate(df.columns):
+        width = col_widths.get(col, 15)
+        worksheet.column_dimensions[chr(65 + idx)].width = width
+    writer.close()
+    print(f"Created: {out_path}")
+
+
+def export_vh_response_scores(input_dir, output_dir):
+    """VH Response Judge 집계 점수를 모드별 Excel로 내보냅니다."""
+    agg_path = os.path.join(input_dir, "vh_response_scores_aggregated.json")
+    if not os.path.exists(agg_path):
+        print(f"[Skip] {agg_path} 파일이 없어 VH Response Scores 내보내기를 건너뜁니다.")
+        return
+
+    with open(agg_path, "r", encoding="utf-8") as f:
+        agg = json.load(f)
+
+    data_by_mode = {}
+
+    for c_id, modes_data in agg.get("by_video", {}).items():
+        for mode, metrics in modes_data.items():
+            if mode not in data_by_mode:
+                data_by_mode[mode] = []
+            row = {"content_id": c_id}
+            row.update(metrics)
+            data_by_mode[mode].append(row)
+
+    for mode, metrics in agg.get("overall", {}).items():
+        if mode not in data_by_mode:
+            data_by_mode[mode] = []
+        row = {"content_id": "OVERALL"}
+        row.update(metrics)
+        data_by_mode[mode].append(row)
+
+    exported_count = 0
+    for mode, rows in data_by_mode.items():
+        if not rows:
+            continue
+        df_scores = pd.DataFrame(rows)
+        safe_mode = mode.replace("_", "")
+        out_path  = os.path.join(output_dir, f"vh_response_scores_{safe_mode}.xlsx")
+
+        writer = pd.ExcelWriter(out_path, engine="openpyxl")
+        df_scores.to_excel(writer, index=False, sheet_name="VH Response Scores")
+        worksheet = writer.sheets["VH Response Scores"]
+        for idx, col in enumerate(df_scores.columns):
+            worksheet.column_dimensions[chr(65 + idx)].width = 15
+        writer.close()
+        print(f"Created: {out_path}")
+        exported_count += 1
+
+    if exported_count == 0:
+        print("[Skip] VH Response Aggregated Score 데이터가 비어 있습니다.")
+
+
+def export_voice_hints(input_dir, output_dir, mode="kss"):
+    """Voice Hint 질문을 content_id / scene_idx 기준으로 정리하여 Excel로 내보냅니다.
+
+    컬럼 구조:
+    - content_id : 동일 content_id를 가진 첫 번째 행에만 표시, 나머지 행은 빈 칸
+    - scene_idx  : 각 scene마다 표시
+    - queries    : "1. ~~~\\n2. ~~~" 형태로 한 셀에 번호 붙여 기록
+    """
+    vh_path = os.path.join(input_dir, "voice_hint.jsonl")
+    if not os.path.exists(vh_path):
+        print(f"[Skip] {vh_path} 파일이 없어 Voice Hint Export를 건너뜁니다.")
+        return
+
+    from collections import defaultdict
+    from openpyxl.styles import Alignment
+
+    scenes_by_content = defaultdict(dict)  # {content_id: {scene_idx: queries_text}}
+
+    for rec in load_jsonl(vh_path):
+        if rec.get("mode") != mode:
+            continue
+        c_id  = rec.get("content_id")
+        s_idx = rec.get("scene_idx")
+        qs    = rec.get("queries", [])
+        if not c_id or s_idx is None:
+            continue
+        numbered = "\n".join(f"{i+1}. {q}" for i, q in enumerate(qs))
+        scenes_by_content[c_id][s_idx] = numbered
+
+    if not scenes_by_content:
+        print("[Skip] Voice Hint 데이터가 비어 있습니다.")
+        return
+
+    flat_rows = []
+    for c_id in sorted(scenes_by_content.keys()):
+        first = True
+        for s_idx in sorted(scenes_by_content[c_id].keys()):
+            flat_rows.append({
+                "content_id": c_id if first else "",
+                "scene_idx":  s_idx,
+                "queries":    scenes_by_content[c_id][s_idx],
+            })
+            first = False
+
+    df = pd.DataFrame(flat_rows)
+    out_path = os.path.join(output_dir, "voice_hints.xlsx")
+
+    writer = pd.ExcelWriter(out_path, engine="openpyxl")
+    df.to_excel(writer, index=False, sheet_name="Voice Hints")
+    worksheet = writer.sheets["Voice Hints"]
+
+    col_widths = {"content_id": 28, "scene_idx": 10, "queries": 60}
+    for idx, col in enumerate(df.columns):
+        worksheet.column_dimensions[chr(65 + idx)].width = col_widths.get(col, 20)
+
+    query_col_letter = chr(65 + list(df.columns).index("queries"))
+    for row_cells in worksheet.iter_rows(min_row=2):
+        for cell in row_cells:
+            if cell.column_letter == query_col_letter:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+            else:
+                cell.alignment = Alignment(vertical="top")
+
+    writer.close()
+    print(f"Created: {out_path}")
+
+
 if __name__ == "__main__":
     assets_dir = "assets"
     results_dir = "results"
@@ -626,6 +900,7 @@ if __name__ == "__main__":
     aggregate_uq_scores(assets_dir)
     aggregate_vh_scores(assets_dir)
     aggregate_desc_scores(assets_dir)
+    aggregate_vh_response_scores(assets_dir)
 
     print("\n" + "="*60)
     print("2. Excel Export Phase")
@@ -636,5 +911,8 @@ if __name__ == "__main__":
     export_vh_scores(assets_dir, results_dir)
     export_desc_details(assets_dir, results_dir)
     export_desc_scores(assets_dir, results_dir)
+    export_vh_response_details(assets_dir, results_dir)
+    export_vh_response_scores(assets_dir, results_dir)
+    export_voice_hints(assets_dir, results_dir)
 
     print("\nAll pipeline tasks completed.")

@@ -9,7 +9,7 @@ from utils import (
     check_gcs_files_exist,
     parse_json_response, _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
-    preload_content_metadata, get_gcs_descriptions_by_scene_idx,
+    preload_content_metadata, get_processed_vlm_descriptions_by_scene_idx,
     init_pipeline, load_jsonl, append_jsonl,
     sort_and_validate_jsonl,
     load_keypoints_by_content, load_summary_map, check_input_file,
@@ -28,10 +28,11 @@ _VOICE_HINT_BASE_DESC = """당신은 제공되는 메타데이터를 기반으�
 [입력 형식 설명]
 당신에게는 영상 Scene 묘사가 다음과 같은 형식으로 제공됩니다.
 - 각 Scene은 `[Scene N] 묘사` 형태로 제공됩니다. N은 영상 내 Scene 인덱스(순서)입니다.
-- 묘사(description)는 소형 AI가 해당 Scene의 시각적 상황, 인물 행동, 대사, 자막 등을 종합해 자동 생성한 원시(Raw) 텍스트로, 어색한 단어나 오탈자가 포함될 수 있습니다.
+- 묘사는 소형 VLM이 해당 Scene의 시각적 요소를 구조화한 결과물로, Subject(주체), Environment(환경), Actions(행동), Context(문맥 키워드) 필드로 구성됩니다.
+- Context 필드가 포함된 경우, 영어 단어가 알파벳순으로 나열된 Bag-of-Words 형태이며 원래 문장의 순서가 파괴되어 있습니다. 키워드들을 종합하여 맥락을 유추하세요.
 
 [질문 생성 핵심 전략]
-1. 오류 교정 및 노이즈 필터링 (최우선): 제공된 묘사는 소형 AI의 결과물이므로 음성 인식 오류나 자막 OCR 오탈자(예: '세프'->'셰프', '봄고레'->'범고래') 등 환각이 포함될 수 있습니다. 텍스트를 기계적으로 맹신하지 말고, 상식과 문맥을 바탕으로 오류를 교정한 뒤 기획해야 합니다. 최종 노출될 질문에 오탈자가 포함되어서는 절대 안 됩니다.
+1. 오류 교정 및 노이즈 필터링 (최우선): 제공된 묘사는 소형 VLM의 구조화된 결과물이므로, Subject/Environment/Actions 필드의 정보를 종합적으로 활용하세요. Context가 포함된 경우 Bag-of-Words 형태의 키워드 목록이므로, 단어들을 조합하여 전체 맥락을 유추하세요. 텍스트를 기계적으로 맹신하지 말고, 상식과 문맥을 바탕으로 오류를 교정한 뒤 기획해야 합니다. 최종 노출될 질문에 오탈자가 포함되어서는 절대 안 됩니다.
 2. 시점 몰입 및 현재 답변 가능성 고려 (미래 추측 & 과거 뒷북 방지): 질문은 오직 현재 즉시 정보를 제공할 수 있는 [현재 시청 중인 장면] 속 사물, 인물의 정체, 배경지식, 상황의 숨은 의미로 한정해야 합니다. **앞으로 전개될 스토리나 미래의 결과(예: "과연 어떻게 될까요?", "어떤 평가를 받을까요?")를 묻는 질문은 시스템이 당장 답할 수 없어 철저히 0점 처리됩니다.** 또한, **[이전까지의 과거 시청 맥락]에서 이미 설명되었거나 영상을 시청하지 않아도 일반적인 상식으로 유추할 수 있는 뻔한 사실을 묻는 '뒷북 질문' 역시 무조건 0점 처리됩니다.**
 3. 호기심 및 상호작용 유도 (Hook): 위 조건을 만족하는 범위 내에서, 질문의 핵심 소재(Trigger)는 오직 방금 새롭게 발생한 정보의 공백(미지수)을 예리하게 짚어내야 합니다. 어조(Tone)는 묘사된 씬의 분위기를 절대 깨지 않도록 '해당 장르/컨텐츠의 전문 평론가'가 말을 건네듯 정중하고 세련된 존댓말로 작성하여 시청자의 흥미를 강렬하게 자극하세요.
 
@@ -267,8 +268,8 @@ def main():
                 #     current_scene_only = kss_summary_text.split("[2. 현재 장면 묘사]")[-1].strip() if "[2. 현재 장면 묘사]" in kss_summary_text else kss_summary_text.strip()
                 #     print(f"\n[ --- KSS 현재 장면 --- ]\n\n{current_scene_only}")
                 
-                img_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", scene_idx, scene_idx) if "img_desc" in missing_modes else ""
-                mm_desc_text = get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "mm_desc", scene_idx, scene_idx) if "mm_desc" in missing_modes else ""
+                img_desc_text = get_processed_vlm_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "vlm_img_structure", scene_idx, scene_idx) if "img_desc" in missing_modes else ""
+                mm_desc_text = get_processed_vlm_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "vlm_mm_structure", scene_idx, scene_idx) if "mm_desc" in missing_modes else ""
 
                 def _run_keypoint():
                     # 과거 N개 구역(Scene)을 위한 scene_idx 계산 (Sliding Window)
@@ -278,8 +279,8 @@ def main():
 
                     if past_end_scene_idx >= past_start_scene_idx:
                         past_parts = {
-                            "img_desc": get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "img_desc", past_start_scene_idx, past_end_scene_idx),
-                            "mm_desc":  get_gcs_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "mm_desc",  past_start_scene_idx, past_end_scene_idx),
+                            "img_desc": get_processed_vlm_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "vlm_img_structure", past_start_scene_idx, past_end_scene_idx),
+                            "mm_desc":  get_processed_vlm_descriptions_by_scene_idx(args.gs_bucket_name, content_id, "vlm_mm_structure",  past_start_scene_idx, past_end_scene_idx),
                         }
                     else:
                         past_parts = {"img_desc": "", "mm_desc": ""}

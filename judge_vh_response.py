@@ -17,8 +17,7 @@ from utils import (
 # Judge Prompts
 # ============================================================
 
-_JUDGE_SYSTEM_PROMPT = """\
-You are an objective, expert evaluator assessing the quality of AI-generated responses about video content.
+_JUDGE_SYSTEM_PROMPT = """You are an objective, expert evaluator assessing the quality of AI-generated responses about video content.
 The AI model generates answers based on various representations of the original video (visual frames, audio, text metadata, or multimodal descriptions).
 
 Your goal is to evaluate how well the [Candidate Answer] responds to the [User Question].
@@ -211,6 +210,7 @@ def main():
 
         record = {
             "content_id": c_id,
+            "scene_idx":  s_idx,
             "query":       query,
             "judge":       {m: judge_results[m] for m in _MODE_ORDER if m in judge_results},
         }

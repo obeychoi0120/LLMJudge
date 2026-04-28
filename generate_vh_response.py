@@ -8,8 +8,8 @@ from utils import (
     process_gcs_video_part,
     check_gcs_files_exist,
     _retry_api_call,
-    get_gcs_descriptions_by_scene_idx,
-    get_gcs_raw_fields_by_scene_idx,
+    get_processed_vlm_descriptions_by_scene_idx,
+    get_processed_raw_fields_by_scene_idx,
     ensure_output_dir,
     preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
@@ -33,15 +33,18 @@ _VH_RESPONSE_PROMPT_TEXT = """당신은 시청자와 나란히 소파에 앉아 
 시청 기억은 다음 두 가지 형식 중 하나로 제공됩니다:
 
 (A) Description 형식 (Image-based / Multimodal Description):
-  - scene_idx: Scene 인덱스
-  - start_time / end_time: Scene 시작·종료 시간 (초)
-  - description: 시각적 상황, 인물 행동, 대사, 자막, 환경 등을 종합한 자세한 영문 묘사
+  - 각 Scene은 [Scene N] 태그로 구분됩니다.
+  - Subject: 장면의 주체 (인물, 동물, 물체 등)
+  - Environment: 장면의 환경 및 배경
+  - Actions: 주체의 행동 목록
+  - Context (Multimodal만 해당): 알파벳순으로 정렬된 문맥 키워드 목록 (Bag-of-Words 형태, 원래 문장 순서 파괴됨)
 
 (B) Raw Metadata 형식:
   - scene_idx: Scene 인덱스
-  - start_time / end_time: Scene 시작·종료 시간 (초)
-  - speech: 해당 Scene에서 인식된 음성(ASR) 텍스트
-  - texts: 해당 Scene에서 검출된 화면 텍스트(OCR) 목록
+  - duration: Scene 시작~종료 시간
+  - timeline: shot 단위 파편화된 메타데이터 배열
+    - speech_fragments: 가나다/abc 순으로 정렬된 ASR 단어 파편 (원문 순서 파괴됨)
+    - text_fragments: abc 순으로 정렬된 OCR 단어 파편 (원문 순서 파괴됨)
 
 [분석 및 대화 지시사항]
 
@@ -50,7 +53,8 @@ _VH_RESPONSE_PROMPT_TEXT = """당신은 시청자와 나란히 소파에 앉아 
    - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
 
 2. **VLM 노이즈 교정 및 지식 보강 (매우 중요)**
-   - 시청 기억은 소형 AI가 자동 생성한 텍스트이므로 오탈자(예: '셰프'→'세프', '인정받은'→'정받은'), 띄어쓰기 오류, 상충 정보, 환각(Hallucination)이 포함될 수 있습니다.
+   - 시청 기억은 소형 VLM이 자동 생성한 구조화된 데이터이므로, Subject/Environment/Actions 정보에 오류가 포함될 수 있습니다.
+   - Raw Metadata의 경우 speech_fragments와 text_fragments는 저작권 보호를 위해 단어 순서가 파괴된 Bag-of-Words 형태입니다. 단어들을 조합하여 원래 맥락을 유추하세요.
    - 표면적 텍스트를 맹신하지 말고, 앞뒤 맥락과 풍부한 일반 상식(World Knowledge)을 결합하여 명백한 오류를 자연스럽게 교정·필터링하세요.
 
 3. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
@@ -167,11 +171,12 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
             start_idx = 0
 
         if mode in ("img_desc", "mm_desc"):
-            return get_gcs_descriptions_by_scene_idx(
-                gs_bucket_name, content_id, mode, start_idx, scene_idx
+            vlm_key = "vlm_img_structure" if mode == "img_desc" else "vlm_mm_structure"
+            return get_processed_vlm_descriptions_by_scene_idx(
+                gs_bucket_name, content_id, vlm_key, start_idx, scene_idx
             )
         else:  # raw
-            return get_gcs_raw_fields_by_scene_idx(
+            return get_processed_raw_fields_by_scene_idx(
                 gs_bucket_name, content_id, start_idx, scene_idx
             )
 
@@ -193,7 +198,7 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
             label_map = {
                 "img_desc": "Image-based Description (처음부터 현재 장면까지)",
                 "mm_desc": "Multimodal Description (처음부터 현재 장면까지)",
-                "raw": "Raw Metadata (speech & texts, 처음부터 현재 장면까지)",
+                "raw": "Raw Metadata (speech_fragments & text_fragments, 처음부터 현재 장면까지)",
             }
             contents = [
                 f"--- [{label_map.get(mode, mode)}] ---",

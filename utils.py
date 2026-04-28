@@ -279,22 +279,21 @@ def retry_parse_json(fn, label="API", max_retries=3):
 # ============================================================
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
-    """GCS 버킷에 필수 파일 3종(video + Desc + Ref jsonl)이 존재하는지 확인합니다."""
+    """GCS 버킷에 필수 파일 3종(video + processed + ref jsonl)이 존재하는지 확인합니다."""
     client = storage.Client()
     bucket = client.bucket(gs_bucket_name)
 
     required_files = [
         f"video_540p/{content_id}_540p.mp4",
         f"jsonl/{content_id}_raw.jsonl",
-        f"jsonl/{content_id}_imgdesc.jsonl",
-        f"jsonl/{content_id}_mmdesc.jsonl",
+        f"jsonl/{content_id}_processed.jsonl",
         f"jsonl/{content_id}_ref.jsonl",
     ]
 
     missing = [f for f in required_files if not bucket.blob(f).exists()]
 
     if not missing:
-        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 4종이 모두 GCS에 존재합니다.")
+        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 3종이 모두 GCS에 존재합니다.")
         return True
     else:
         print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}")
@@ -304,8 +303,7 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 _GCS_MODE_MAP = {
     "video": ("video_540p/{cid}_540p.mp4", "video/mp4"),
     "raw": ("jsonl/{cid}_raw.jsonl", "text/plain"),
-    "img_desc": ("jsonl/{cid}_imgdesc.jsonl", "text/plain"),
-    "mm_desc": ("jsonl/{cid}_mmdesc.jsonl", "text/plain"),
+    "processed": ("jsonl/{cid}_processed.jsonl", "text/plain"),
     "ref": ("jsonl/{cid}_ref.jsonl", "text/plain"),
 }
 
@@ -339,7 +337,7 @@ def clear_gcs_cache():
 
 def preload_content_metadata(gs_bucket_name, content_id):
     """content_id에 해당하는 메타데이터 JSONL을 한 번에 캐시에 로드합니다."""
-    modes = ["raw", "img_desc", "mm_desc", "ref"]
+    modes = ["raw", "processed", "ref"]
     to_download = []
     for mode in modes:
         path_template, _ = _GCS_MODE_MAP[mode]
@@ -358,7 +356,7 @@ def load_scenes(gs_bucket_name, content_id, mode="ref"):
     """지정한 mode의 JSONL을 파싱하여 Scene 리스트로 반환합니다 (캐시 자동 활용).
 
     Args:
-        mode: 'ref', 'img_desc', 'mm_desc', 'raw' 중 하나
+        mode: 'ref', 'processed', 'raw' 중 하나
     """
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
@@ -460,6 +458,111 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
             if s_idx is None or not (start_idx <= s_idx <= end_idx):
                 continue
             filtered = {k: scene[k] for k in _RAW_KEEP_FIELDS if k in scene}
+            lines.append(json.dumps(filtered, ensure_ascii=False))
+        except json.JSONDecodeError:
+            continue
+    return "\n".join(lines)
+
+
+# ============================================================
+# Processed JSONL Helpers (저작권 안전 파편화 데이터)
+# ============================================================
+
+def parse_duration_to_times(duration_str):
+    """'0.0 - 35.97' 형태의 duration 문자열을 (start_time, end_time) float 튜플로 파싱합니다."""
+    parts = duration_str.split(" - ")
+    return float(parts[0]), float(parts[1])
+
+
+def format_vlm_structure_as_text(vlm_struct):
+    """vlm_img_structure 또는 vlm_mm_structure 딕셔너리를 읽기 좋은 텍스트로 변환합니다.
+
+    예시 출력:
+      Subject: A marine animal swimming through ice-covered waters
+      Environment: An Arctic sea with floating ice floes
+      Actions: The animal is moving through the water; creating ripples
+      Context: animals, bears, ice, melting, sea, warming, water
+    """
+    if not vlm_struct or not isinstance(vlm_struct, dict):
+        return ""
+    lines = []
+    if vlm_struct.get("subject"):
+        lines.append(f"Subject: {vlm_struct['subject']}")
+    if vlm_struct.get("environment"):
+        lines.append(f"Environment: {vlm_struct['environment']}")
+    if vlm_struct.get("actions"):
+        lines.append(f"Actions: {'; '.join(vlm_struct['actions'])}")
+    if vlm_struct.get("context"):
+        lines.append(f"Context: {', '.join(vlm_struct['context'])}")
+    return "\n".join(lines)
+
+
+def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_key, start_idx, end_idx):
+    """*_processed.jsonl에서 vlm_img_structure 또는 vlm_mm_structure를 추출하여
+    [Scene N] 태그와 함께 텍스트 형태로 반환합니다.
+
+    기존 get_gcs_descriptions_by_scene_idx()의 _processed.jsonl 버전입니다.
+
+    Args:
+        vlm_key: 'vlm_img_structure' 또는 'vlm_mm_structure'
+    """
+    path_template, _ = _GCS_MODE_MAP["processed"]
+    blob_path = path_template.format(cid=content_id)
+    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
+    lines = []
+    for line in jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            s_idx = scene.get("scene_idx")
+            if s_idx is not None and start_idx <= s_idx <= end_idx:
+                vlm_struct = scene.get(vlm_key, {})
+                desc = format_vlm_structure_as_text(vlm_struct)
+                if desc:
+                    lines.append(f"[Scene {s_idx}]\n{desc}")
+        except json.JSONDecodeError:
+            continue
+    return "\n\n".join(lines)
+
+
+_PROCESSED_RAW_KEEP_FIELDS = ("scene_idx", "duration", "timeline")
+
+def get_processed_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
+    """*_processed.jsonl에서 주요 필드(scene_idx, duration, timeline)만
+    추출하여 정제된 JSON Lines 텍스트로 반환합니다.
+
+    timeline 내의 각 shot에는 speech_fragments와 text_fragments만 포함됩니다.
+    기존 get_gcs_raw_fields_by_scene_idx()의 _processed.jsonl 버전입니다.
+    """
+    path_template, _ = _GCS_MODE_MAP["processed"]
+    blob_path = path_template.format(cid=content_id)
+    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
+
+    lines = []
+    for line in jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            s_idx = scene.get("scene_idx")
+            if s_idx is None or not (start_idx <= s_idx <= end_idx):
+                continue
+            # timeline에서 speech_fragments/text_fragments만 추출
+            timeline = scene.get("timeline", [])
+            filtered_timeline = []
+            for shot in timeline:
+                filtered_timeline.append({
+                    "shot_id": shot.get("shot_id"),
+                    "time": shot.get("time", ""),
+                    "speech_fragments": shot.get("speech_fragments", []),
+                    "text_fragments": shot.get("text_fragments", []),
+                })
+            filtered = {
+                "scene_idx": s_idx,
+                "duration": scene.get("duration", ""),
+                "timeline": filtered_timeline,
+            }
             lines.append(json.dumps(filtered, ensure_ascii=False))
         except json.JSONDecodeError:
             continue
