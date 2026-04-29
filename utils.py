@@ -434,17 +434,15 @@ def get_gcs_text_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_i
     return truncate_jsonl_by_scene_idx(jsonl_text, start_idx, end_idx)
 
 
-_RAW_KEEP_FIELDS = ("scene_idx", "start_time", "end_time", "speech", "texts")
-
 def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
-    """*_ref.jsonl에서 주요 필드(scene_idx, start_time, end_time, speech, texts)만
-    추출하여 정제된 JSON Lines 텍스트로 반환합니다.
+    """*_raw.jsonl(또는 *_ref.jsonl)에서 Shot별 raw_speech/raw_ocr을
+    Scene 단위로 병합하여 정제된 JSON Lines 텍스트로 반환합니다.
 
-    generate_vh_response.py의 'raw' 모드 Source로 사용됩니다.
-    전체 JSONL을 반환하는 get_gcs_text_by_scene_idx()와 달리, 불필요한 필드
-    (sounds, shots, vectors 등)를 제거하여 컨텍스트 토큰을 절약합니다.
+    'raw' 모드 Source로 사용됩니다.
+    - speech: 모든 Shot의 raw_speech를 시간 순서대로 이어 붙인 통합 텍스트
+    - on_screen_text: 모든 Shot의 raw_ocr에서 중복 제거한 고유 텍스트 목록
     """
-    path_template, _ = _GCS_MODE_MAP["ref"]
+    path_template, _ = _GCS_MODE_MAP["raw"]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
 
@@ -457,7 +455,35 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
             s_idx = scene.get("scene_idx")
             if s_idx is None or not (start_idx <= s_idx <= end_idx):
                 continue
-            filtered = {k: scene[k] for k in _RAW_KEEP_FIELDS if k in scene}
+
+            timeline = scene.get("timeline", [])
+
+            # Shot별 raw_speech를 시간 순서대로 concat
+            speech_parts = []
+            for shot in timeline:
+                text = (shot.get("raw_speech") or "").strip()
+                if text:
+                    speech_parts.append(text)
+            speech = " ".join(speech_parts)
+
+            # Shot별 raw_ocr를 중복 제거 (쉼표로 구분된 복수 항목도 분리)
+            seen_ocr = set()
+            ocr_list = []
+            for shot in timeline:
+                raw_ocr = (shot.get("raw_ocr") or "").strip()
+                if not raw_ocr:
+                    continue
+                for item in raw_ocr.split(","):
+                    item = item.strip()
+                    if item and item not in seen_ocr:
+                        seen_ocr.add(item)
+                        ocr_list.append(item)
+
+            filtered = {"scene_idx": s_idx, "duration": scene.get("duration", "")}
+            if speech:
+                filtered["speech"] = speech
+            if ocr_list:
+                filtered["on_screen_text"] = ocr_list
             lines.append(json.dumps(filtered, ensure_ascii=False))
         except json.JSONDecodeError:
             continue
