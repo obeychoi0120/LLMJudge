@@ -8,8 +8,9 @@ from utils import (
     process_gcs_video_part,
     check_gcs_files_exist,
     _retry_api_call,
-    get_processed_vlm_descriptions_by_scene_idx,
-    get_processed_raw_fields_by_scene_idx,
+    get_gcs_raw_fields_by_scene_idx,
+    get_processed_frag_fields_by_scene_idx,
+    get_processed_frag_with_vlm_by_scene_idx,
     ensure_output_dir,
     preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
@@ -22,24 +23,49 @@ from utils import (
 # System Prompts
 # ============================================================
 
-_VH_RESPONSE_PROMPT_TEXT = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
+_VH_RESPONSE_PROMPT_BASE = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
 
 당신에게는 영상의 처음부터 시청자가 현재 보고 있는 장면까지, 소형 AI가 자동으로 분석·요약한 **누적 시청 기억(Accumulated Memory)**이 제공됩니다.
 이 기억에는 Scene 단위로 분절된 영상 정보가 시간순으로 나열되어 있으며, **마지막 Scene이 시청자가 지금 집중하고 있는 장면**입니다.
 
-이 정보를 바탕으로 시청자의 질문에 자연스럽고 정확하게 답변하여 '개인화된 인터랙티브 시청 경험'을 극대화해 주세요.
+이 정보를 바탕으로 시청자의 질문에 자연스럽고 정확하게 답변하여 '개인화된 인터랙티브 시청 경험'을 극대화해 주세요."""
+
+_VH_RESPONSE_PROMPT_RAW = _VH_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
-시청 기억은 다음 두 가지 형식 중 하나로 제공됩니다:
+제공되는 시청 기억은 오직 '음성 기록(ASR)'과 '화면 텍스트(OCR)'로만 이루어져 있습니다.
+  - scene_idx: Scene 인덱스
+  - duration: Scene 시작~종료 시간
+  - speech: 발화된 음성 텍스트
+  - texts: 화면에 나타난 OCR 텍스트
 
-(A) Description 형식 (Image-based / Multimodal Description):
-  - 각 Scene은 [Scene N] 태그로 구분됩니다.
-  - Subject: 장면의 주체 (인물, 동물, 물체 등)
-  - Environment: 장면의 환경 및 배경
-  - Actions: 주체의 행동 목록
-  - Context (Multimodal만 해당): 알파벳순으로 정렬된 문맥 키워드 목록 (Bag-of-Words 형태, 원래 문장 순서 파괴됨)
+[분석 및 대화 지시사항]
+1. **텍스트 분석 및 노이즈 교정 (매우 중요)**
+   - 음성 인식(ASR) 및 자막(OCR) 오탈자가 있을 수 있으므로 상식을 동원해 자연스럽게 교정하세요.
+   - 단어들을 논리적으로 조합하고, 문맥과 상식을 동원하여 상황을 유추해야 합니다.
 
-(B) Raw Metadata 형식:
+2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
+   - 영상 내용만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
+   - 유추한 발화 맥락과 사전 지식을 결합하여, 시청자가 "이 AI는 정말 똑똑하다!"라고 느끼도록 풍부하고 정확한 답변을 제공하세요.
+   - 단, 데이터에서 유추한 내용과 명백히 모순되는 정보는 제공하지 마세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
+   - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
+
+4. **완벽한 TV 파트너 톤앤매너**
+   - "텍스트 조각을 조합해보면" 등 데이터 구조를 암시하는 말은 절대 금지합니다.
+   - "방금 들린 대화에 따르면~", "화면에 나온 정보에서~"처럼 실제 영상의 소리를 듣거나 텍스트를 본 것처럼 친숙한 구어체를 사용하세요.
+
+5. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+
+_VH_RESPONSE_PROMPT_FRAG = _VH_RESPONSE_PROMPT_BASE + """
+
+[시청 기억의 구조]
+제공되는 시청 기억은 오직 '음성 기록(ASR)'과 '화면 텍스트(OCR)' 파편으로만 이루어져 있습니다.
   - scene_idx: Scene 인덱스
   - duration: Scene 시작~종료 시간
   - timeline: shot 단위 파편화된 메타데이터 배열
@@ -47,25 +73,57 @@ _VH_RESPONSE_PROMPT_TEXT = """당신은 시청자와 나란히 소파에 앉아 
     - text_fragments: abc 순으로 정렬된 OCR 단어 파편 (원문 순서 파괴됨)
 
 [분석 및 대화 지시사항]
+1. **메타데이터 파편화 복원 및 노이즈 필터링 (매우 중요)**
+   - 제공된 데이터는 저작권 보호를 위해 문장 순서가 완전히 파괴된 Bag-of-Words 형태입니다.
+   - 단어들을 논리적으로 조합하고, 문맥과 상식을 동원하여 원래 어떤 발화나 자막이었을지 유추해야 합니다.
+   - 음성 인식(ASR) 및 자막(OCR) 오탈자가 있을 수 있으므로 상식을 동원해 자연스럽게 교정하세요.
 
-1. **현재 장면 우선 (Recency Bias)**
+2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
+   - 영상 내용만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
+   - 유추한 발화 맥락과 사전 지식을 결합하여, 시청자가 "이 AI는 정말 똑똑하다!"라고 느끼도록 풍부하고 정확한 답변을 제공하세요.
+   - 단, 데이터에서 유추한 내용과 명백히 모순되는 정보는 제공하지 마세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
    - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
    - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
 
-2. **VLM 노이즈 교정 및 지식 보강 (매우 중요)**
-   - 시청 기억은 소형 VLM이 자동 생성한 구조화된 데이터이므로, Subject/Environment/Actions 정보에 오류가 포함될 수 있습니다.
-   - Raw Metadata의 경우 speech_fragments와 text_fragments는 저작권 보호를 위해 단어 순서가 파괴된 Bag-of-Words 형태입니다. 단어들을 조합하여 원래 맥락을 유추하세요.
-   - 표면적 텍스트를 맹신하지 말고, 앞뒤 맥락과 풍부한 일반 상식(World Knowledge)을 결합하여 명백한 오류를 자연스럽게 교정·필터링하세요.
+4. **완벽한 TV 파트너 톤앤매너**
+   - "단어 파편에 따르면", "텍스트 조각을 조합해보면" 등 데이터 구조를 암시하는 말은 절대 금지합니다.
+   - "방금 들린 대화에 따르면~", "화면에 나온 정보에서~"처럼 실제 영상의 소리를 듣거나 텍스트를 본 것처럼 친숙한 구어체를 사용하세요.
 
-3. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+5. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+
+_VH_RESPONSE_PROMPT_FRAG_WITH_VLM = _VH_RESPONSE_PROMPT_BASE + """
+
+[시청 기억의 구조]
+제공되는 시청 기억은 '시각 정보(VLM)'와 '파편화된 음성/화면 텍스트 정보'를 종합하여 분석한 구조화된 데이터입니다.
+  - vlm_mm_structure: 시각·음성을 종합하여 식별된 주체(Subject), 환경(Environment), 행동(Actions), 문맥 키워드 파편(Context)
+  - timeline: shot 단위 파편화된 메타데이터 배열
+    - speech_fragments: 가나다/abc 순으로 정렬된 ASR 단어 파편 (원문 순서 파괴됨)
+    - text_fragments: abc 순으로 정렬된 OCR 단어 파편 (원문 순서 파괴됨)
+
+[분석 및 대화 지시사항]
+1. **메타데이터 파편화 복원 및 노이즈 필터링 (매우 중요)**
+   - 시청 기억은 소형 VLM이 자동 생성한 데이터와 저작권 보호를 위해 파편화된 Bag-of-Words 형태의 텍스트 모음입니다.
+   - 단어들을 종합하여 원래의 발화 맥락과 시각적 상황을 유추하세요.
+   - 표면적 텍스트를 맹신하지 말고, 앞뒤 맥락과 풍부한 일반 상식을 결합하여 명백한 오류를 자연스럽게 교정·필터링하세요.
+
+2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
    - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
    - 영상 내용만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
    - 영상에서 얻은 맥락과 사전 지식을 자연스럽게 결합하여, 시청자가 "이 AI는 정말 똑똑하다!"라고 느끼도록 풍부하고 정확한 답변을 제공하세요.
    - 단, 영상 내용과 명백히 모순되는 정보는 제공하지 마세요.
 
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
+   - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
+
 4. **완벽한 TV 파트너 톤앤매너**
    - "JSON", "타임스탬프", "시청 기록에 따르면" 등 시스템 용어는 절대 금지합니다.
-   - "지금 화면을 보면~", "방금 자막에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
+   - "지금 화면을 보면~", "방금 나온 대화에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
 
 5. **대화 이어가기**
    - 정보만 전달하고 끝내지 마세요.
@@ -80,19 +138,19 @@ _VH_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아
 
 [분석 및 대화 지시사항]
 
-1. **현재 장면 우선 (Recency Bias)**
-   - 영상 후반부(= 현재 장면)에 가장 높은 우선순위를 두세요.
-   - 영상 초반은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
-
-2. **정밀한 시각·청각 분석과 지식 보강**
+1. **정밀한 시각·청각 분석과 지식 보강**
    - 화면에 보이는 인물, 행동, 자막, 로고, 배경, 소리 등 모든 정보를 종합적으로 활용하세요.
    - 영상 내용만으로 답변이 불충분할 경우, 당신이 가진 사전 지식을 적극적으로 활용하여 풍부하고 유익한 답변을 제공하세요.
 
-3. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
    - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
    - 화면에 직접 명시되지 않은 질문이라도 "알 수 없습니다"로 대화를 끊지 마세요.
    - 영상에서 얻은 맥락과 사전 지식을 자연스럽게 결합하여 풍부하고 정확한 답변을 제공하세요.
    - 단, 영상 내용과 명백히 모순되는 정보는 제공하지 마세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 영상 후반부(= 현재 장면)에 가장 높은 우선순위를 두세요.
+   - 영상 초반은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
 
 4. **완벽한 TV 파트너 톤앤매너**
    - "프레임", "타임스탬프", "비디오 분석 결과" 등 시스템 용어는 절대 금지합니다.
@@ -106,8 +164,16 @@ _VH_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아
 def make_vh_gen_config(thinking_level=None):
     """VH Response 생성용 GenerateContentConfig 딕셔너리를 반환합니다."""
     return {
-        "text": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_TEXT,
+        "raw": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_RAW,
+            thinking_level=thinking_level,
+        ),
+        "frag": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_FRAG,
+            thinking_level=thinking_level,
+        ),
+        "frag_with_vlm": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_FRAG_WITH_VLM,
             thinking_level=thinking_level,
         ),
         "video": make_generate_config(
@@ -129,7 +195,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         content_id: 콘텐츠 ID
         scene_idx: 현재 KeyScene의 scene_idx
         keypoints: 해당 content_id의 전체 keypoint 목록 (list of dict)
-        mode: 'img_desc' | 'mm_desc' | 'video' | 'raw'
+        mode: 'video' | 'raw' | 'frag' | 'frag_with_vlm'
         max_past_scenes: None이면 Scene 0부터 전체, 정수이면 현재 KeyScene 기준 최근 N개 Scene만 사용
 
     Returns:
@@ -170,15 +236,20 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         else:
             start_idx = 0
 
-        if mode in ("img_desc", "mm_desc"):
-            vlm_key = "vlm_img_structure" if mode == "img_desc" else "vlm_mm_structure"
-            return get_processed_vlm_descriptions_by_scene_idx(
-                gs_bucket_name, content_id, vlm_key, start_idx, scene_idx
-            )
-        else:  # raw
-            return get_processed_raw_fields_by_scene_idx(
+        if mode == "raw":
+            return get_gcs_raw_fields_by_scene_idx(
                 gs_bucket_name, content_id, start_idx, scene_idx
             )
+        elif mode == "frag":
+            return get_processed_frag_fields_by_scene_idx(
+                gs_bucket_name, content_id, start_idx, scene_idx
+            )
+        elif mode == "frag_with_vlm":
+            return get_processed_frag_with_vlm_by_scene_idx(
+                gs_bucket_name, content_id, start_idx, scene_idx
+            )
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
 
 
 def _generate_for_mode(client, model_name, gen_configs, source, mode, query, scene_idx):
@@ -193,12 +264,11 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
                 "--- 질문 ---",
                 query,
             ]
-            config = gen_configs["video"]
         else:
             label_map = {
-                "img_desc": "Image-based Description (처음부터 현재 장면까지)",
-                "mm_desc": "Multimodal Description (처음부터 현재 장면까지)",
-                "raw": "Raw Metadata (speech_fragments & text_fragments, 처음부터 현재 장면까지)",
+                "raw": "Raw Metadata (speech & text, 처음부터 현재 장면까지)",
+                "frag": "Fragmented Metadata (speech_fragments & text_fragments, 처음부터 현재 장면까지)",
+                "frag_with_vlm": "VLM + Fragmented Metadata (처음부터 현재 장면까지)",
             }
             contents = [
                 f"--- [{label_map.get(mode, mode)}] ---",
@@ -206,7 +276,8 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
                 "--- 질문 ---",
                 query,
             ]
-            config = gen_configs["text"]
+            
+        config = gen_configs[mode]
 
         answer = _retry_api_call(
             lambda: client.models.generate_content(
@@ -229,9 +300,9 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
 
 def _load_completed_pairs(output_path):
     """완료된 (content_id, query) 쌍을 반환합니다.
-    모든 4개 모드(img_desc, mm_desc, video, raw)가 에러 없이 완료된 경우만 완료로 간주합니다."""
+    모든 4개 모드(video, raw, frag, frag_with_vlm)가 에러 없이 완료된 경우만 완료로 간주합니다."""
     completed = set()
-    _MODES = ("img_desc", "mm_desc", "video", "raw")
+    _MODES = ("video", "raw", "frag", "frag_with_vlm")
     for rec in load_jsonl(output_path):
         c_id = rec.get("content_id")
         query = rec.get("query")
@@ -350,7 +421,7 @@ def main():
                     print(f"\n[Scene {scene_idx}] Query: {query}")
 
                     # Source 빌드 (4개 모드 모두)
-                    _MODES = ("img_desc", "mm_desc", "video", "raw")
+                    _MODES = ("video", "raw", "frag", "frag_with_vlm")
                     sources = {}
                     try:
                         for mode in _MODES:

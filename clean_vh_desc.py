@@ -2,10 +2,6 @@ import json
 import argparse
 import os
 
-import json
-import argparse
-import os
-
 def clean_file(filepath, remove_modes):
     if not os.path.exists(filepath):
         print(f"[Skip] {filepath} 파일이 존재하지 않습니다.")
@@ -54,7 +50,7 @@ def clean_file(filepath, remove_modes):
 def main():
     parser = argparse.ArgumentParser(description="Clean specific modes from Voice Hint JSONL")
     parser.add_argument("--targets", nargs="+", default=["assets/voice_hint.jsonl", "assets/voice_hint_scores.jsonl"], help="클리닝할 대상 파일 목록")
-    parser.add_argument("--remove_modes", nargs="+", default=["img_desc", "mm_desc"], help="제거할 모드 목록")
+    parser.add_argument("--remove_modes", nargs="+", default=[], help="제거할 모드 목록 (예: frag frag_with_vlm)")
     args = parser.parse_args()
 
     for target in args.targets:

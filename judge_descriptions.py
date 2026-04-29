@@ -191,16 +191,16 @@ def main():
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl",
                         help="KeyScene Summary JSONL 경로 (Anchor)")
     parser.add_argument("--ksd_file", default="assets/keyscene_description.jsonl",
-                        help="KeyScene Description JSONL 경로 (video_desc / raw_desc 소스)")
+                        help="KeyScene Description JSONL 경로 (video / raw / frag / frag_with_vlm 소스)")
     parser.add_argument("--output_file", default="assets/keyscene_description_scores.jsonl",
                         help="Description Judge 점수 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl",
                         help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--watch", action="store_true",
-                        help="ksd_file을 모니터링하며 새로운 video_desc/raw_desc를 실시간으로 평가합니다.")
+                        help="ksd_file을 모니터링하며 새로운 description을 실시간으로 평가합니다.")
     parser.add_argument("--modes", nargs="+",
-                        default=["img_desc", "mm_desc", "video_desc", "raw_desc"],
-                        choices=["img_desc", "mm_desc", "video_desc", "raw_desc"],
+                        default=["video", "raw", "frag", "frag_with_vlm"],
+                        choices=["video", "raw", "frag", "frag_with_vlm"],
                         help="평가할 모드 직접 지정 (기본값: 4종 모두)")
 
     args, client = init_pipeline(parser.parse_args())
@@ -238,10 +238,10 @@ def main():
     file_write_lock = threading.Lock()
 
     # 정규 모드 순서
-    _MODE_ORDER = ["video_desc", "raw_desc", "img_desc", "mm_desc"]
+    _MODE_ORDER = ["video", "raw", "frag", "frag_with_vlm"]
 
     # ── keyscene_description.jsonl에서 4모드 통합 Judge ──────────────
-    # generate_keyscene_description.py가 video_desc/raw_desc/img_desc/mm_desc를
+    # generate_keyscene_description.py가 4개 모드를
     # 모두 동일 파일에 기록하므로, 소스를 분리할 필요 없이 한 루프로 처리합니다.
 
     if not os.path.exists(args.ksd_file) and not args.watch:

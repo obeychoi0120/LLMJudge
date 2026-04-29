@@ -1,16 +1,15 @@
 import os
 import time
-import json
 import concurrent.futures
 import threading
 from utils import (
     get_common_argparser,
     make_generate_config,
-    process_gcs_file_by_scene_idx, check_gcs_files_exist,
-    get_processed_vlm_descriptions_by_scene_idx,
+    check_gcs_files_exist,
     _retry_api_call,
-    ensure_output_dir, load_processed_pairs,
+    ensure_output_dir,
     preload_content_metadata,
+    build_mode_parts,
     init_pipeline, load_jsonl, append_jsonl,
     sort_and_validate_jsonl,
     load_keypoints_by_content, check_input_file,
@@ -18,10 +17,10 @@ from utils import (
 )
 
 # ───────────────────────────────────────────────
-# Prompt: Video-based Description (영어)
+# Prompts
 # ───────────────────────────────────────────────
 
-_VIDEO_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed, accurate English description of the provided video clip.
+_KSD_PROMPT_VIDEO = """You are an expert video content analyst. Your task is to generate a detailed, accurate English description of the provided video clip.
 
 Your description must cover the following aspects, in this order:
 
@@ -51,13 +50,42 @@ Guidelines:
 - If you recognize a person, place, or brand from the video, use their correct known name even if not explicitly stated on screen.
 - Focus on describing what is observable in the video. Do NOT add speculative interpretations or external context beyond proper identification."""
 
-# ───────────────────────────────────────────────
-# Prompt: Raw JSON-based Description (영어)
-# ───────────────────────────────────────────────
+_KSD_PROMPT_RAW = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided audio and on-screen text metadata.
 
-_RAW_DESC_SYSTEM_PROMPT = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided fragmented speech and on-screen text metadata.
+You will receive a JSON record containing:
+- **speech**: ASR transcription of spoken dialogue or narration.
+- **texts**: OCR detection of text appearing on screen.
 
-You will receive a JSON record containing a timeline of shots, where each shot includes:
+Your description must cover the following aspects, in this order:
+
+1. **Scene & Setting Inference**
+   - Based on the dialogue content and on-screen text, infer what kind of scene this is (interview, cooking segment, outdoor exploration, etc.).
+   - Describe the likely setting and context as implied by the audio and text clues.
+   - Do NOT fabricate specific visual details (colors, camera angles, etc.) that cannot be inferred from the text.
+
+2. **Dialogue & Factual Details**
+   - Incorporate the dialogue or narration seamlessly into the description.
+   - Capture every proper noun: person names, place names, brand names, and specific terms you can identify.
+   - Record specific numbers, dates, or quantities if identifiable.
+   - If a name appears garbled, provide your best corrected interpretation rather than omitting it.
+
+3. **Narrative & Emotional Context**
+   - Describe the narrative progression as inferred from the dialogue.
+   - Note cause-effect relationships between events discussed.
+   - Capture the emotional tone implied by the dialogue.
+   - Identify any thematic elements or recurring topics.
+
+Guidelines:
+- Be precise and comprehensive. Vague summaries are unacceptable.
+- Prioritize factual accuracy — proper nouns and dialogue content are critical.
+- Write the description naturally, as if you had full knowledge of the scene.
+- Do NOT mention that you are working from transcripts or metadata.
+- If contextual clues allow you to identify a specific person, place, or brand, use their correct known name.
+- Focus on describing the scene as conveyed through the provided data. Do NOT add speculative context beyond proper identification."""
+
+_KSD_PROMPT_FRAG = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided fragmented speech and on-screen text metadata.
+
+You will receive a JSON record containing:
 - **speech_fragments**: Alphabetically sorted word fragments extracted from ASR transcription. The original sentence order has been intentionally destroyed for copyright protection.
 - **text_fragments**: Alphabetically sorted word fragments extracted from OCR detection. The original order has been destroyed.
 
@@ -90,52 +118,97 @@ Guidelines:
 - If contextual clues allow you to identify a specific person, place, or brand, use their correct known name.
 - Focus on describing the scene as conveyed through the provided data. Do NOT add speculative context beyond proper identification."""
 
+_KSD_PROMPT_FRAG_WITH_VLM = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided VLM metadata and fragmented speech/on-screen text.
+
+You will receive a JSON record containing:
+- **vlm_mm_structure**: Visual metadata containing Subject, Environment, Actions, and alphabetically sorted Context keywords.
+- **timeline**: A timeline of shots, where each shot includes:
+  - **speech_fragments**: Alphabetically sorted word fragments extracted from ASR. Original order destroyed.
+  - **text_fragments**: Alphabetically sorted word fragments extracted from OCR. Original order destroyed.
+
+IMPORTANT: The speech/text fragments and Context keywords are intentionally shuffled. You must reconstruct the likely meaning by analyzing the word set as a whole, using contextual clues and common sense.
+
+Your description must cover the following aspects, in this order:
+
+1. **Scene & Visual Elements**
+   - Describe the setting, environment, characters, and key actions using the provided vlm_mm_structure.
+   - Expand on the basic VLM output to create a coherent narrative of what is happening visually.
+
+2. **Dialogue & Factual Details**
+   - Reconstruct the likely dialogue or narration from the shuffled speech fragments.
+   - Capture every proper noun, specific numbers, and key terms you can identify.
+   - Merge the visual context with the inferred dialogue to create a comprehensive picture.
+
+3. **Narrative & Emotional Context**
+   - Describe the narrative progression combining visual actions and reconstructed dialogue.
+   - Capture the emotional tone implied by both the visual scene and the spoken words.
+
+Guidelines:
+- Be precise and comprehensive. Vague summaries are unacceptable.
+- Write the description naturally, as if you had full knowledge of the scene.
+- Do NOT mention that you are working from fragments, transcripts, or VLM structures.
+- Focus on describing the scene as conveyed through the provided data. Do NOT add speculative context beyond proper identification."""
+
 
 def make_ksd_gen_config(thinking_level=None):
     """KeyScene Description 생성용 GenerateContentConfig를 반환합니다."""
     return {
-        "video": make_generate_config(system_instruction=_VIDEO_DESC_SYSTEM_PROMPT, thinking_level=thinking_level),
-        "raw":   make_generate_config(system_instruction=_RAW_DESC_SYSTEM_PROMPT,   thinking_level=thinking_level),
+        "video":         make_generate_config(system_instruction=_KSD_PROMPT_VIDEO,         thinking_level=thinking_level),
+        "raw":           make_generate_config(system_instruction=_KSD_PROMPT_RAW,           thinking_level=thinking_level),
+        "frag":          make_generate_config(system_instruction=_KSD_PROMPT_FRAG,          thinking_level=thinking_level),
+        "frag_with_vlm": make_generate_config(system_instruction=_KSD_PROMPT_FRAG_WITH_VLM, thinking_level=thinking_level),
     }
 
 
-def generate_video_desc(client, model_name, config, video_part, end_time):
-    """비디오 클립만 보고 장면을 영어로 묘사합니다."""
-    contents = [
-        "--- [Current Video Clip] ---",
-        video_part,
-        "--- Request ---",
-        "Watch the provided video clip carefully and generate a detailed English description of the scene. "
-        "Cover visual elements, characters' actions, on-screen text, and any inferable audio context.",
-    ]
+def generate_ksd_mode(client, model_name, config, mode, data_part, end_time):
+    """지정된 모드와 데이터로 KeyScene Description을 생성합니다."""
+    if mode == "video":
+        contents = [
+            "--- [Current Video Clip] ---",
+            data_part,
+            "--- Request ---",
+            "Watch the provided video clip carefully and generate a detailed English description of the scene. "
+            "Cover visual elements, characters' actions, on-screen text, and any inferable audio context.",
+        ]
+    elif mode == "raw":
+        contents = [
+            "--- [Current Scene Metadata (Intact ASR & OCR)] ---",
+            data_part,
+            "--- Request ---",
+            "Based solely on the provided audio and on-screen text metadata above, "
+            "infer the likely scene context and generate a detailed English description "
+            "of what is happening in this scene. "
+            "Do not fabricate visual details beyond what the text implies.",
+        ]
+    elif mode == "frag":
+        contents = [
+            "--- [Current Scene Metadata (speech_fragments & text_fragments)] ---",
+            data_part,
+            "--- Request ---",
+            "Based solely on the provided speech fragments and text fragments metadata above, "
+            "reconstruct the likely dialogue and scene context, then generate a detailed English description "
+            "of what is happening in this scene. The fragments are alphabetically sorted and their original "
+            "order has been destroyed — use context and common sense to reconstruct meaning. "
+            "Do not fabricate visual details beyond what the text implies.",
+        ]
+    elif mode == "frag_with_vlm":
+        contents = [
+            "--- [Current Scene Metadata (VLM Structure & Fragments)] ---",
+            data_part,
+            "--- Request ---",
+            "Based on the provided VLM metadata and the shuffled speech/text fragments, "
+            "reconstruct the dialogue and integrate it with the visual description to generate "
+            "a comprehensive English description of the scene.",
+        ]
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
     t0 = time.time()
     text = _retry_api_call(
         lambda: client.models.generate_content(
             model=model_name, contents=contents, config=config
         ).text,
-        label=f"KD video_desc API (end={end_time:.1f}s)"
-    )
-    return text, time.time() - t0
-
-
-def generate_raw_desc(client, model_name, config, raw_part, end_time):
-    """Processed JSONL(speech_fragments + text_fragments)만 보고 장면을 영어로 묘사합니다."""
-    contents = [
-        "--- [Current Scene Metadata (speech_fragments & text_fragments)] ---",
-        raw_part,
-        "--- Request ---",
-        "Based solely on the provided speech fragments and text fragments metadata above, "
-        "reconstruct the likely dialogue and scene context, then generate a detailed English description "
-        "of what is happening in this scene. The fragments are alphabetically sorted and their original "
-        "order has been destroyed — use context and common sense to reconstruct meaning. "
-        "Do not fabricate visual details beyond what the text implies.",
-    ]
-    t0 = time.time()
-    text = _retry_api_call(
-        lambda: client.models.generate_content(
-            model=model_name, contents=contents, config=config
-        ).text,
-        label=f"KD raw_desc API (end={end_time:.1f}s)"
+        label=f"KSD {mode} API (end={end_time:.1f}s)"
     )
     return text, time.time() - t0
 
@@ -150,9 +223,9 @@ def main():
                         help="Keypoint Scene 목록 JSONL 경로 (identify_keyscene.py 출력)")
     parser.add_argument("--output_file", default="assets/keyscene_description.jsonl",
                         help="KeyScene Description 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video_desc", "raw_desc", "img_desc", "mm_desc"],
-                        choices=["video_desc", "raw_desc", "img_desc", "mm_desc"],
-                        help="생성할 모드 직접 지정 (img_desc/mm_desc는 _processed.jsonl에서 VLM 구조 데이터를 읽어 기록)")
+    parser.add_argument("--modes", nargs="+", default=["video", "raw", "frag", "frag_with_vlm"],
+                        choices=["video", "raw", "frag", "frag_with_vlm"],
+                        help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -180,7 +253,7 @@ def main():
             done_modes_by_scene.add((c_id, s_idx, mode))
 
     # 정규 모드 순서: JSONL에 쓰는 순서를 보장합니다.
-    _MODE_ORDER = ["video_desc", "raw_desc", "img_desc", "mm_desc"]
+    _MODE_ORDER = ["video", "raw", "frag", "frag_with_vlm"]
     target_modes = sorted(args.modes, key=lambda m: _MODE_ORDER.index(m) if m in _MODE_ORDER else 99)
 
     print_pipeline_banner("KeyScene Description 생성 파이프라인을 시작합니다.")
@@ -229,40 +302,16 @@ def main():
                 print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | "
                       f"Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
 
-                # GCS Part 사전 로드
-                video_part = None
-                raw_part   = None
-                if "video_desc" in missing_modes:
-                    video_part = process_gcs_file_by_scene_idx(
-                        args.gs_bucket_name, content_id, "video", scene_idx, scene_idx
-                    )
-                if "raw_desc" in missing_modes:
-                    raw_part = process_gcs_file_by_scene_idx(
-                        args.gs_bucket_name, content_id, "processed", scene_idx, scene_idx
-                    )
+                # 모드별 데이터 사전 로드
+                _, data_parts = build_mode_parts(
+                    args.gs_bucket_name, content_id, missing_modes,
+                    scene_idx, scene_idx,
+                )
 
                 def _run_mode(mode):
-                    if mode == "video_desc":
-                        return generate_video_desc(
-                            client, args.ksd_gen_model, gen_configs["video"], video_part, end_time
-                        )
-                    elif mode == "raw_desc":
-                        return generate_raw_desc(
-                            client, args.ksd_gen_model, gen_configs["raw"], raw_part, end_time
-                        )
-                    elif mode in ("img_desc", "mm_desc"):
-                        # _processed.jsonl에서 VLM 구조화 데이터를 읽어 텍스트로 변환하여 기록
-                        t0 = time.time()
-                        vlm_key = "vlm_img_structure" if mode == "img_desc" else "vlm_mm_structure"
-                        desc_text = get_processed_vlm_descriptions_by_scene_idx(
-                            args.gs_bucket_name, content_id, vlm_key, scene_idx, scene_idx
-                        )
-                        # [Scene N] 태그 제거하여 순수 description만 추출
-                        desc_text = "\n".join(
-                            line for line in desc_text.split("\n")
-                            if not line.startswith(f"[Scene {scene_idx}]")
-                        ).strip()
-                        return desc_text, time.time() - t0
+                    return generate_ksd_mode(
+                        client, args.ksd_gen_model, gen_configs[mode], mode, data_parts[mode], end_time
+                    )
 
                 try:
                     executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(missing_modes))
@@ -271,7 +320,7 @@ def main():
                         for mode in missing_modes:
                             futures[mode] = executor.submit(_run_mode, mode)
 
-                        # 정규 순서(video_desc → raw_desc → img_desc → mm_desc)로 결과를 수집하여 쓰기
+                        # 정규 순서(video → raw → frag → frag_with_vlm)로 결과를 수집하여 쓰기
                         for mode in missing_modes:  # 이미 _MODE_ORDER로 정렬된 상태
                             desc_text, elapsed = futures[mode].result()
 

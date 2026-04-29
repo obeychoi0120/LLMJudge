@@ -528,12 +528,12 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
 
 _PROCESSED_RAW_KEEP_FIELDS = ("scene_idx", "duration", "timeline")
 
-def get_processed_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
+def get_processed_frag_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
     """*_processed.jsonl에서 주요 필드(scene_idx, duration, timeline)만
     추출하여 정제된 JSON Lines 텍스트로 반환합니다.
 
     timeline 내의 각 shot에는 speech_fragments와 text_fragments만 포함됩니다.
-    기존 get_gcs_raw_fields_by_scene_idx()의 _processed.jsonl 버전입니다.
+    'frag' 모드 Source로 사용됩니다.
     """
     path_template, _ = _GCS_MODE_MAP["processed"]
     blob_path = path_template.format(cid=content_id)
@@ -567,6 +567,105 @@ def get_processed_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx,
         except json.JSONDecodeError:
             continue
     return "\n".join(lines)
+
+
+def get_processed_frag_with_vlm_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
+    """*_processed.jsonl에서 vlm_mm_structure와 파편화된 timeline을 함께
+    추출하여 정제된 JSON Lines 텍스트로 반환합니다.
+
+    'frag_with_vlm' 모드 Source로 사용됩니다.
+    """
+    path_template, _ = _GCS_MODE_MAP["processed"]
+    blob_path = path_template.format(cid=content_id)
+    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
+
+    lines = []
+    for line in jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            s_idx = scene.get("scene_idx")
+            if s_idx is None or not (start_idx <= s_idx <= end_idx):
+                continue
+            
+            timeline = scene.get("timeline", [])
+            filtered_timeline = []
+            for shot in timeline:
+                filtered_timeline.append({
+                    "shot_id": shot.get("shot_id"),
+                    "time": shot.get("time", ""),
+                    "speech_fragments": shot.get("speech_fragments", []),
+                    "text_fragments": shot.get("text_fragments", []),
+                })
+            
+            filtered = {
+                "scene_idx": s_idx,
+                "duration": scene.get("duration", ""),
+                "vlm_mm_structure": scene.get("vlm_mm_structure", {}),
+                "timeline": filtered_timeline,
+            }
+            lines.append(json.dumps(filtered, ensure_ascii=False))
+        except json.JSONDecodeError:
+            continue
+    return "\n".join(lines)
+
+
+# ───────────────────────────────────────────────
+# 공통 Source 빌드 헬퍼
+# ───────────────────────────────────────────────
+
+# 텍스트 모드별 fetch 함수 매핑
+_TEXT_MODE_FETCHERS = {
+    "raw":           lambda gs, cid, s, e: get_gcs_raw_fields_by_scene_idx(gs, cid, s, e),
+    "frag":          lambda gs, cid, s, e: get_processed_frag_fields_by_scene_idx(gs, cid, s, e),
+    "frag_with_vlm": lambda gs, cid, s, e: get_processed_frag_with_vlm_by_scene_idx(gs, cid, s, e),
+}
+
+
+def _text_to_part(text):
+    """텍스트를 genai Part로 변환합니다. 빈 문자열이면 빈 문자열 그대로 반환."""
+    if not text:
+        return ""
+    return types.Part.from_bytes(data=text.encode("utf-8"), mime_type="text/plain")
+
+
+def build_mode_parts(gs_bucket_name, content_id, target_modes,
+                     current_start_idx, current_end_idx,
+                     past_start_idx=None, past_end_idx=None):
+    """target_modes에 대해 현재/과거 데이터 Part를 빌드합니다.
+
+    Args:
+        gs_bucket_name: GCS 버킷명
+        content_id: 콘텐츠 ID
+        target_modes: 빌드할 모드 리스트 (예: ["video", "raw", "frag", "frag_with_vlm"])
+        current_start_idx, current_end_idx: 현재 Scene 구간
+        past_start_idx, past_end_idx: 과거 Scene 구간 (None이면 과거 없음)
+
+    Returns:
+        (past_parts, current_parts) 딕셔너리 튜플
+    """
+    has_past = past_start_idx is not None and past_end_idx is not None
+    past_parts = {}
+    current_parts = {}
+
+    if "video" in target_modes:
+        if has_past:
+            past_parts["video"] = process_gcs_file_by_scene_idx(
+                gs_bucket_name, content_id, "video", past_start_idx, past_end_idx
+            )
+        current_parts["video"] = process_gcs_file_by_scene_idx(
+            gs_bucket_name, content_id, "video", current_start_idx, current_end_idx
+        )
+
+    for mode, fetcher in _TEXT_MODE_FETCHERS.items():
+        if mode not in target_modes:
+            continue
+        if has_past:
+            past_parts[mode] = _text_to_part(fetcher(gs_bucket_name, content_id, past_start_idx, past_end_idx))
+        current_parts[mode] = _text_to_part(fetcher(gs_bucket_name, content_id, current_start_idx, current_end_idx))
+
+    return past_parts, current_parts
 
 
 def process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time):
@@ -706,8 +805,8 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
                 except json.JSONDecodeError:
                     pass
     
-    # content_id → scene_idx → 정규 모드 순서(video_desc → raw_desc → img_desc → mm_desc)로 정렬
-    _MODE_SORT_ORDER = {"video_desc": 0, "raw_desc": 1, "img_desc": 2, "mm_desc": 3}
+    # content_id → scene_idx → 정규 모드 순서(video → raw → frag → frag_with_vlm)로 정렬
+    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "frag": 2, "frag_with_vlm": 3, "kss": 4}
     data_records.sort(key=lambda x: (
         x.get("content_id", ""),
         x.get("scene_idx", 0),
@@ -722,7 +821,7 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
 
     # 누락 점검: (content_id, scene_idx, mode) 3-tuple 단위
     print("\n[최종 누락분 점검]")
-    modes_to_check = expected_modes or ["img_desc", "mm_desc", "kss"]
+    modes_to_check = expected_modes or ["video", "raw", "frag", "frag_with_vlm"]
     done_set_modes = {
         (x.get("content_id"), x.get("scene_idx"), x.get("mode"))
         for x in data_records
