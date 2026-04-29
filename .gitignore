@@ -3,7 +3,6 @@ __pycache__/
 # Output Directories
 assets/
 results/
-sample_jsonl_metadata/
 
 # JSON Files (Data Privacy)
 *.json

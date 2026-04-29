@@ -199,9 +199,9 @@ def main():
     parser.add_argument("--watch", action="store_true",
                         help="ksd_file을 모니터링하며 새로운 description을 실시간으로 평가합니다.")
     parser.add_argument("--modes", nargs="+",
-                        default=["video", "raw", "frag", "frag_with_vlm"],
-                        choices=["video", "raw", "frag", "frag_with_vlm"],
-                        help="평가할 모드 직접 지정 (기본값: 4종 모두)")
+                        default=["video", "raw", "frag", "vlm", "frag_with_vlm"],
+                        choices=["video", "raw", "frag", "vlm", "frag_with_vlm"],
+                        help="평가할 모드 직접 지정 (기본값: 5종 모두)")
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_ksd_judge_config(thinking_level=args.ksd_judge_thinking_level)
@@ -238,7 +238,7 @@ def main():
     file_write_lock = threading.Lock()
 
     # 정규 모드 순서
-    _MODE_ORDER = ["video", "raw", "frag", "frag_with_vlm"]
+    _MODE_ORDER = ["video", "raw", "frag", "vlm", "frag_with_vlm"]
 
     # ── keyscene_description.jsonl에서 4모드 통합 Judge ──────────────
     # generate_keyscene_description.py가 4개 모드를

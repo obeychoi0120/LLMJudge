@@ -11,6 +11,8 @@ from utils import (
     get_gcs_raw_fields_by_scene_idx,
     get_processed_frag_fields_by_scene_idx,
     get_processed_frag_with_vlm_by_scene_idx,
+    get_processed_vlm_descriptions_by_scene_idx,
+    parse_duration_to_times,
     ensure_output_dir,
     preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
@@ -69,13 +71,13 @@ _VH_RESPONSE_PROMPT_FRAG = _VH_RESPONSE_PROMPT_BASE + """
   - scene_idx: Scene 인덱스
   - duration: Scene 시작~종료 시간
   - timeline: shot 단위 파편화된 메타데이터 배열
-    - speech_fragments: 가나다/abc 순으로 정렬된 ASR 단어 파편 (원문 순서 파괴됨)
-    - text_fragments: abc 순으로 정렬된 OCR 단어 파편 (원문 순서 파괴됨)
+    - speech_fragments: 순서가 뒤섞인 ASR 2어절 묶음 파편 (원문 순서 파괴됨)
+    - text_fragments: 순서가 뒤섞인 OCR 2어절 묶음 파편 (원문 순서 파괴됨)
 
 [분석 및 대화 지시사항]
 1. **메타데이터 파편화 복원 및 노이즈 필터링 (매우 중요)**
-   - 제공된 데이터는 저작권 보호를 위해 문장 순서가 완전히 파괴된 Bag-of-Words 형태입니다.
-   - 단어들을 논리적으로 조합하고, 문맥과 상식을 동원하여 원래 어떤 발화나 자막이었을지 유추해야 합니다.
+   - 제공된 데이터는 저작권 보호를 위해 2어절 단위로 끊어 순서를 뒤섞은 형태입니다. 각 파편은 인접한 2개 단어의 관계를 보존하지만, 전체 문장 순서는 파괴되었습니다.
+   - 파편들을 논리적으로 조합하고, 문맥과 상식을 동원하여 원래 어떤 발화나 자막이었을지 유추해야 합니다.
    - 음성 인식(ASR) 및 자막(OCR) 오탈자가 있을 수 있으므로 상식을 동원해 자연스럽게 교정하세요.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
@@ -102,13 +104,13 @@ _VH_RESPONSE_PROMPT_FRAG_WITH_VLM = _VH_RESPONSE_PROMPT_BASE + """
 제공되는 시청 기억은 '시각 정보(VLM)'와 '파편화된 음성/화면 텍스트 정보'를 종합하여 분석한 구조화된 데이터입니다.
   - vlm_mm_structure: 시각·음성을 종합하여 식별된 주체(Subject), 환경(Environment), 행동(Actions), 문맥 키워드 파편(Context)
   - timeline: shot 단위 파편화된 메타데이터 배열
-    - speech_fragments: 가나다/abc 순으로 정렬된 ASR 단어 파편 (원문 순서 파괴됨)
-    - text_fragments: abc 순으로 정렬된 OCR 단어 파편 (원문 순서 파괴됨)
+    - speech_fragments: 순서가 뒤섞인 ASR 2어절 묶음 파편 (원문 순서 파괴됨)
+    - text_fragments: 순서가 뒤섞인 OCR 2어절 묶음 파편 (원문 순서 파괴됨)
 
 [분석 및 대화 지시사항]
 1. **메타데이터 파편화 복원 및 노이즈 필터링 (매우 중요)**
-   - 시청 기억은 소형 VLM이 자동 생성한 데이터와 저작권 보호를 위해 파편화된 Bag-of-Words 형태의 텍스트 모음입니다.
-   - 단어들을 종합하여 원래의 발화 맥락과 시각적 상황을 유추하세요.
+   - 시청 기억은 소형 VLM이 자동 생성한 데이터와 저작권 보호를 위해 2어절 단위로 끊어 뒤섞은 텍스트 모음입니다. 각 파편은 인접한 2개 단어의 관계를 보존합니다.
+   - 파편들을 종합하여 원래의 발화 맥락과 시각적 상황을 유추하세요.
    - 표면적 텍스트를 맹신하지 말고, 앞뒤 맥락과 풍부한 일반 상식을 결합하여 명백한 오류를 자연스럽게 교정·필터링하세요.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
@@ -160,6 +162,40 @@ _VH_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
+_VH_RESPONSE_PROMPT_VLM = _VH_RESPONSE_PROMPT_BASE + """
+
+[시청 기억의 구조]
+제공되는 시청 기억은 소형 VLM이 시각·음성을 종합하여 분석한 **구조화된 메타데이터**만으로 이루어져 있습니다.
+각 Scene별로 다음의 구조화 정보가 제공됩니다:
+  - Subject: 장면의 주체 (등장인물, 주요 피사체)
+  - Environment: 장면의 배경 환경
+  - Actions: 관찰된 주요 행동
+  - Context: 시각·음성 분석에서 추출된 문맥 키워드
+
+이 데이터는 시각 프레임과 음성/텍스트를 모두 종합하여 정제된 멀티모달 메타데이터입니다. Context 키워드에는 대화 주제와 화면 텍스트 정보도 반영되어 있습니다.
+
+[분석 및 대화 지시사항]
+1. **구조화 데이터 종합 분석 (매우 중요)**
+   - Subject, Environment, Actions, Context를 종합하여 장면의 전체적인 맥락을 입체적으로 파악하세요.
+   - Context 키워드들을 통해 대화의 주제와 분위기를 유추하세요.
+
+2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
+   - 구조화 데이터만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
+   - 단, 구조화 데이터에서 유추한 내용과 명백히 모순되는 정보는 제공하지 마세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
+   - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
+
+4. **완벽한 TV 파트너 톤앤매너**
+   - "메타데이터", "구조화 데이터", "Subject 필드" 등 시스템 용어는 절대 금지입니다.
+   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
+
+5. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+
 
 def make_vh_gen_config(thinking_level=None):
     """VH Response 생성용 GenerateContentConfig 딕셔너리를 반환합니다."""
@@ -170,6 +206,10 @@ def make_vh_gen_config(thinking_level=None):
         ),
         "frag": make_generate_config(
             system_instruction=_VH_RESPONSE_PROMPT_FRAG,
+            thinking_level=thinking_level,
+        ),
+        "vlm": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_VLM,
             thinking_level=thinking_level,
         ),
         "frag_with_vlm": make_generate_config(
@@ -215,12 +255,12 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
             else:
                 past_start_scene_idx = 0
             start_scene = next((s for s in ref_scenes if s.get("scene_idx") == past_start_scene_idx), None)
-            video_start = float(start_scene.get("start_time", 0.0)) if start_scene else 0.0
+            video_start = parse_duration_to_times(start_scene["duration"])[0] if start_scene and start_scene.get("duration") else 0.0
         else:
             video_start = 0.0
 
         end_scene = next((s for s in ref_scenes if s.get("scene_idx") == scene_idx), None)
-        video_end = float(end_scene.get("end_time", 0.0)) if end_scene else 0.0
+        video_end = parse_duration_to_times(end_scene["duration"])[1] if end_scene and end_scene.get("duration") else 0.0
 
         return process_gcs_video_part(gs_bucket_name, content_id, video_start, video_end)
 
@@ -243,6 +283,10 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         elif mode == "frag":
             return get_processed_frag_fields_by_scene_idx(
                 gs_bucket_name, content_id, start_idx, scene_idx
+            )
+        elif mode == "vlm":
+            return get_processed_vlm_descriptions_by_scene_idx(
+                gs_bucket_name, content_id, "vlm_mm_structure", start_idx, scene_idx
             )
         elif mode == "frag_with_vlm":
             return get_processed_frag_with_vlm_by_scene_idx(
@@ -268,6 +312,7 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
             label_map = {
                 "raw": "Raw Metadata (speech & text, 처음부터 현재 장면까지)",
                 "frag": "Fragmented Metadata (speech_fragments & text_fragments, 처음부터 현재 장면까지)",
+                "vlm": "VLM Structure Only (처음부터 현재 장면까지)",
                 "frag_with_vlm": "VLM + Fragmented Metadata (처음부터 현재 장면까지)",
             }
             contents = [
@@ -302,7 +347,7 @@ def _load_completed_pairs(output_path):
     """완료된 (content_id, query) 쌍을 반환합니다.
     모든 4개 모드(video, raw, frag, frag_with_vlm)가 에러 없이 완료된 경우만 완료로 간주합니다."""
     completed = set()
-    _MODES = ("video", "raw", "frag", "frag_with_vlm")
+    _MODES = ("video", "raw", "frag", "vlm", "frag_with_vlm")
     for rec in load_jsonl(output_path):
         c_id = rec.get("content_id")
         query = rec.get("query")
@@ -420,8 +465,8 @@ def main():
 
                     print(f"\n[Scene {scene_idx}] Query: {query}")
 
-                    # Source 빌드 (4개 모드 모두)
-                    _MODES = ("video", "raw", "frag", "frag_with_vlm")
+                    # Source 빌드 (5개 모드 모두)
+                    _MODES = ("video", "raw", "frag", "vlm", "frag_with_vlm")
                     sources = {}
                     try:
                         for mode in _MODES:

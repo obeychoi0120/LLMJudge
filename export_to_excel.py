@@ -21,7 +21,7 @@ def aggregate_uq_scores(input_dir):
             return
 
     metrics = ["accuracy", "completeness", "helpfulness", "total_score"]
-    modes = ["video", "raw", "frag", "frag_with_vlm"]
+    modes = ["video", "raw", "frag", "vlm", "frag_with_vlm"]
 
     results_by_video = {}
     overall_raw = {m: {met: [] for met in metrics} for m in modes}
@@ -273,7 +273,7 @@ def export_uq_details(input_dir, output_dir):
     with open(scores_path, "r", encoding="utf-8") as f:
         scores = json.load(f)
 
-    modes = ["video", "raw", "frag", "frag_with_vlm"]
+    modes = ["video", "raw", "frag", "vlm", "frag_with_vlm"]
 
     # 2. 데이터 매핑용 딕셔너리 생성
     summary_map = {}
@@ -722,7 +722,7 @@ def export_vh_response_details(input_dir, output_dir):
 
     data = load_jsonl(scores_path)
     score_keys = ["answer_relevance", "factual_precision", "response_quality"]
-    mode_order = ["video", "raw", "frag", "frag_with_vlm"]
+    mode_order = ["video", "raw", "frag", "vlm", "frag_with_vlm"]
 
     flat_rows = []
     for item in data:

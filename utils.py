@@ -645,6 +645,7 @@ def get_processed_frag_with_vlm_by_scene_idx(gs_bucket_name, content_id, start_i
 _TEXT_MODE_FETCHERS = {
     "raw":           lambda gs, cid, s, e: get_gcs_raw_fields_by_scene_idx(gs, cid, s, e),
     "frag":          lambda gs, cid, s, e: get_processed_frag_fields_by_scene_idx(gs, cid, s, e),
+    "vlm":           lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_mm_structure", s, e),
     "frag_with_vlm": lambda gs, cid, s, e: get_processed_frag_with_vlm_by_scene_idx(gs, cid, s, e),
 }
 
@@ -658,7 +659,9 @@ def _text_to_part(text):
 
 def build_mode_parts(gs_bucket_name, content_id, target_modes,
                      current_start_idx, current_end_idx,
-                     past_start_idx=None, past_end_idx=None):
+                     past_start_idx=None, past_end_idx=None,
+                     current_start_time=None, current_end_time=None,
+                     past_start_time=None, past_end_time=None):
     """target_modes에 대해 현재/과거 데이터 Part를 빌드합니다.
 
     Args:
@@ -667,6 +670,8 @@ def build_mode_parts(gs_bucket_name, content_id, target_modes,
         target_modes: 빌드할 모드 리스트 (예: ["video", "raw", "frag", "frag_with_vlm"])
         current_start_idx, current_end_idx: 현재 Scene 구간
         past_start_idx, past_end_idx: 과거 Scene 구간 (None이면 과거 없음)
+        current_start_time, current_end_time: 현재 Scene의 타임스탬프 오버라이드
+        past_start_time, past_end_time: 과거 Scene의 타임스탬프 오버라이드
 
     Returns:
         (past_parts, current_parts) 딕셔너리 튜플
@@ -678,10 +683,12 @@ def build_mode_parts(gs_bucket_name, content_id, target_modes,
     if "video" in target_modes:
         if has_past:
             past_parts["video"] = process_gcs_file_by_scene_idx(
-                gs_bucket_name, content_id, "video", past_start_idx, past_end_idx
+                gs_bucket_name, content_id, "video", past_start_idx, past_end_idx,
+                start_time_override=past_start_time, end_time_override=past_end_time
             )
         current_parts["video"] = process_gcs_file_by_scene_idx(
-            gs_bucket_name, content_id, "video", current_start_idx, current_end_idx
+            gs_bucket_name, content_id, "video", current_start_idx, current_end_idx,
+            start_time_override=current_start_time, end_time_override=current_end_time
         )
 
     for mode, fetcher in _TEXT_MODE_FETCHERS.items():
@@ -700,35 +707,40 @@ def process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time):
     blob_path = path_template.format(cid=content_id)
     file_uri = f"gs://{gs_bucket_name}/{blob_path}"
 
-    cache_key = f"{gs_bucket_name}/{content_id}/video/{int(start_time)}-{int(end_time)}"
+    cache_key = f"{gs_bucket_name}/{content_id}/video/{start_time:.3f}-{end_time:.3f}"
     if cache_key in _gcs_part_cache:
         return _gcs_part_cache[cache_key]
     part = types.Part(
         file_data=types.FileData(file_uri=file_uri, mime_type=mime_type),
         video_metadata=types.VideoMetadata(
-            start_offset=f"{int(start_time)}s",
-            end_offset=f"{int(end_time)}s",
+            start_offset=f"{start_time:.3f}s",
+            end_offset=f"{end_time:.3f}s",
         ),
     )
     _gcs_part_cache[cache_key] = part
     return part
 
 
-def process_gcs_file_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx):
+def process_gcs_file_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx, start_time_override=None, end_time_override=None):
     """scene_idx 구간 데이터 Part를 반환합니다.
 
-    - video 모드: ref JSONL에서 scene_idx로 start/end time lookup 후 VideoMetadata 클리핑
+    - video 모드: ref JSONL에서 scene_idx로 start/end time lookup 후 VideoMetadata 클리핑 (override 지정 시 우선 사용)
     - jsonl 모드: GCS에서 다운로드 후 scene_idx 구간만 추출하여 인라인 Part 반환
     """
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
 
     if mode == "video":
-        ref_scenes = load_scenes(gs_bucket_name, content_id, mode="ref")
-        start_scene = next((s for s in ref_scenes if s.get("scene_idx") == start_idx), None)
-        end_scene   = next((s for s in ref_scenes if s.get("scene_idx") == end_idx), None)
-        start_time  = float(start_scene.get("start_time", 0.0)) if start_scene else 0.0
-        end_time    = float(end_scene.get("end_time", 0.0))    if end_scene   else 0.0
+        if start_time_override is not None and end_time_override is not None:
+            start_time = start_time_override
+            end_time = end_time_override
+        else:
+            ref_scenes = load_scenes(gs_bucket_name, content_id, mode="ref")
+            start_scene = next((s for s in ref_scenes if s.get("scene_idx") == start_idx), None)
+            end_scene   = next((s for s in ref_scenes if s.get("scene_idx") == end_idx), None)
+            # ref JSONL은 "duration": "0.0 - 35.97" 형태이므로 파싱하여 사용
+            start_time = parse_duration_to_times(start_scene["duration"])[0] if start_scene and start_scene.get("duration") else 0.0
+            end_time   = parse_duration_to_times(end_scene["duration"])[1]   if end_scene   and end_scene.get("duration")   else 0.0
         return process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time)
     else:
         range_text = get_gcs_text_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx)
@@ -752,7 +764,7 @@ def _retry_api_call(fn, label="API", delay=10):
             return fn()
         except Exception as e:
             err_msg = str(e)
-            is_retryable = any(code in err_msg for code in ["429", "500", "503", "504"])
+            is_retryable = any(code in err_msg for code in ["429", "500", "503", "504", "403"])
 
             if not is_retryable:
                 print(f"      [{label} 치명적 오류] {err_msg}")
@@ -832,7 +844,7 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
                     pass
     
     # content_id → scene_idx → 정규 모드 순서(video → raw → frag → frag_with_vlm)로 정렬
-    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "frag": 2, "frag_with_vlm": 3, "kss": 4}
+    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "frag": 2, "vlm": 3, "frag_with_vlm": 4, "kss": 5}
     data_records.sort(key=lambda x: (
         x.get("content_id", ""),
         x.get("scene_idx", 0),
@@ -847,7 +859,7 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
 
     # 누락 점검: (content_id, scene_idx, mode) 3-tuple 단위
     print("\n[최종 누락분 점검]")
-    modes_to_check = expected_modes or ["video", "raw", "frag", "frag_with_vlm"]
+    modes_to_check = expected_modes or ["video", "raw", "frag", "vlm", "frag_with_vlm"]
     done_set_modes = {
         (x.get("content_id"), x.get("scene_idx"), x.get("mode"))
         for x in data_records

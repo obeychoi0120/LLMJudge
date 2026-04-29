@@ -42,6 +42,12 @@ Your description must cover the following aspects, in this order:
    - Capture the emotional tone and atmosphere (e.g., tense, celebratory, melancholic).
    - Identify any thematic elements or recurring motifs.
 
+Output Format:
+Please format your response strictly using the following Markdown headers:
+## 1. Scene & Visual Elements
+## 2. Dialogue & Factual Details
+## 3. Narrative & Emotional Context
+
 Guidelines:
 - Be precise and comprehensive. Vague summaries are unacceptable.
 - Include specific details: colors, quantities, spatial relationships, identifiable objects.
@@ -58,9 +64,9 @@ You will receive a JSON record containing:
 
 Your description must cover the following aspects, in this order:
 
-1. **Scene & Setting Inference**
+1. **Scene & Visual Elements**
    - Based on the dialogue content and on-screen text, infer what kind of scene this is (interview, cooking segment, outdoor exploration, etc.).
-   - Describe the likely setting and context as implied by the audio and text clues.
+   - Describe the likely setting and visual context as implied by the audio and text clues.
    - Do NOT fabricate specific visual details (colors, camera angles, etc.) that cannot be inferred from the text.
 
 2. **Dialogue & Factual Details**
@@ -75,6 +81,12 @@ Your description must cover the following aspects, in this order:
    - Capture the emotional tone implied by the dialogue.
    - Identify any thematic elements or recurring topics.
 
+Output Format:
+Please format your response strictly using the following Markdown headers:
+## 1. Scene & Visual Elements
+## 2. Dialogue & Factual Details
+## 3. Narrative & Emotional Context
+
 Guidelines:
 - Be precise and comprehensive. Vague summaries are unacceptable.
 - Prioritize factual accuracy — proper nouns and dialogue content are critical.
@@ -86,16 +98,17 @@ Guidelines:
 _KSD_PROMPT_FRAG = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided fragmented speech and on-screen text metadata.
 
 You will receive a JSON record containing:
-- **speech_fragments**: Alphabetically sorted word fragments extracted from ASR transcription. The original sentence order has been intentionally destroyed for copyright protection.
-- **text_fragments**: Alphabetically sorted word fragments extracted from OCR detection. The original order has been destroyed.
+- **timeline**: A timeline of shots containing:
+  - **speech_fragments**: Shuffled bigram-chunk fragments extracted from ASR. (Each chunk preserves local context, but overall order is destroyed).
+  - **text_fragments**: Shuffled bigram-chunk fragments extracted from OCR.
 
-IMPORTANT: The fragments are intentionally shuffled into a Bag-of-Words format. You must reconstruct the likely meaning by analyzing the word set as a whole, using contextual clues and common sense to infer the original sentences.
+IMPORTANT: The fragments are intentionally shuffled into a randomized bigram-chunk format. Each chunk preserves a small local context (e.g., noun+particle pairs, verb+ending pairs), but the overall sentence order is destroyed. You must reconstruct the likely meaning by analyzing the chunk set as a whole, using contextual clues and common sense to infer the original sentences.
 
 Your description must cover the following aspects, in this order:
 
-1. **Scene & Setting Inference**
+1. **Scene & Visual Elements**
    - Based on the reconstructed dialogue content and on-screen text, infer what kind of scene this is (interview, cooking segment, outdoor exploration, etc.).
-   - Describe the likely setting and context as implied by the speech fragments and text clues.
+   - Describe the likely setting and visual context as implied by the speech fragments and text clues.
    - Do NOT fabricate specific visual details (colors, camera angles, etc.) that cannot be inferred from the text.
 
 2. **Dialogue & Factual Details**
@@ -110,6 +123,12 @@ Your description must cover the following aspects, in this order:
    - Capture the emotional tone implied by the dialogue (e.g., excitement, concern, humor).
    - Identify any thematic elements or recurring topics.
 
+Output Format:
+Please format your response strictly using the following Markdown headers:
+## 1. Scene & Visual Elements
+## 2. Dialogue & Factual Details
+## 3. Narrative & Emotional Context
+
 Guidelines:
 - Be precise and comprehensive. Vague summaries are unacceptable.
 - Prioritize factual accuracy — proper nouns and dialogue content are critical.
@@ -121,33 +140,84 @@ Guidelines:
 _KSD_PROMPT_FRAG_WITH_VLM = """You are an expert video content analyst. Your task is to generate a detailed English scene description based on the provided VLM metadata and fragmented speech/on-screen text.
 
 You will receive a JSON record containing:
-- **vlm_mm_structure**: Visual metadata containing Subject, Environment, Actions, and alphabetically sorted Context keywords.
-- **timeline**: A timeline of shots, where each shot includes:
-  - **speech_fragments**: Alphabetically sorted word fragments extracted from ASR. Original order destroyed.
-  - **text_fragments**: Alphabetically sorted word fragments extracted from OCR. Original order destroyed.
+- **vlm_mm_structure**: High-level visual metadata containing Subject, Environment, Actions, and Context keywords. (Note: This is a broad summary and may omit specific details or miscount objects).
+- **timeline**: A timeline of shots containing:
+  - **speech_fragments**: Shuffled bigram-chunk fragments extracted from ASR. (Highly reliable for factual details, numbers, proper nouns, and specific actions).
+  - **text_fragments**: Shuffled bigram-chunk fragments extracted from OCR. 
 
-IMPORTANT: The speech/text fragments and Context keywords are intentionally shuffled. You must reconstruct the likely meaning by analyzing the word set as a whole, using contextual clues and common sense.
+IMPORTANT: The speech fragments are intentionally shuffled into bigram chunks. You must reconstruct the likely meaning by analyzing the chunks together. 
+
+CRITICAL HIERARCHY RULE: The speech/text fragments are FACTUALLY MORE RELIABLE than the VLM metadata. If the reconstructed speech mentions specific quantities (e.g., "groups", "hundreds"), specific actions, or details that conflict with or go beyond the VLM metadata (e.g., VLM mentions a "single" subject but speech implies many), ALWAYS prioritize the speech fragments to correct and enrich the visual description.
 
 Your description must cover the following aspects, in this order:
 
 1. **Scene & Visual Elements**
-   - Describe the setting, environment, characters, and key actions using the provided vlm_mm_structure.
-   - Expand on the basic VLM output to create a coherent narrative of what is happening visually.
+   - Use the `vlm_mm_structure` as a loose foundational sketch for the setting and environment.
+   - HEAVILY enrich and correct this visual sketch using the factual details inferred from the `speech_fragments`. Do NOT restrict the scene to only what the VLM outputs; if the speech implies a richer visual scene, describe it accordingly.
+   - Avoid hallucinating visual details that are not supported by either the VLM or the speech.
 
 2. **Dialogue & Factual Details**
    - Reconstruct the likely dialogue or narration from the shuffled speech fragments.
    - Capture every proper noun, specific numbers, and key terms you can identify.
-   - Merge the visual context with the inferred dialogue to create a comprehensive picture.
+   - Seamlessly integrate these facts into the actions and environment established in step 1.
 
 3. **Narrative & Emotional Context**
-   - Describe the narrative progression combining visual actions and reconstructed dialogue.
-   - Capture the emotional tone implied by both the visual scene and the spoken words.
+   - Describe the narrative progression, letting the reconstructed dialogue drive the core story of the scene.
+   - Capture the emotional tone implied by the dialogue and setting.
+
+Output Format:
+Please format your response strictly using the following Markdown headers:
+## 1. Scene & Visual Elements
+## 2. Dialogue & Factual Details
+## 3. Narrative & Emotional Context
 
 Guidelines:
 - Be precise and comprehensive. Vague summaries are unacceptable.
 - Write the description naturally, as if you had full knowledge of the scene.
 - Do NOT mention that you are working from fragments, transcripts, or VLM structures.
-- Focus on describing the scene as conveyed through the provided data. Do NOT add speculative context beyond proper identification."""
+- Let the factual audio clues guide your visual imagination rather than blindly trusting the VLM structure."""
+
+_KSD_PROMPT_VLM = """You are an expert video content analyst. Your task is to generate a detailed English scene description based solely on the provided VLM (Vision-Language Model) structural metadata.
+
+You will receive structured text for each scene containing:
+- **Subject**: The main subject or character identified in the scene.
+- **Environment**: The setting, background, or physical environment.
+- **Actions**: Key actions or movements being performed.
+- **Context**: Contextual keywords derived from combined visual and audio analysis.
+
+IMPORTANT: This metadata is a multimodal distillation — it was generated by analyzing BOTH visual frames AND audio/text content of the video. The Context keywords, in particular, capture topics and themes from spoken dialogue and on-screen text, not just visual elements. Treat all fields as a comprehensive summary of the scene.
+
+Your description must cover the following aspects, in this order:
+
+1. **Scene & Visual Elements**
+   - Describe the setting, environment, characters, and key actions using the provided metadata.
+   - Create a coherent narrative of the scene STRICTLY within the bounds of the provided VLM keywords. Do NOT invent specific visual details or quantities that are not present in the metadata.
+   - Use Context keywords to infer the likely topic of conversation, thematic elements, and broader scene meaning.
+
+2. **Dialogue & Factual Details**
+   - Infer likely dialogue topics or narration themes from the Context keywords and Actions.
+   - If Context keywords suggest specific proper nouns, topics, or factual information, incorporate them naturally.
+   - Use your World Knowledge to correctly identify entities suggested by the metadata, but do NOT fabricate dialogue quotes.
+
+3. **Narrative & Emotional Context**
+   - Infer the narrative progression from the Subject's Actions and contextual keywords.
+   - Capture the likely emotional tone and atmosphere (e.g., tense, exploratory, celebratory).
+   - Identify thematic elements or recurring motifs suggested by the Context keywords.
+   - Describe cause-effect relationships if inferable from the action sequence.
+
+Output Format:
+Please format your response strictly using the following Markdown headers:
+## 1. Scene & Visual Elements
+## 2. Dialogue & Factual Details
+## 3. Narrative & Emotional Context
+
+Guidelines:
+- Be precise and comprehensive. Vague summaries are unacceptable.
+- Write the description naturally, as if you had full knowledge of the scene.
+- Do NOT mention that you are working from VLM metadata, structured data, or any automated system.
+- Use the Context keywords to enrich and ground the description — they capture both visual and audio/textual information.
+- If Context keywords allow you to identify a specific person, place, or entity, use their correct known name.
+- Focus on what is observable/inferable from the provided metadata. Do NOT fabricate specific dialogue quotes or factual claims not supported by the metadata."""
 
 
 def make_ksd_gen_config(thinking_level=None):
@@ -156,6 +226,7 @@ def make_ksd_gen_config(thinking_level=None):
         "video":         make_generate_config(system_instruction=_KSD_PROMPT_VIDEO,         thinking_level=thinking_level),
         "raw":           make_generate_config(system_instruction=_KSD_PROMPT_RAW,           thinking_level=thinking_level),
         "frag":          make_generate_config(system_instruction=_KSD_PROMPT_FRAG,          thinking_level=thinking_level),
+        "vlm":           make_generate_config(system_instruction=_KSD_PROMPT_VLM,           thinking_level=thinking_level),
         "frag_with_vlm": make_generate_config(system_instruction=_KSD_PROMPT_FRAG_WITH_VLM, thinking_level=thinking_level),
     }
 
@@ -191,6 +262,16 @@ def generate_ksd_mode(client, model_name, config, mode, data_part, end_time):
             "order has been destroyed — use context and common sense to reconstruct meaning. "
             "Do not fabricate visual details beyond what the text implies.",
         ]
+    elif mode == "vlm":
+        contents = [
+            "--- [Current Scene Metadata (VLM Structure Only)] ---",
+            data_part,
+            "--- Request ---",
+            "Based solely on the provided VLM structural metadata above, "
+            "generate a detailed English description of the scene. "
+            "Expand the structured data into a natural, vivid narrative "
+            "covering visual elements, narrative context, and emotional atmosphere.",
+        ]
     elif mode == "frag_with_vlm":
         contents = [
             "--- [Current Scene Metadata (VLM Structure & Fragments)] ---",
@@ -223,8 +304,8 @@ def main():
                         help="Keypoint Scene 목록 JSONL 경로 (identify_keyscene.py 출력)")
     parser.add_argument("--output_file", default="assets/keyscene_description.jsonl",
                         help="KeyScene Description 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video", "raw", "frag", "frag_with_vlm"],
-                        choices=["video", "raw", "frag", "frag_with_vlm"],
+    parser.add_argument("--modes", nargs="+", default=["video", "raw", "frag", "vlm", "frag_with_vlm"],
+                        choices=["video", "raw", "frag", "vlm", "frag_with_vlm"],
                         help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
@@ -253,7 +334,7 @@ def main():
             done_modes_by_scene.add((c_id, s_idx, mode))
 
     # 정규 모드 순서: JSONL에 쓰는 순서를 보장합니다.
-    _MODE_ORDER = ["video", "raw", "frag", "frag_with_vlm"]
+    _MODE_ORDER = ["video", "raw", "frag", "vlm", "frag_with_vlm"]
     target_modes = sorted(args.modes, key=lambda m: _MODE_ORDER.index(m) if m in _MODE_ORDER else 99)
 
     print_pipeline_banner("KeyScene Description 생성 파이프라인을 시작합니다.")
@@ -299,13 +380,15 @@ def main():
                 start_time = float(kp.get("start_time", 0.0))
                 end_time   = float(kp.get("end_time",   0.0))
 
-                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | "
+                print(f"[{real_idx+1}/{len(keypoints)}] Scene {scene_idx} | "
                       f"Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
 
                 # 모드별 데이터 사전 로드
                 _, data_parts = build_mode_parts(
                     args.gs_bucket_name, content_id, missing_modes,
                     scene_idx, scene_idx,
+                    current_start_time=start_time,
+                    current_end_time=end_time
                 )
 
                 def _run_mode(mode):

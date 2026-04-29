@@ -7,7 +7,7 @@ from utils import (
     get_common_argparser,
     make_generate_config,
     process_gcs_file, process_gcs_file_by_scene_idx, check_gcs_files_exist,
-    parse_json_response,
+    parse_json_response, parse_duration_to_times,
     _retry_api_call, load_scenes,
     ensure_output_dir, load_processed_content_ids,
     preload_content_metadata, init_pipeline, append_jsonl,
@@ -141,13 +141,23 @@ def split_scenes_into_segments(ref_scenes, num_segments=3):
     return segments
 
 
+def _get_scene_times(scene):
+    """Scene 딕셔너리에서 (start_time, end_time)을 추출합니다.
+    start_time/end_time 필드가 있으면 직접 사용하고, 없으면 duration 문자열을 파싱합니다."""
+    if "start_time" in scene and "end_time" in scene:
+        return float(scene["start_time"]), float(scene["end_time"])
+    duration = scene.get("duration", "")
+    if isinstance(duration, str) and " - " in duration:
+        return parse_duration_to_times(duration)
+    return 0.0, 0.0
+
+
 def build_scene_list_text(scenes):
     """Scene 리스트를 프롬프트용 텍스트로 변환합니다."""
     lines = []
     for s in scenes:
         idx = s.get("scene_idx", "?")
-        st = s.get("start_time", 0.0)
-        et = s.get("end_time", 0.0)
+        st, et = _get_scene_times(s)
         sp = s.get("speech", "")
         lines.append(f"- Scene {idx}: {st:.1f}s ~ {et:.1f}s | {sp}")
     return "\n".join(lines)
@@ -260,10 +270,11 @@ def resolve_keypoints(raw_list, ref_scenes):
     for s_idx, rk in merged_map.items():
         target = next((s for s in ref_scenes if s.get("scene_idx") == s_idx), None)
         if target:
+            st, et = _get_scene_times(target)
             keypoints.append({
                 "scene_idx": s_idx,
-                "start_time": target["start_time"],
-                "end_time": target["end_time"],
+                "start_time": st,
+                "end_time": et,
                 "rationale": rk.get("rationale", ""),
                 "category": rk.get("category", ""),
                 "impact": rk.get("impact", "")
@@ -334,18 +345,19 @@ def main():
             # ======================================================
             if total_scenes <= 8:
                 print(f"  -> Scene 수가 8개 이하이므로 전체 Scene을 Keypoint로 자동 사용합니다.")
-                keypoints = [
-                    {
+                keypoints = []
+                for s in ref_scenes:
+                    if s.get("scene_idx") is None:
+                        continue
+                    st, et = _get_scene_times(s)
+                    keypoints.append({
                         "scene_idx": s.get("scene_idx"),
-                        "start_time": s.get("start_time", 0.0),
-                        "end_time": s.get("end_time", 0.0),
+                        "start_time": st,
+                        "end_time": et,
                         "rationale": "",
                         "category": "",
                         "impact": ""
-                    }
-                    for s in ref_scenes
-                    if s.get("scene_idx") is not None
-                ]
+                    })
 
             # ======================================================
             # 분할 진행 (경로 B, C 공통 분할 및 Stage 1 수행)
@@ -362,8 +374,8 @@ def main():
                 for si, seg in enumerate(segments):
                     first_idx = seg[0].get("scene_idx", "?")
                     last_idx = seg[-1].get("scene_idx", "?")
-                    seg_start = seg[0].get("start_time", 0.0)
-                    seg_end = seg[-1].get("end_time", 0.0)
+                    seg_start, _ = _get_scene_times(seg[0])
+                    _, seg_end = _get_scene_times(seg[-1])
                     print(f"     세그먼트 {si+1}: Scene {first_idx}~{last_idx} "
                           f"({seg_start:.1f}s ~ {seg_end:.1f}s, {len(seg)}개)")
 
@@ -374,8 +386,8 @@ def main():
                     """단일 세그먼트에 대한 Candidate 생성 작업 (스레드에서 실행)."""
                     si, seg = si_seg
                     seg_label = f"세그먼트 {si+1}/{num_segments}"
-                    seg_start_time = seg[0].get("start_time", 0.0)
-                    seg_end_time = seg[-1].get("end_time", 0.0)
+                    seg_start_time, _ = _get_scene_times(seg[0])
+                    _, seg_end_time = _get_scene_times(seg[-1])
                     seg_scene_text = build_scene_list_text(seg)
 
                     print(f"  [{seg_label}] 시작 - "
