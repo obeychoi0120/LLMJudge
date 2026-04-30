@@ -143,11 +143,11 @@ def split_scenes_into_segments(ref_scenes, num_segments=3):
 
 def _get_scene_times(scene):
     """Scene 딕셔너리에서 (start_time, end_time)을 추출합니다.
-    start_time/end_time 필드가 있으면 직접 사용하고, 없으면 duration 문자열을 파싱합니다."""
+    start_time/end_time 필드가 있으면 직접 사용하고, 없으면 duration을 파싱합니다."""
     if "start_time" in scene and "end_time" in scene:
         return float(scene["start_time"]), float(scene["end_time"])
-    duration = scene.get("duration", "")
-    if isinstance(duration, str) and " - " in duration:
+    duration = scene.get("duration")
+    if duration:
         return parse_duration_to_times(duration)
     return 0.0, 0.0
 

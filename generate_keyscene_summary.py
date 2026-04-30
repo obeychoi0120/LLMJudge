@@ -156,6 +156,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary 별도 저장 경로")
     parser.add_argument("--watch", action="store_true", help="입력 파일에 새로운 데이터가 추가되는지 주기적으로 감지하고 계속 처리합니다.")
+    parser.add_argument("--parallel", type=int, default=4, help="동시에 병렬 처리할 비디오(Content) 수 (기본값: 4)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -324,8 +325,7 @@ def main():
                         summary_texts_by_scene[scene_key] = summary_record
 
                 # print(f"\n{summary_text}")
-                print(f"\n[{content_id}] -> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
-                print(f"------------------------------------------------------")
+                print(f"[{content_id}] -> [Summary] 생성 완료 ({len(summary_text)}자, {summary_elapsed:.2f}초)")
 
             except Exception as e:
                 print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")
@@ -333,9 +333,9 @@ def main():
 
         with file_lock:
             done_count = len({s_idx for (c_id, s_idx) in summary_pairs if c_id == content_id})
-        print(f"\n[OK] '{content_id}' - {done_count}개 Scene 완료")
+        print(f"[OK] '{content_id}' - {done_count}개 Scene 완료")
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel)
     last_processed_ids = set()
 
     try:
@@ -368,7 +368,7 @@ def main():
 
             if not args.watch:
                 # 결과 파일 정렬 및 누락 점검 (utils.py 공통 함수 사용)
-                sort_and_validate_jsonl(args.keyscene_summary_file, keypoints_by_content)
+                sort_and_validate_jsonl(args.keyscene_summary_file, keypoints_by_content, expected_modes=[])
                 break
             
             # Watch 모드인 경우 주기적으로 확인

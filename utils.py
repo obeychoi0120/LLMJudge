@@ -279,21 +279,20 @@ def retry_parse_json(fn, label="API", max_retries=3):
 # ============================================================
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
-    """GCS 버킷에 필수 파일 3종(video + processed + ref jsonl)이 존재하는지 확인합니다."""
+    """GCS 버킷에 필수 파일 2종(video + final jsonl)이 존재하는지 확인합니다."""
     client = storage.Client()
     bucket = client.bucket(gs_bucket_name)
 
     required_files = [
         f"video_540p/{content_id}_540p.mp4",
-        f"jsonl/{content_id}_raw.jsonl",
-        f"jsonl/{content_id}_processed.jsonl",
+        f"jsonl/{content_id}_final.jsonl",
         f"jsonl/{content_id}_ref.jsonl",
     ]
 
     missing = [f for f in required_files if not bucket.blob(f).exists()]
 
     if not missing:
-        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터 3종이 모두 GCS에 존재합니다.")
+        print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터가 모두 GCS에 존재합니다.")
         return True
     else:
         print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}")
@@ -302,9 +301,8 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 
 _GCS_MODE_MAP = {
     "video": ("video_540p/{cid}_540p.mp4", "video/mp4"),
-    "raw": ("jsonl/{cid}_raw.jsonl", "text/plain"),
-    "processed": ("jsonl/{cid}_processed.jsonl", "text/plain"),
-    "ref": ("jsonl/{cid}_ref.jsonl", "text/plain"),
+    "final": ("jsonl/{cid}_final.jsonl", "text/plain"),
+    "ref":   ("jsonl/{cid}_ref.jsonl", "text/plain"),
 }
 
 
@@ -337,7 +335,7 @@ def clear_gcs_cache():
 
 def preload_content_metadata(gs_bucket_name, content_id):
     """content_id에 해당하는 메타데이터 JSONL을 한 번에 캐시에 로드합니다."""
-    modes = ["raw", "processed", "ref"]
+    modes = ["final", "ref"]
     to_download = []
     for mode in modes:
         path_template, _ = _GCS_MODE_MAP[mode]
@@ -442,7 +440,7 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
     - speech: 모든 Shot의 raw_speech를 시간 순서대로 이어 붙인 통합 텍스트
     - on_screen_text: 모든 Shot의 raw_ocr에서 중복 제거한 고유 텍스트 목록
     """
-    path_template, _ = _GCS_MODE_MAP["raw"]
+    path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
 
@@ -494,9 +492,16 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
 # Processed JSONL Helpers (저작권 안전 파편화 데이터)
 # ============================================================
 
-def parse_duration_to_times(duration_str):
-    """'0.0 - 35.97' 형태의 duration 문자열을 (start_time, end_time) float 튜플로 파싱합니다."""
-    parts = duration_str.split(" - ")
+def parse_duration_to_times(duration):
+    """duration 값을 (start_time, end_time) float 튜플로 파싱합니다.
+    
+    지원 형식:
+    - 리스트: [0.0, 35.97]
+    - 문자열: '0.0 - 35.97'
+    """
+    if isinstance(duration, (list, tuple)) and len(duration) >= 2:
+        return float(duration[0]), float(duration[1])
+    parts = str(duration).split(" - ")
     return float(parts[0]), float(parts[1])
 
 
@@ -532,7 +537,7 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
     Args:
         vlm_key: 'vlm_img_structure' 또는 'vlm_mm_structure'
     """
-    path_template, _ = _GCS_MODE_MAP["processed"]
+    path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
     lines = []
@@ -565,7 +570,7 @@ def get_processed_frag_fields_by_scene_idx(gs_bucket_name, content_id, start_idx
     timeline 내의 각 shot에는 speech_fragments와 text_fragments만 포함됩니다.
     'frag' 모드 Source로 사용됩니다.
     """
-    path_template, _ = _GCS_MODE_MAP["processed"]
+    path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
 
@@ -605,7 +610,7 @@ def get_processed_frag_with_vlm_by_scene_idx(gs_bucket_name, content_id, start_i
 
     'frag_with_vlm' 모드 Source로 사용됩니다.
     """
-    path_template, _ = _GCS_MODE_MAP["processed"]
+    path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
 
@@ -642,37 +647,17 @@ def get_processed_frag_with_vlm_by_scene_idx(gs_bucket_name, content_id, start_i
 
 
 def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
-    """*_raw.jsonl에서 raw_asr/raw_ocr + *_processed.jsonl에서 vlm_mm_description을
+    """*_final.jsonl에서 raw_asr/raw_ocr과 vlm_mm_description을
     Scene 단위로 결합하여 정제된 JSON Lines 텍스트로 반환합니다.
 
     'raw_with_mmvlm' 모드 Source로 사용됩니다.
     """
-    # raw 데이터 로드
-    raw_path_template, _ = _GCS_MODE_MAP["raw"]
-    raw_blob_path = raw_path_template.format(cid=content_id)
-    raw_jsonl_text = download_gcs_text(gs_bucket_name, raw_blob_path)
+    path_template, _ = _GCS_MODE_MAP["final"]
+    blob_path = path_template.format(cid=content_id)
+    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
 
-    # processed 데이터 로드 (vlm_mm_description 추출용)
-    proc_path_template, _ = _GCS_MODE_MAP["processed"]
-    proc_blob_path = proc_path_template.format(cid=content_id)
-    proc_jsonl_text = download_gcs_text(gs_bucket_name, proc_blob_path)
-
-    # processed에서 scene_idx → vlm_mm_description 매핑 생성
-    mm_desc_map = {}
-    for line in proc_jsonl_text.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            scene = json.loads(line)
-            s_idx = scene.get("scene_idx")
-            if s_idx is not None and start_idx <= s_idx <= end_idx:
-                mm_desc_map[s_idx] = scene.get("vlm_mm_description", "")
-        except json.JSONDecodeError:
-            continue
-
-    # raw 데이터에서 raw_asr/raw_ocr 추출 + vlm_mm_description 결합
     lines = []
-    for line in raw_jsonl_text.strip().split("\n"):
+    for line in jsonl_text.strip().split("\n"):
         if not line.strip():
             continue
         try:
@@ -710,8 +695,8 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
             if ocr_list:
                 filtered["on_screen_text"] = ocr_list
 
-            # vlm_mm_description 결합
-            mm_desc = mm_desc_map.get(s_idx, "")
+            # vlm_mm_description (같은 레코드에서 추출)
+            mm_desc = scene.get("vlm_mm_description", "")
             if mm_desc:
                 filtered["vlm_mm_description"] = mm_desc
 
@@ -943,29 +928,51 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     print(f"-> 정렬 완료 ({len(data_records)}개 항목)")
 
-    # 누락 점검: (content_id, scene_idx, mode) 3-tuple 단위
+    # 누락 점검
     print("\n[최종 누락분 점검]")
-    modes_to_check = expected_modes or ["video", "raw", "frag", "vlm", "frag_with_vlm"]
-    done_set_modes = {
-        (x.get("content_id"), x.get("scene_idx"), x.get("mode"))
-        for x in data_records
-    }
-    
-    missing_scenes = []
-    for c_id, kps in keypoints_by_content.items():
-        for kp in kps:
-            s_idx = kp.get("scene_idx", kps.index(kp))
-            for m in modes_to_check:
-                if (c_id, s_idx, m) not in done_set_modes:
-                    missing_scenes.append((c_id, s_idx, m))
-    
-    if missing_scenes:
-        print(f"-> 총 {len(missing_scenes)}개의 (Scene, Mode) 처리가 누락되었습니다.")
-        for c_id, s_idx, m in missing_scenes:
-            print(f"    - ({c_id}, scene={s_idx}, mode={m})")
+
+    if expected_modes is not None and len(expected_modes) == 0:
+        # 모드 없는 파일 (KSS 등): (content_id, scene_idx) 단위로만 점검
+        done_set = {
+            (x.get("content_id"), x.get("scene_idx"))
+            for x in data_records
+        }
+        missing_scenes = []
+        for c_id, kps in keypoints_by_content.items():
+            for kp in kps:
+                s_idx = kp.get("scene_idx", kps.index(kp))
+                if (c_id, s_idx) not in done_set:
+                    missing_scenes.append((c_id, s_idx, None))
+
+        if missing_scenes:
+            print(f"-> 총 {len(missing_scenes)}개의 Scene 처리가 누락되었습니다.")
+            for c_id, s_idx, _ in missing_scenes:
+                print(f"    - ({c_id}, scene={s_idx})")
+        else:
+            print("-> 모든 Scene이 누락 없이 정상적으로 생성되었습니다.")
     else:
-        print("-> 모든 Scene/Mode가 누락 없이 정상적으로 생성되었습니다.")
-    print("="*50 + "\n")
+        # 모드 기반 파일 (KSD, VH 등): (content_id, scene_idx, mode) 3-tuple 단위
+        modes_to_check = expected_modes or ["video", "raw", "raw_with_mmvlm", "imgvlm"]
+        done_set_modes = {
+            (x.get("content_id"), x.get("scene_idx"), x.get("mode"))
+            for x in data_records
+        }
+
+        missing_scenes = []
+        for c_id, kps in keypoints_by_content.items():
+            for kp in kps:
+                s_idx = kp.get("scene_idx", kps.index(kp))
+                for m in modes_to_check:
+                    if (c_id, s_idx, m) not in done_set_modes:
+                        missing_scenes.append((c_id, s_idx, m))
+
+        if missing_scenes:
+            print(f"-> 총 {len(missing_scenes)}개의 (Scene, Mode) 처리가 누락되었습니다.")
+            for c_id, s_idx, m in missing_scenes:
+                print(f"    - ({c_id}, scene={s_idx}, mode={m})")
+        else:
+            print("-> 모든 Scene/Mode가 누락 없이 정상적으로 생성되었습니다.")
+    print("=" * 50 + "\n")
     
     return missing_scenes, data_records
 

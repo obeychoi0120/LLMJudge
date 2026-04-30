@@ -10,6 +10,7 @@ from utils import (
     ensure_output_dir,
     preload_content_metadata,
     build_mode_parts,
+    load_scenes, parse_duration_to_times,
     init_pipeline, load_jsonl, append_jsonl,
     sort_and_validate_jsonl,
     load_keypoints_by_content, check_input_file,
@@ -436,6 +437,13 @@ def main():
                 start_time = float(kp.get("start_time", 0.0))
                 end_time   = float(kp.get("end_time",   0.0))
 
+                # start_time/end_time이 둘 다 0인 경우 ref에서 재조회 (이전 버그 데이터 대응)
+                if start_time == 0.0 and end_time == 0.0 and scene_idx > 0:
+                    ref_scenes = load_scenes(args.gs_bucket_name, content_id, mode="ref")
+                    ref_scene = next((s for s in ref_scenes if s.get("scene_idx") == scene_idx), None)
+                    if ref_scene and ref_scene.get("duration"):
+                        start_time, end_time = parse_duration_to_times(ref_scene["duration"])
+
                 print(f"[{real_idx+1}/{len(keypoints)}] Scene {scene_idx} | "
                       f"Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
 
@@ -474,13 +482,12 @@ def main():
                             with file_lock:
                                 append_jsonl(args.output_file, record)
                                 done_modes_by_scene.add((content_id, scene_idx, mode))
-
-                            print(f"  -> [{mode}] 완료 (~{len(desc_text.split())}단어, {elapsed:.2f}초)")
+                            if mode in ("video", "raw"):
+                                print(f"  -> [{mode}] 완료 (~{len(desc_text.split())}단어, {elapsed:.2f}초)")
                             # raw_with_mmvlm/imgvlm 모드는 실제 내용도 터미널에 출력
                             if mode in ("raw_with_mmvlm", "imgvlm"):
                                 print(f"\n--- [{mode}] Description ---")
                                 print(desc_text)
-                                print(f"--- end [{mode}] ---\n")
                     finally:
                         executor.shutdown(wait=False, cancel_futures=True)
 

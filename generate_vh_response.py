@@ -270,7 +270,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         content_id: 콘텐츠 ID
         scene_idx: 현재 KeyScene의 scene_idx
         keypoints: 해당 content_id의 전체 keypoint 목록 (list of dict)
-        mode: 'video' | 'raw' | 'frag' | 'frag_with_vlm'
+        mode: 'video' | 'raw' | 'imgvlm' | 'raw_with_mmvlm' | 'frag' | 'frag_with_vlm'
         max_past_scenes: None이면 Scene 0부터 전체, 정수이면 현재 KeyScene 기준 최근 N개 Scene만 사용
 
     Returns:
@@ -341,6 +341,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
 
 def _generate_for_mode(client, model_name, gen_configs, source, mode, query, scene_idx):
     """단일 모드에 대해 Response를 생성합니다."""
+    start_time = time.time()
     try:
         time.sleep(1)
 
@@ -377,11 +378,13 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
             ).text,
             label=f"VH Response [{mode}] (Scene {scene_idx})",
         )
-        return mode, answer
+        elapsed = time.time() - start_time
+        return mode, answer, elapsed
 
     except Exception as e:
         print(f"  [ERROR] [{mode}] 생성 실패 (Scene {scene_idx}): {e}")
-        return mode, f"Error: {str(e)}"
+        elapsed = time.time() - start_time
+        return mode, f"Error: {str(e)}", elapsed
 
 
 # ============================================================
@@ -526,6 +529,7 @@ def main():
 
                     # 병렬 Response 생성
                     answers = {}
+                    elapsed_times = {}
                     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
                         futures = {
                             executor.submit(
@@ -536,15 +540,28 @@ def main():
                             for mode in _MODES
                         }
                         for future in concurrent.futures.as_completed(futures):
-                            mode, answer = future.result()
+                            mode, answer, elapsed = future.result()
                             answers[mode] = answer
+                            elapsed_times[mode] = elapsed
                             status = "OK" if not answer.startswith("Error") else "ERROR"
-                            print(f"    [{mode}] {status}")
-                            # raw_with_mmvlm/imgvlm 모드는 실제 내용도 터미널에 출력
-                            if mode in ("raw_with_mmvlm", "imgvlm") and status == "OK":
-                                print(f"\n--- [{mode}] Response ---")
-                                print(answer)
-                                print(f"--- end [{mode}] ---\n")
+                            
+                            # raw_with_mmvlm, imgvlm은 나오는 대로 즉시 출력
+                            if mode in ("raw_with_mmvlm", "imgvlm"):
+                                if status == "OK":
+                                    length_info = len(answer)
+                                    print(f"\n--- [{mode}] Response ({elapsed:.1f}s, {length_info}자) ---")
+                                    print(answer)
+                                else:
+                                    print(f"    [{mode}] {status} ({elapsed:.1f}s)")
+
+                    # 나머지 모드(raw, video)는 다 끝난 후 출력
+                    for mode in ("raw", "video"):
+                        if mode in answers:
+                            answer = answers[mode]
+                            elapsed = elapsed_times.get(mode, 0.0)
+                            status = "OK" if not answer.startswith("Error") else "ERROR"
+                            length_info = f", {len(answer)}자" if status == "OK" else ""
+                            print(f"    [{mode}] {status} ({elapsed:.1f}s{length_info})")
 
                     # 저장
                     record = {
