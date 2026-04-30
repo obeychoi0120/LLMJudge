@@ -458,10 +458,10 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
 
             timeline = scene.get("timeline", [])
 
-            # Shot별 raw_speech를 시간 순서대로 concat
+            # Shot별 raw_asr를 시간 순서대로 concat
             speech_parts = []
             for shot in timeline:
-                text = (shot.get("raw_speech") or "").strip()
+                text = (shot.get("raw_asr") or "").strip()
                 if text:
                     speech_parts.append(text)
             speech = " ".join(speech_parts)
@@ -543,8 +543,12 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
             scene = json.loads(line)
             s_idx = scene.get("scene_idx")
             if s_idx is not None and start_idx <= s_idx <= end_idx:
-                vlm_struct = scene.get(vlm_key, {})
-                desc = format_vlm_structure_as_text(vlm_struct)
+                vlm_data = scene.get(vlm_key, {})
+                if isinstance(vlm_data, str):
+                    desc = vlm_data
+                else:
+                    desc = format_vlm_structure_as_text(vlm_data)
+                
                 if desc:
                     lines.append(f"[Scene {s_idx}]\n{desc}")
         except json.JSONDecodeError:
@@ -581,8 +585,8 @@ def get_processed_frag_fields_by_scene_idx(gs_bucket_name, content_id, start_idx
                 filtered_timeline.append({
                     "shot_id": shot.get("shot_id"),
                     "time": shot.get("time", ""),
-                    "speech_fragments": shot.get("speech_fragments", []),
-                    "text_fragments": shot.get("text_fragments", []),
+                    "frag_asr": shot.get("frag_asr", []),
+                    "frag_ocr": shot.get("frag_ocr", []),
                 })
             filtered = {
                 "scene_idx": s_idx,
@@ -621,16 +625,96 @@ def get_processed_frag_with_vlm_by_scene_idx(gs_bucket_name, content_id, start_i
                 filtered_timeline.append({
                     "shot_id": shot.get("shot_id"),
                     "time": shot.get("time", ""),
-                    "speech_fragments": shot.get("speech_fragments", []),
-                    "text_fragments": shot.get("text_fragments", []),
+                    "frag_asr": shot.get("frag_asr", []),
+                    "frag_ocr": shot.get("frag_ocr", []),
                 })
             
             filtered = {
                 "scene_idx": s_idx,
                 "duration": scene.get("duration", ""),
-                "vlm_mm_structure": scene.get("vlm_mm_structure", {}),
+                "vlm_mm_description": scene.get("vlm_mm_description", ""),
                 "timeline": filtered_timeline,
             }
+            lines.append(json.dumps(filtered, ensure_ascii=False))
+        except json.JSONDecodeError:
+            continue
+    return "\n".join(lines)
+
+
+def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
+    """*_raw.jsonl에서 raw_asr/raw_ocr + *_processed.jsonl에서 vlm_mm_description을
+    Scene 단위로 결합하여 정제된 JSON Lines 텍스트로 반환합니다.
+
+    'raw_with_mmvlm' 모드 Source로 사용됩니다.
+    """
+    # raw 데이터 로드
+    raw_path_template, _ = _GCS_MODE_MAP["raw"]
+    raw_blob_path = raw_path_template.format(cid=content_id)
+    raw_jsonl_text = download_gcs_text(gs_bucket_name, raw_blob_path)
+
+    # processed 데이터 로드 (vlm_mm_description 추출용)
+    proc_path_template, _ = _GCS_MODE_MAP["processed"]
+    proc_blob_path = proc_path_template.format(cid=content_id)
+    proc_jsonl_text = download_gcs_text(gs_bucket_name, proc_blob_path)
+
+    # processed에서 scene_idx → vlm_mm_description 매핑 생성
+    mm_desc_map = {}
+    for line in proc_jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            s_idx = scene.get("scene_idx")
+            if s_idx is not None and start_idx <= s_idx <= end_idx:
+                mm_desc_map[s_idx] = scene.get("vlm_mm_description", "")
+        except json.JSONDecodeError:
+            continue
+
+    # raw 데이터에서 raw_asr/raw_ocr 추출 + vlm_mm_description 결합
+    lines = []
+    for line in raw_jsonl_text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            scene = json.loads(line)
+            s_idx = scene.get("scene_idx")
+            if s_idx is None or not (start_idx <= s_idx <= end_idx):
+                continue
+
+            timeline = scene.get("timeline", [])
+
+            # Shot별 raw_asr concat
+            speech_parts = []
+            for shot in timeline:
+                text = (shot.get("raw_asr") or "").strip()
+                if text:
+                    speech_parts.append(text)
+            speech = " ".join(speech_parts)
+
+            # Shot별 raw_ocr 중복 제거
+            seen_ocr = set()
+            ocr_list = []
+            for shot in timeline:
+                raw_ocr = (shot.get("raw_ocr") or "").strip()
+                if not raw_ocr:
+                    continue
+                for item in raw_ocr.split(","):
+                    item = item.strip()
+                    if item and item not in seen_ocr:
+                        seen_ocr.add(item)
+                        ocr_list.append(item)
+
+            filtered = {"scene_idx": s_idx, "duration": scene.get("duration", "")}
+            if speech:
+                filtered["speech"] = speech
+            if ocr_list:
+                filtered["on_screen_text"] = ocr_list
+
+            # vlm_mm_description 결합
+            mm_desc = mm_desc_map.get(s_idx, "")
+            if mm_desc:
+                filtered["vlm_mm_description"] = mm_desc
+
             lines.append(json.dumps(filtered, ensure_ascii=False))
         except json.JSONDecodeError:
             continue
@@ -643,10 +727,12 @@ def get_processed_frag_with_vlm_by_scene_idx(gs_bucket_name, content_id, start_i
 
 # 텍스트 모드별 fetch 함수 매핑
 _TEXT_MODE_FETCHERS = {
-    "raw":           lambda gs, cid, s, e: get_gcs_raw_fields_by_scene_idx(gs, cid, s, e),
-    "frag":          lambda gs, cid, s, e: get_processed_frag_fields_by_scene_idx(gs, cid, s, e),
-    "vlm":           lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_mm_structure", s, e),
-    "frag_with_vlm": lambda gs, cid, s, e: get_processed_frag_with_vlm_by_scene_idx(gs, cid, s, e),
+    "raw":              lambda gs, cid, s, e: get_gcs_raw_fields_by_scene_idx(gs, cid, s, e),
+    "frag":             lambda gs, cid, s, e: get_processed_frag_fields_by_scene_idx(gs, cid, s, e),
+    "vlm":              lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_mm_description", s, e),
+    "frag_with_vlm":    lambda gs, cid, s, e: get_processed_frag_with_vlm_by_scene_idx(gs, cid, s, e),
+    "imgvlm":           lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure", s, e),
+    "raw_with_mmvlm":   lambda gs, cid, s, e: get_gcs_raw_with_mmvlm_by_scene_idx(gs, cid, s, e),
 }
 
 
@@ -844,7 +930,7 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
                     pass
     
     # content_id → scene_idx → 정규 모드 순서(video → raw → frag → frag_with_vlm)로 정렬
-    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "frag": 2, "vlm": 3, "frag_with_vlm": 4, "kss": 5}
+    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm": 3, "frag": 4, "vlm": 5, "frag_with_vlm": 6, "kss": 7}
     data_records.sort(key=lambda x: (
         x.get("content_id", ""),
         x.get("scene_idx", 0),

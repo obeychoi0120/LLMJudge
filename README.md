@@ -61,9 +61,9 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 |------|--------|------|:---:|
 | `video` | `*_540p.mp4` | GCS 비디오 클립 (VideoMetadata 클리핑) | N/A |
 | `raw` | `*_raw.jsonl` | Shot별 ASR/OCR을 Scene 단위로 병합 (speech concat + OCR dedup) | ⚠️ 원문 |
-| `frag_with_vlm` | `*_processed.jsonl` | VLM 구조화 데이터 + 2어절 셔플 파편 | ✅ 안전 |
-| `vlm` | `*_processed.jsonl` | VLM 구조화 메타데이터만 (Subject/Environment/Actions/Context) | ✅ 완전 안전 |
-| `frag` | `*_processed.jsonl` | 2어절 셔플 파편만 (speech_fragments + text_fragments) | ✅ 안전 |
+| `frag_with_vlm` | `*_processed.jsonl` | VLM 설명 데이터 + 2어절 셔플 파편 | ✅ 안전 |
+| `vlm` | `*_processed.jsonl` | VLM 설명/구조화 메타데이터만 (MM: Description, Image: Structure) | ✅ 완전 안전 |
+| `frag` | `*_processed.jsonl` | 2어절 셔플 파편만 (frag_asr + frag_ocr) | ✅ 안전 |
 
 정규 순서: `video → raw → frag → vlm → frag_with_vlm` (JSONL 쓰기 및 콘솔 출력)
 
@@ -80,7 +80,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 }
 ```
 
-- `speech`: 모든 Shot의 `raw_speech`를 시간 순서대로 이어 붙인 통합 텍스트
+- `speech`: 모든 Shot의 `raw_asr`를 시간 순서대로 이어 붙인 통합 텍스트
 - `on_screen_text`: 모든 Shot의 `raw_ocr`에서 중복 제거한 고유 텍스트 목록
 
 ---

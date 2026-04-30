@@ -722,7 +722,7 @@ def export_vh_response_details(input_dir, output_dir):
 
     data = load_jsonl(scores_path)
     score_keys = ["answer_relevance", "factual_precision", "response_quality"]
-    mode_order = ["video", "raw", "frag", "vlm", "frag_with_vlm"]
+    mode_order = ["video", "raw", "raw_with_mmvlm", "imgvlm", "frag", "vlm", "frag_with_vlm"]
 
     flat_rows = []
     for item in data:

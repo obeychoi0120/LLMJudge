@@ -134,7 +134,7 @@ def main():
 
     file_write_lock = threading.Lock()
     _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
-    _MODE_ORDER = ["video", "raw", "frag", "vlm", "frag_with_vlm"]
+    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm", "frag", "vlm", "frag_with_vlm"]
 
     if not os.path.exists(args.answers_file) and not args.watch:
         print(f"[Info] {args.answers_file} 파일이 존재하지 않습니다. 평가를 건너뜁니다.")

@@ -66,8 +66,8 @@ _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
 _VOICE_HINT_PROMPT_FRAG = _VOICE_HINT_BASE + """
 [입력 형식 설명]
 당신에게는 파편화된 음성 인식(ASR) 및 화면 글씨(OCR) 텍스트가 제공됩니다.
-- speech_fragments: 원문 순서가 파괴되어 랜덤으로 뒤섞인 2어절 묶음 파편
-- text_fragments: 원문 순서가 파괴된 2어절 묶음 파편
+- frag_asr: 원문 순서가 파괴되어 랜덤으로 뒤섞인 2어절 묶음 파편
+- frag_ocr: 원문 순서가 파괴된 2어절 묶음 파편
 
 [사고 과정 (Chain-of-Thought) 가이드]
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
@@ -80,8 +80,8 @@ _VOICE_HINT_PROMPT_FRAG = _VOICE_HINT_BASE + """
 _VOICE_HINT_PROMPT_FRAG_WITH_VLM = _VOICE_HINT_BASE + """
 [입력 형식 설명]
 당신에게는 VLM 구조화 데이터와 파편화된 ASR/OCR 텍스트가 종합되어 제공됩니다.
-- vlm_mm_structure: Subject/Environment/Actions 구조화 정보 및 Context 문맥 키워드
-- timeline 내 speech_fragments/text_fragments: 원문 순서가 파괴된 2어절 묶음 파편
+- vlm_mm_description: 시각·음성을 종합하여 장면의 상황을 자연어 문장으로 서술한 정보
+- timeline 내 frag_asr/frag_ocr: 원문 순서가 파괴된 2어절 묶음 파편
 
 [사고 과정 (Chain-of-Thought) 가이드]
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
@@ -91,20 +91,31 @@ _VOICE_HINT_PROMPT_FRAG_WITH_VLM = _VOICE_HINT_BASE + """
 - 4단계 (Hook 및 질문 기획): 종합하여 유추한 현재 장면의 새 단서에 집중하여 질문 기획.
 """
 
-_VOICE_HINT_PROMPT_VLM = _VOICE_HINT_BASE + """
+_VOICE_HINT_PROMPT_IMGVLM = _VOICE_HINT_BASE + """
 [입력 형식 설명]
-당신에게는 소형 VLM이 시각·음성을 종합하여 분석한 구조화된 데이터만 제공됩니다.
-- vlm_mm_structure: Subject(주체), Environment(환경), Actions(행동), Context(문맥 키워드)
+당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
+- vlm_img_structure: 시각 정보를 Subject(주체), Environment(환경), Actions(행동)으로 구조화한 데이터
 
-이 데이터는 영상의 시각 프레임과 음성/텍스트를 종합하여 정제된 멀티모달 메타데이터입니다.
-Context 키워드에는 대화 주제와 화면 텍스트 정보도 반영되어 있습니다.
+이 데이터는 영상의 시각 프레임에서 추출된 구조화된 메타데이터입니다.
 
 [사고 과정 (Chain-of-Thought) 가이드]
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (장면 맥락 유추): VLM 구조화 데이터의 Subject, Environment, Actions, Context를 종합하여 현재 장면의 전체적인 맥락을 유추.
+- 1단계 (장면 맥락 유추): 구조화 데이터(vlm_img_structure)의 Subject, Environment, Actions를 기반으로 현재 장면의 전체적인 맥락을 유추.
 - 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
 - 4단계 (Hook 및 질문 기획): 구조화 데이터에서 유추한 현재 장면의 새 단서에 집중하여 질문 기획.
+"""
+
+_VOICE_HINT_PROMPT_RAW_WITH_MMVLM = _VOICE_HINT_BASE + """
+[입력 형식 설명]
+당신에게는 온전한 형태의 음성 인식(ASR) 텍스트와 화면 글씨(OCR) 텍스트 데이터, 그리고 소형 VLM이 시각·음성을 종합하여 장면의 상황을 자연어로 서술한 정보(vlm_mm_description)가 함께 제공됩니다.
+
+[사고 과정 (Chain-of-Thought) 가이드]
+질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
+- 1단계 (장면 맥락 종합): 음성/화면 텍스트와 VLM 멀티모달 서술을 종합하여 현재 장면의 전체적인 맥락을 유추하고 명백한 오류를 자연스럽게 교정.
+- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
+- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
+- 4단계 (Hook 및 질문 기획): 종합하여 유추한 현재 장면의 새 단서에 집중하여 질문 기획.
 """
 
 _VOICE_HINT_BASE_KSS = """당신은 제공되는 영상 요약을 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
@@ -145,15 +156,16 @@ def make_voice_hint_configs(thinking_level=0):
         "video": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_VIDEO, thinking_level=thinking_level),
         "raw": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW, thinking_level=thinking_level),
         "frag": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG, thinking_level=thinking_level),
-        "vlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_VLM, thinking_level=thinking_level),
         "frag_with_vlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG_WITH_VLM, thinking_level=thinking_level),
+        "imgvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM, thinking_level=thinking_level),
+        "raw_with_mmvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
         "kss": make_generate_config(system_instruction=_VOICE_HINT_BASE_KSS, thinking_level=thinking_level)
     }
 
 def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, kss_summary_text, end_time, target_modes=None):
     """하나의 Keypoint에 대해 Voice Hint를 지정된 모드에 대해서만 병렬 수행합니다."""
     if target_modes is None:
-        target_modes = ["video", "raw", "frag", "vlm", "frag_with_vlm", "kss"]
+        target_modes = ["kss", "raw_with_mmvlm", "imgvlm"]
         
     def generate_voice_hints(mode):
         contents = []
@@ -237,7 +249,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video", "raw", "frag", "vlm", "frag_with_vlm", "kss"], choices=["video", "raw", "frag", "vlm", "frag_with_vlm", "kss"], help="생성할 모드 직접 지정 (기본값: 모두 생성)")
+    parser.add_argument("--modes", nargs="+", default=["kss", "raw_with_mmvlm", "imgvlm"], choices=["video", "raw", "frag", "frag_with_vlm", "imgvlm", "raw_with_mmvlm", "kss"], help="생성할 모드 직접 지정 (기본값: kss, raw_with_mmvlm, imgvlm)")
 
     args, client = init_pipeline(parser.parse_args())
 
