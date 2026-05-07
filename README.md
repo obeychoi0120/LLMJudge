@@ -111,7 +111,7 @@ flowchart TD
     KS_SCRIPT --> KS_OUT
 ```
 
-### A-Track: Voice Hint Generation
+### A-Track: Voice Hint Generation & Scoring
 
 ```mermaid
 flowchart LR
@@ -120,14 +120,14 @@ flowchart LR
         VH_OUT["**voice_hint.jsonl**<br/>4모드 + kss 질문"]
     end
 
-    subgraph STEP4["A-4. Voice Hint Scoring (Deprecated)"]
-        QJ_SCRIPT["**judge_voice_hint.py**<br/>⚠️ Deprecated"]
-        QJ_SCORES["**voice_hint_scores.jsonl**"]
+    subgraph STEP4["A-4. Voice Hint Scoring"]
+        QJ_SCRIPT["**judge_voice_hint.py**<br/>(KSS Anchor 기반)"]
+        QJ_SCORES["**voice_hint_scores.jsonl**<br/>질문 평가 (2항목, 10점)"]
     end
 
     VH_SCRIPT --> VH_OUT
-    VH_OUT -.-> QJ_SCRIPT
-    QJ_SCRIPT -.-> QJ_SCORES
+    VH_OUT --> QJ_SCRIPT
+    QJ_SCRIPT --> QJ_SCORES
 ```
 
 ### B-Track: VH Response Generation & Scoring
@@ -152,8 +152,7 @@ flowchart LR
 ### ~~C-Track: KeyScene Description~~ (Deprecated)
 
 > KeyScene Description 생성 및 평가 파이프라인은 더 이상 사용하지 않습니다.
-> 관련 스크립트(`generate_keyscene_description.py`)는 `archived/`로 이동되었습니다.
-> `judge_descriptions.py`는 레거시 데이터 평가용으로 루트에 잔존합니다.
+> 관련 스크립트(`generate_keyscene_description.py`, `judge_descriptions.py`)는 `archived/`로 이동되었습니다.
 
 ### 파이프라인 요약
 
@@ -162,7 +161,7 @@ flowchart LR
 | A-1 | `identify_keyscene.py` | `keypoint_scenes.jsonl` | Flash Lite |
 | A-2 | `generate_keyscene_summary.py` | `keyscene_summary.jsonl` | Pro → Pro |
 | A-3 | `generate_voice_hint.py` | `voice_hint.jsonl` | Flash Lite |
-| ~~A-4~~ | ~~`judge_voice_hint.py`~~ | ~~`voice_hint_scores.jsonl`~~ | ~~Pro~~ (Deprecated) |
+| A-4 | `judge_voice_hint.py` | `voice_hint_scores.jsonl` | Pro |
 | B-1 | `generate_vh_response.py` | `vh_responses.jsonl` | Flash Lite |
 | B-2 | `judge_vh_response.py` | `vh_response_scores.jsonl` | Pro |
 | ~~C-1~~ | ~~`generate_keyscene_description.py`~~ | ~~`keyscene_description.jsonl`~~ | ~~Flash Lite~~ (Deprecated → `archived/`) |
@@ -205,21 +204,28 @@ python generate_vh_response.py
 python judge_vh_response.py --watch
 ```
 
-### 4. 자동 평가(Judge): 3-Criteria 통합 루브릭
+### 4. 자동 평가(Judge): 통합 루브릭
 
-모든 Judge는 **영문 rationale, flat JSON 구조, 15점 만점**으로 통일됩니다.
+모든 Judge는 **rationale + score의 flat JSON 구조**로 통일됩니다.
 
-#### B-Track: VH Response Judge
+#### A-Track: Voice Hint Judge (2-Criteria, 10점 만점)
+
+KSS(KeyScene Summary)를 참고 자료로 활용하여, 생성된 질문이 시청자의 즉각적인 상호작용을 유도하는지 평가합니다.
+
+| 기준 | 평가 대상 |
+|------|----------|
+| **Temporal Immersion** | 질문이 현재 장면과 시점 동기화되며, 즉시 답변 가능한 정보만 묻는가 (미래 추측·뒷북 배제) |
+| **Curiosity & Hook** | 시청자의 호기심을 강렬하게 자극하여 리모콘 상호작용을 유도하는가 |
+
+> 기본 평가 대상 모드: `kss`, `raw_with_mmvlm`, `imgvlm`
+
+#### B-Track: VH Response Judge (3-Criteria, 15점 만점)
 
 | 기준 | 평가 대상 |
 |------|----------|
 | **Answer Relevance** | 질문에 직접적·실질적으로 답변하는가 |
 | **Factual Precision** | 영상 사실 + 외부 지식 모두의 정확도 |
 | **Response Quality** | 자연스러움, 구조, 시스템 용어 미노출 |
-
-#### ~~A-Track: Voice Hint Judge~~ (Deprecated)
-
-> Voice Hint는 생성만 수행하며, 자동 평가(Judging)는 더 이상 사용하지 않습니다.
 
 #### ~~C-Track: Description Judge~~ (Deprecated)
 
@@ -235,7 +241,7 @@ LLMJudge/
 ├── identify_keyscene.py             # KeyScene Scene 식별 (A-1)
 ├── generate_keyscene_summary.py     # KeyScene Summary 생성 (A-2)
 ├── generate_voice_hint.py           # Voice Hint 생성 (A-3)
-├── judge_voice_hint.py              # Voice Hint 품질 Judge (Deprecated)
+├── judge_voice_hint.py              # Voice Hint 품질 Judge (A-4)
 ├── generate_vh_response.py          # VH Response 4모드 병렬 생성 (B-1)
 ├── judge_vh_response.py             # VH Response Judge (B-2)
 ├── judge_descriptions.py            # Description Judge (Deprecated, 레거시 데이터용)
@@ -252,6 +258,7 @@ LLMJudge/
     ├── keypoint_scenes.jsonl
     ├── keyscene_summary.jsonl
     ├── voice_hint.jsonl
+    ├── voice_hint_scores.jsonl
     ├── vh_responses.jsonl
     └── vh_response_scores.jsonl
 ```
@@ -294,7 +301,9 @@ LLMJudge/
     "vh_response_past_scenes_size": 5,
     "vh_response_thinking_level": "medium",
     "vh_response_judge_model": "gemini-3.1-pro-preview",
-    "vh_response_judge_thinking_level": "high"
+    "vh_response_judge_thinking_level": "high",
+    "vh_judge_model": "gemini-3.1-pro-preview",
+    "vh_judge_thinking_level": "high"
 }
 ```
 
@@ -312,7 +321,11 @@ python generate_keyscene_summary.py               # A-2: KeyScene Summary 생성
 ### A-Track (Voice Hint)
 ```bash
 python generate_voice_hint.py                     # A-3: Voice Hint 생성 (기본: kss, raw, raw_with_mmvlm, imgvlm)
-# judge_voice_hint.py                             # A-4: Deprecated
+python judge_voice_hint.py                        # A-4: Voice Hint Judge (기본: kss, raw_with_mmvlm, imgvlm)
+
+# Watch 모드 병렬 실행:
+python generate_voice_hint.py &                   # 터미널 1
+python judge_voice_hint.py --watch                # 터미널 2
 ```
 
 ### B-Track (VH Response)

@@ -41,16 +41,16 @@ _VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현
     ]
 }"""
 
-_VOICE_HINT_PROMPT_VIDEO = _VOICE_HINT_BASE + """
-[입력 형식 설명]
-당신에게는 실제 비디오 클립이 제공됩니다. 비디오 클립의 시각 및 청각 정보를 모두 활용하여 흥미로운 질문을 생성하세요.
+# _VOICE_HINT_PROMPT_VIDEO = _VOICE_HINT_BASE + """
+# [입력 형식 설명]
+# 당신에게는 실제 비디오 클립이 제공됩니다. 비디오 클립의 시각 및 청각 정보를 모두 활용하여 흥미로운 질문을 생성하세요.
 
-[사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 3단계를 순서대로 작성하세요.
-- 1단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
-- 2단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 3단계 (Hook 및 질문 기획): 비디오의 현재 장면에 포착된 단서에 집중하여 질문 기획.
-"""
+# [사고 과정 (Chain-of-Thought) 가이드]
+# 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 3단계를 순서대로 작성하세요.
+# - 1단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
+# - 2단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
+# - 3단계 (Hook 및 질문 기획): 비디오의 현재 장면에 포착된 단서에 집중하여 질문 기획.
+# """
 
 _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
 [입력 형식 설명]
@@ -155,13 +155,12 @@ _VOICE_HINT_BASE_KSS = """당신은 제공되는 영상 요약을 기반으로 �
 def make_voice_hint_configs(thinking_level=0):
     """Voice Hint 생성용 GenerateContentConfig 정보를 반환합니다."""
     return {
-        "video": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_VIDEO, thinking_level=thinking_level),
+        "kss": make_generate_config(system_instruction=_VOICE_HINT_BASE_KSS, thinking_level=thinking_level),
         "raw": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW, thinking_level=thinking_level),
-        "frag": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG, thinking_level=thinking_level),
-        "frag_with_vlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG_WITH_VLM, thinking_level=thinking_level),
-        "imgvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM, thinking_level=thinking_level),
         "raw_with_mmvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
-        "kss": make_generate_config(system_instruction=_VOICE_HINT_BASE_KSS, thinking_level=thinking_level)
+        "imgvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM, thinking_level=thinking_level),
+        "frag": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG, thinking_level=thinking_level),
+        "frag_with_vlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG_WITH_VLM, thinking_level=thinking_level)
     }
 
 def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, kss_summary_text, end_time, target_modes=None):
@@ -251,7 +250,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["kss", "raw", "raw_with_mmvlm", "imgvlm"], choices=["video", "raw", "frag", "frag_with_vlm", "imgvlm", "raw_with_mmvlm", "kss"], help="생성할 모드 직접 지정 (기본값: kss, raw_with_mmvlm, imgvlm)")
+    parser.add_argument("--modes", nargs="+", default=["kss", "raw", "raw_with_mmvlm", "imgvlm"], choices=["video", "raw", "frag", "frag_with_vlm", "imgvlm", "raw_with_mmvlm", "kss"], help="생성할 모드 직접 지정 (기본값: kss, raw, raw_with_mmvlm, imgvlm)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -369,13 +368,17 @@ def main():
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
+                    _LOG_MODES = {"kss", "raw_with_mmvlm", "imgvlm"}
                     for mod in missing_modes:
                         if vh_dict.get(mod):
-                            print(f"\n-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
-                            if vh_dict.get("rationales", {}).get(mod):
-                                print(f"[Rationale]: {vh_dict['rationales'][mod]}\n")
-                            for qi, q in enumerate(vh_dict[mod], 1):
-                                print(f"{qi}. {q}")
+                            if mod in _LOG_MODES:
+                                print(f"\n-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
+                                if vh_dict.get("rationales", {}).get(mod):
+                                    print(f"[Rationale]: {vh_dict['rationales'][mod]}\n")
+                                for qi, q in enumerate(vh_dict[mod], 1):
+                                    print(f"{qi}. {q}")
+                            else:
+                                print(f"-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초) — {len(vh_dict[mod])}개 질문 생성됨")
                     print(f"------------------------------------------------------------------------------------------------------------\n")
 
                 except Exception as e:
