@@ -278,9 +278,10 @@ def export_uq_details(input_dir, output_dir):
     # 2. 데이터 매핑용 딕셔너리 생성
     summary_map = {}
     for group in keyscene_summaries:
+        group_cid = group.get("content_id")
         if "items" in group:
             for item in group["items"]:
-                cid = item.get("content_id")
+                cid = item.get("content_id", group_cid)
                 idx = item.get("scene_idx")
                 if cid and idx is not None:
                     summary_map[(cid, idx)] = item.get("summary", "")
@@ -709,20 +710,25 @@ def export_vh_response_details(input_dir, output_dir):
         print(f"[Skip] {scores_path} 파일이 없어 VH Response Details 내보내기를 건너뜁니다.")
         return
 
-    # (content_id, query) → scene_idx 보조 매핑 (기존 JSONL에 scene_idx가 없는 경우 대비)
+    # (content_id, query) → scene_idx 매핑 및 (content_id, query, mode) → response 매핑
     scene_idx_map = {}
+    answer_map = {}
     responses_path = os.path.join(input_dir, "vh_responses.jsonl")
     if os.path.exists(responses_path):
         for r in load_jsonl(responses_path):
             c = r.get("content_id")
             q = r.get("query")
             s = r.get("scene_idx")
-            if c and q and s is not None:
-                scene_idx_map[(c, q)] = s
+            ans = r.get("answers", {})
+            if c and q:
+                if s is not None:
+                    scene_idx_map[(c, q)] = s
+                for m, a in ans.items():
+                    answer_map[(c, q, m)] = a
 
     data = load_jsonl(scores_path)
     score_keys = ["answer_relevance", "factual_precision", "response_quality"]
-    mode_order = ["video", "raw", "raw_with_mmvlm", "imgvlm", "frag", "vlm", "frag_with_vlm"]
+    mode_order = ["video", "raw", "raw_with_mmvlm", "imgvlm"]
 
     flat_rows = []
     for item in data:
@@ -740,7 +746,8 @@ def export_vh_response_details(input_dir, output_dir):
                 for k in score_keys
                 if isinstance(mode_data.get(k), dict)
             )
-            row = {"content_id": c_id, "scene_idx": s_idx, "query": query, "mode": mode}
+            response_text = answer_map.get((c_id, query, mode), "")
+            row = {"content_id": c_id, "scene_idx": s_idx, "query": query, "mode": mode, "response": response_text}
             for k in score_keys:
                 met_data = mode_data.get(k, {})
                 row[f"rationale_{k}"] = met_data.get("rationale", "") if isinstance(met_data, dict) else ""
@@ -759,7 +766,7 @@ def export_vh_response_details(input_dir, output_dir):
     df.to_excel(writer, index=False, sheet_name="VH Response Details")
     worksheet = writer.sheets["VH Response Details"]
     col_widths = {
-        "content_id": 22, "scene_idx": 10, "query": 40, "mode": 12,
+        "content_id": 22, "scene_idx": 10, "query": 40, "mode": 12, "response": 60,
         "rationale_answer_relevance": 45,  "answer_relevance": 16,
         "rationale_factual_precision": 45, "factual_precision": 16,
         "rationale_response_quality": 45,  "response_quality": 16,

@@ -200,15 +200,16 @@ _VH_RESPONSE_PROMPT_IMGVLM = _VH_RESPONSE_PROMPT_BASE + """
 [시청 기억의 구조]
 제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 메타데이터**만으로 이루어져 있습니다.
 각 Scene별로 다음의 구조화 정보가 제공됩니다:
-  - Subject: 장면의 주체 (등장인물, 주요 피사체)
-  - Environment: 장면의 배경 환경
-  - Actions: 관찰된 주요 행동
+  - Subjects: 장면의 주체 (등장인물, 주요 피사체) — 2어절 뒤섞인 파편
+  - Actions: 관찰된 주요 행동 — 2어절 뒤섞인 파편
+  - Contexts: 장면의 배경 환경 및 맥락 정보 — 2어절 뒤섞인 파편
 
-이 데이터는 영상의 시각 프레임에서 추출된 구조화된 메타데이터입니다.
+이 데이터는 저작권 보호를 위해 2어절 단위로 파편화되어 순서가 뒤섞인 형태입니다. [MASKED] 토큰이 포함된 경우 해당 고유명사를 추측하지 마세요.
 
 [분석 및 대화 지시사항]
-1. **구조화 데이터 분석 (매우 중요)**
-   - Subject, Environment, Actions를 종합하여 장면의 전체적인 맥락을 입체적으로 파악하세요.
+1. **구조화 데이터 복원 및 분석 (매우 중요)**
+   - Subjects, Actions, Contexts 파편을 논리적으로 조합하여 장면의 전체적인 맥락을 입체적으로 파악하세요.
+   - 파편들을 문맥과 상식을 동원하여 원래 의미를 유추하세요.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
    - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
@@ -220,7 +221,7 @@ _VH_RESPONSE_PROMPT_IMGVLM = _VH_RESPONSE_PROMPT_BASE + """
    - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
 
 4. **완벽한 TV 파트너 톤앤매너**
-   - "메타데이터", "구조화 데이터", "Subject 필드" 등 시스템 용어는 절대 금지입니다.
+   - "메타데이터", "구조화 데이터", "Subjects 필드", "파편" 등 시스템 용어는 절대 금지입니다.
    - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
 
 5. **대화 이어가기**
@@ -419,7 +420,6 @@ def main():
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로 (KSS 모드만 사용)")
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
-    parser.add_argument("--max_past_scenes", type=int, default=None, help="현재 KeyScene 기준 최근 N개 KeyPoint 내의 Scene만 Source로 사용 (기본값: 제한 없음)")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
 
     args, client = init_pipeline(parser.parse_args())
@@ -443,8 +443,8 @@ def main():
     print_pipeline_banner("VH Response 생성 파이프라인을 시작합니다.")
     if args.continuous:
         print("Continuous 모드가 활성화되었습니다.")
-    if args.max_past_scenes:
-        print(f"[Window] max_past_scenes={args.max_past_scenes} 설정: 현재 KeyScene 기준 최근 {args.max_past_scenes}개 KeyPoint 내 Scene만 Source로 사용합니다.")
+    if args.vh_response_past_scenes_size:
+        print(f"[Window] vh_response_past_scenes_size={args.vh_response_past_scenes_size} 설정: 현재 KeyScene 기준 최근 {args.vh_response_past_scenes_size}개 KeyPoint 내 Scene만 Source로 사용합니다.")
 
     file_write_lock = threading.Lock()
 
@@ -517,12 +517,12 @@ def main():
                     _MODES = ("video", "raw", "raw_with_mmvlm", "imgvlm")
                     sources = {}
                     try:
-                        for mode in _MODES:
-                            sources[mode] = _build_source(
-                                args.gs_bucket_name, content_id,
-                                scene_idx, keypoints, mode,
-                                max_past_scenes=args.max_past_scenes,
-                            )
+                            for mode in _MODES:
+                                sources[mode] = _build_source(
+                                    args.gs_bucket_name, content_id,
+                                    scene_idx, keypoints, mode,
+                                    max_past_scenes=args.vh_response_past_scenes_size,
+                                )
                     except Exception as e:
                         print(f"[ERROR] Source 빌드 실패 (Scene {scene_idx}): {e}")
                         continue

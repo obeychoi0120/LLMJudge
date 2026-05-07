@@ -76,11 +76,19 @@ def main():
                                 query = obj.get("query")
                                 if query:
                                     data_dict[(c_id, query)] = obj
+                            elif "keypoints" in obj:
+                                # keypoint_scenes.jsonl: {content_id, keypoints: [...]}
+                                # content_id당 1개 레코드 → keypoints를 병합하여 items 래핑 없이 직접 저장
+                                if c_id not in data_dict:
+                                    data_dict[c_id] = {"content_id": c_id, "keypoints": []}
+                                data_dict[c_id]["keypoints"].extend(obj.get("keypoints", []))
                             else:
                                 # 일반 JSONL (scene 단위 분할 기록): content_id 기준으로 모두 수집
+                                # items 내부의 개별 레코드에서 중복 content_id 제거
                                 if c_id not in data_dict:
                                     data_dict[c_id] = {"content_id": c_id, "items": []}
-                                data_dict[c_id]["items"].append(obj)
+                                item = {k: v for k, v in obj.items() if k != "content_id"}
+                                data_dict[c_id]["items"].append(item)
                     except json.JSONDecodeError:
                         error_count += 1
             

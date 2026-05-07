@@ -23,6 +23,7 @@ _CONFIG_KEYS = [
     "use_ref_for_keyscene_summary",
     # B-track: VH Response
     "vh_response_model", "vh_response_thinking_level",
+    "vh_response_past_scenes_size",
     "vh_response_judge_model", "vh_response_judge_thinking_level",
     # C-track: KeyScene Description
     "ksd_gen_model", "ksd_gen_thinking_level",
@@ -79,6 +80,7 @@ def get_common_argparser(description=""):
     # 모델 공통 (B-track: VH Response)
     parser.add_argument("--vh_response_model", default="gemini-3.1-flash-lite-preview", help="VH Response 생성 모델명")
     parser.add_argument("--vh_response_thinking_level", default="low", help="VH Response 생성 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--vh_response_past_scenes_size", type=int, default=5, help="VH Response 생성 시 과거 맥락에 포함할 최대 Scene 개수")
     parser.add_argument("--vh_response_judge_model", default="gemini-3.1-pro-preview", help="VH Response Judge 모델명")
     parser.add_argument("--vh_response_judge_thinking_level", default="high", help="VH Response Judge 모델의 Thinking Level (low/medium/high)")
 
@@ -508,7 +510,14 @@ def parse_duration_to_times(duration):
 def format_vlm_structure_as_text(vlm_struct):
     """vlm_img_structure 또는 vlm_mm_structure 딕셔너리를 읽기 좋은 텍스트로 변환합니다.
 
-    예시 출력:
+    신규 포맷 (subjects, actions, contexts) 및 구 포맷 (subject, environment, actions, context) 모두 지원합니다.
+
+    예시 출력 (신규):
+      Subjects: him. The; with various; background features; A man; ...
+      Actions: the man.; his chin.; he listens; ...
+      Contexts: of the; the chat; (A Man; ...
+
+    예시 출력 (구):
       Subject: A marine animal swimming through ice-covered waters
       Environment: An Arctic sea with floating ice floes
       Actions: The animal is moving through the water; creating ripples
@@ -517,13 +526,18 @@ def format_vlm_structure_as_text(vlm_struct):
     if not vlm_struct or not isinstance(vlm_struct, dict):
         return ""
     lines = []
-    if vlm_struct.get("subject"):
+    # 신규 포맷: subjects, actions, contexts
+    if vlm_struct.get("subjects"):
+        lines.append(f"Subjects: {'; '.join(vlm_struct['subjects'])}")
+    elif vlm_struct.get("subject"):
         lines.append(f"Subject: {vlm_struct['subject']}")
     if vlm_struct.get("environment"):
         lines.append(f"Environment: {vlm_struct['environment']}")
     if vlm_struct.get("actions"):
         lines.append(f"Actions: {'; '.join(vlm_struct['actions'])}")
-    if vlm_struct.get("context"):
+    if vlm_struct.get("contexts"):
+        lines.append(f"Contexts: {'; '.join(vlm_struct['contexts'])}")
+    elif vlm_struct.get("context"):
         lines.append(f"Context: {', '.join(vlm_struct['context'])}")
     return "\n".join(lines)
 
