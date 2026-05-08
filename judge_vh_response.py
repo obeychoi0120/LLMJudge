@@ -137,7 +137,7 @@ def main():
 
     file_write_lock = threading.Lock()
     _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
-    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm"]
+    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"]
 
     if not os.path.exists(args.answers_file) and not args.watch:
         print(f"[Info] {args.answers_file} 파일이 존재하지 않습니다. 평가를 건너뜁니다.")
@@ -222,6 +222,7 @@ def main():
                 new_lines     = f.readlines()
                 last_position = f.tell()
 
+            pending = []
             for line in new_lines:
                 if not line.strip():
                     continue
@@ -242,11 +243,17 @@ def main():
                     continue
                 if (c_id, s_idx, mode, query) in processed_pairs:
                     continue
+                pending.append(obj)
 
-                result = judge_query_item(obj)
-                if result:
-                    total_evaluated += 1
-                    print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
+            if pending:
+                print(f"\n[Judge] 새 항목 {len(pending)}개 → 병렬 평가 시작 (max_workers=4)")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                    futures = {executor.submit(judge_query_item, obj): obj for obj in pending}
+                    for future in concurrent.futures.as_completed(futures):
+                        result = future.result()
+                        if result:
+                            total_evaluated += 1
+                print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
 
             if args.watch:
                 if pipeline_done:

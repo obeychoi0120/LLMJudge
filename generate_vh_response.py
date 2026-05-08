@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import concurrent.futures
 import threading
@@ -195,7 +196,7 @@ _VH_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
-_VH_RESPONSE_PROMPT_IMGVLM = _VH_RESPONSE_PROMPT_BASE + """
+_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _VH_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
 제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 메타데이터**만으로 이루어져 있습니다.
@@ -228,6 +229,69 @@ _VH_RESPONSE_PROMPT_IMGVLM = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
+_VH_RESPONSE_PROMPT_IMGVLM_CHUNK3 = _VH_RESPONSE_PROMPT_BASE + """
+
+[시청 기억의 구조]
+제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 메타데이터**만으로 이루어져 있습니다.
+각 Scene별로 다음의 구조화 정보가 제공됩니다:
+  - Subjects: 장면의 주체 (등장인물, 주요 피사체) — 3어절 뒤섞인 파편
+  - Actions: 관찰된 주요 행동 — 3어절 뒤섞인 파편
+  - Contexts: 장면의 배경 환경 및 맥락 정보 — 3어절 뒤섞인 파편
+
+이 데이터는 저작권 보호를 위해 3어절 단위로 파편화되어 순서가 뒤섞인 형태입니다. [MASKED] 토큰이 포함된 경우 해당 고유명사를 추측하지 마세요.
+
+[분석 및 대화 지시사항]
+1. **구조화 데이터 복원 및 분석 (매우 중요)**
+   - Subjects, Actions, Contexts 파편을 논리적으로 조합하여 장면의 전체적인 맥락을 입체적으로 파악하세요.
+   - 파편들을 문맥과 상식을 동원하여 원래 의미를 유추하세요.
+
+2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
+   - 구조화 데이터만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
+   - 단, 구조화 데이터에서 유추한 내용과 명백히 모순되는 정보는 제공하지 마세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
+
+4. **완벽한 TV 파트너 톤앤매너**
+   - "메타데이터", "구조화 데이터", "Subjects 필드", "파편" 등 시스템 용어는 절대 금지입니다.
+   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
+
+5. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+
+_VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
+
+[시청 기억의 구조]
+제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **장면 지식 그래프(Scene Knowledge Graph)**만으로 이루어져 있습니다.
+각 Scene별로 다음의 관계형 정보가 제공됩니다:
+  - vlm_graph: 장면의 주요 요소와 그 관계를 (subject) -[relation]-> (object) 형태의 트리플로 표현
+  예: (man) -[WEARING]-> (cap), (screen) -[ABOUT]-> (foreign policy)
+
+이 그래프는 장면에 등장하는 인물, 사물, 행동, 속성, 위치 등의 관계를 압축적으로 나타냅니다.
+
+[분석 및 대화 지시사항]
+1. **지식 그래프 분석 (매우 중요)**
+   - 트리플들을 논리적으로 연결하여 장면의 전체적인 맥락을 입체적으로 파악하세요.
+   - 관계(relation)를 통해 인물 간 상호작용, 사물의 속성, 공간적 배치 등을 유추하세요.
+
+2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
+   - 그래프 데이터만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
+   - 단, 그래프 데이터에서 유추한 내용과 명백히 모순되는 정보는 제공하지 마세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
+
+4. **완벽한 TV 파트너 톤앤매너**
+   - "그래프", "트리플", "관계 데이터", "메타데이터" 등 시스템 용어는 절대 금지입니다.
+   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
+
+5. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+
 
 def make_vh_gen_config(thinking_level=None):
     """VH Response 생성용 GenerateContentConfig 딕셔너리를 반환합니다."""
@@ -244,8 +308,16 @@ def make_vh_gen_config(thinking_level=None):
             system_instruction=_VH_RESPONSE_PROMPT_FRAG_WITH_VLM,
             thinking_level=thinking_level,
         ),
-        "imgvlm": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM,
+        "imgvlm_chunk2": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2,
+            thinking_level=thinking_level,
+        ),
+        "imgvlm_chunk3": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK3,
+            thinking_level=thinking_level,
+        ),
+        "imgvlm_graph": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_GRAPH,
             thinking_level=thinking_level,
         ),
         "raw_with_mmvlm": make_generate_config(
@@ -320,9 +392,17 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
             return get_processed_frag_fields_by_scene_idx(
                 gs_bucket_name, content_id, start_idx, scene_idx
             )
-        elif mode == "imgvlm":
+        elif mode == "imgvlm_chunk2":
             return get_processed_vlm_descriptions_by_scene_idx(
-                gs_bucket_name, content_id, "vlm_img_structure", start_idx, scene_idx
+                gs_bucket_name, content_id, "vlm_img_structure_chunk2", start_idx, scene_idx
+            )
+        elif mode == "imgvlm_chunk3":
+            return get_processed_vlm_descriptions_by_scene_idx(
+                gs_bucket_name, content_id, "vlm_img_structure_chunk3", start_idx, scene_idx
+            )
+        elif mode == "imgvlm_graph":
+            return get_processed_vlm_descriptions_by_scene_idx(
+                gs_bucket_name, content_id, "vlm_graph", start_idx, scene_idx
             )
         elif mode == "vlm":
             return get_processed_vlm_descriptions_by_scene_idx(
@@ -359,7 +439,9 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
                 "frag": "Fragmented Metadata (speech_fragments & text_fragments, 처음부터 현재 장면까지)",
                 "vlm": "VLM Structure Only (처음부터 현재 장면까지)",
                 "frag_with_vlm": "VLM + Fragmented Metadata (처음부터 현재 장면까지)",
-                "imgvlm": "VLM Image Structure Only (처음부터 현재 장면까지)",
+                "imgvlm_chunk2": "VLM Image Structure — 2-word Chunks (처음부터 현재 장면까지)",
+                "imgvlm_chunk3": "VLM Image Structure — 3-word Chunks (처음부터 현재 장면까지)",
+                "imgvlm_graph": "VLM Scene Knowledge Graph (처음부터 현재 장면까지)",
                 "raw_with_mmvlm": "Raw ASR/OCR + VLM Multimodal Description (처음부터 현재 장면까지)",
             }
             contents = [
@@ -411,21 +493,102 @@ def _load_completed_pairs(output_path):
 
 
 # ============================================================
+# Validation
+# ============================================================
+
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk3": 4, "imgvlm_graph": 5, "frag": 6, "vlm": 7, "frag_with_vlm": 8, "kss": 9}
+
+def _validate_vh_responses(output_file, vh_input_file, target_modes):
+    """VH Response 파일을 정렬하고, KSS Query × target mode 기준으로 누락을 점검합니다."""
+    if not os.path.exists(output_file):
+        print(f"[Warning] 파일을 찾을 수 없습니다: {output_file}")
+        return
+
+    print(f"\n{'='*50}")
+    print(f"결과 파일 정렬 및 검증: {output_file}")
+
+    # 1) 정렬
+    data_records = []
+    with open(output_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    obj = json.loads(line)
+                    if not obj.get("pipeline_done"):
+                        data_records.append(obj)
+                except json.JSONDecodeError:
+                    pass
+
+    data_records.sort(key=lambda x: (
+        x.get("content_id", ""),
+        x.get("scene_idx", 0),
+        _MODE_SORT_ORDER.get(x.get("mode", ""), 99),
+        x.get("query", ""),
+    ))
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        for rec in data_records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    print(f"-> 정렬 완료 ({len(data_records)}개 항목)")
+
+    # 2) KSS Query × target mode 기준 누락 점검
+    print("\n[최종 누락분 점검]")
+
+    # KSS VH에서 기대되는 (content_id, scene_idx, query) 집합 추출
+    expected = set()
+    if os.path.exists(vh_input_file):
+        for rec in load_jsonl(vh_input_file):
+            if rec.get("mode") != "kss":
+                continue
+            c_id = rec.get("content_id")
+            s_idx = rec.get("scene_idx")
+            for q in rec.get("queries", []):
+                for m in target_modes:
+                    expected.add((c_id, s_idx, m, q))
+
+    # 실제 존재하는 (content_id, scene_idx, mode, query) 집합
+    done_set = {
+        (x.get("content_id"), x.get("scene_idx"), x.get("mode"), x.get("query"))
+        for x in data_records
+    }
+
+    missing = sorted(expected - done_set)
+    if missing:
+        # Scene 단위로 그룹핑하여 출력
+        missing_by_scene = {}
+        for c, s, m, q in missing:
+            missing_by_scene.setdefault((c, s), []).append(m)
+
+        print(f"-> 총 {len(missing)}개의 (Scene, Mode, Query) 처리가 누락되었습니다. ({len(missing_by_scene)}개 Scene)")
+        for (c, s), modes in sorted(missing_by_scene.items())[:20]:
+            mode_counts = {}
+            for m in modes:
+                mode_counts[m] = mode_counts.get(m, 0) + 1
+            summary = ", ".join(f"{m}({n})" for m, n in mode_counts.items())
+            print(f"    - ({c}, scene={s}): {summary}")
+        if len(missing_by_scene) > 20:
+            print(f"    ... 외 {len(missing_by_scene) - 20}개 Scene")
+    else:
+        print("-> 모든 KSS Query × Mode 조합이 누락 없이 정상적으로 생성되었습니다.")
+    print("=" * 50 + "\n")
+
+
+# ============================================================
 # Main
 # ============================================================
 
 def main():
-    parser = get_common_argparser(description="Voice Hint가 생성한 각 모드의 자체 질문에 대해 Response를 생성합니다.")
+    parser = get_common_argparser(description="KSS 모드 Voice Hint의 질문을 공통 Query로 삼아, 각 모드의 Source로 Response를 생성합니다.")
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
-    parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
+    parser.add_argument("--watch", action="store_true", help="입력 파일을 모니터링하며 새 데이터가 들어오면 실시간으로 처리합니다.")
+    parser.add_argument("--modes", nargs="+",
+                        default=["video", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"],
+                        choices=["video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"],
+                        help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변)")
 
     args, client = init_pipeline(parser.parse_args())
-
-    # 입력 파일 확인
-    if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
-        return
 
     # Keypoint 로드 (scene_idx → start/end_time 매핑용)
     keypoints_by_content = load_keypoints_by_content(args.keypoints_file)
@@ -433,151 +596,188 @@ def main():
         print(f"Error: {args.keypoints_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
         return
 
+    target_modes = args.modes
+
     # Gen configs
     gen_configs = make_vh_gen_config(thinking_level=args.vh_response_thinking_level)
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
-    print_pipeline_banner("VH Response 생성 파이프라인을 시작합니다.")
-    if args.continuous:
-        print("Continuous 모드가 활성화되었습니다.")
+    # 기처리분 로드: (content_id, scene_idx, mode, query)
+    completed_pairs = _load_completed_pairs(args.output_file)
+    if completed_pairs:
+        print(f"[기처리] {len(completed_pairs)}개 항목이 이미 처리 완료됨.")
+
+    print_pipeline_banner(f"VH Response 생성 파이프라인을 시작합니다. (Watch 모드: {args.watch})")
+    print(f"[Mode] KSS Query → Target Response Modes: {target_modes}")
     if args.vh_response_past_scenes_size:
         print(f"[Window] vh_response_past_scenes_size={args.vh_response_past_scenes_size} 설정: 현재 KeyScene 기준 최근 {args.vh_response_past_scenes_size}개 KeyPoint 내 Scene만 Source로 사용합니다.")
 
+    if not os.path.exists(args.input_file) and not args.watch:
+        if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
+            return
+
     file_write_lock = threading.Lock()
+    last_position = 0
+    pipeline_done = False
+    total_generated = 0
+
+    def _process_kss_record(rec):
+        """KSS VH 레코드의 queries를 공통 Query로 삼아 모든 target 모드에 대해 Response를 병렬 생성합니다."""
+        c_id = rec.get("content_id")
+        s_idx = rec.get("scene_idx")
+        queries = rec.get("queries", [])
+
+        if not (c_id and s_idx is not None and queries):
+            return 0
+
+        # 각 target 모드 × 각 query 조합에서 미처리분만 추출
+        pending_items = []
+        for q_text in queries:
+            for mode in target_modes:
+                if (c_id, s_idx, mode, q_text) not in completed_pairs:
+                    pending_items.append({
+                        "content_id": c_id,
+                        "scene_idx":  s_idx,
+                        "mode":       mode,
+                        "query":      q_text,
+                    })
+
+        if not pending_items:
+            return 0
+
+        keypoints = keypoints_by_content.get(c_id, [])
+        if not check_gcs_files_exist(args.gs_bucket_name, c_id):
+            return 0
+
+        preload_content_metadata(args.gs_bucket_name, c_id)
+        start_time = float(rec.get("start_time", 0.0))
+        end_time = float(rec.get("end_time", 0.0))
+        print(f"\n[VH Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | KSS Queries → {len(pending_items)}개 (mode×query) 조합 처리")
+
+        # Source 캐시: 같은 Scene의 같은 mode는 Source를 1번만 빌드
+        source_cache = {}
+
+        # Query별로 한 번만 출력하기 위한 추적
+        printed_queries = set()
+        count = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(target_modes)) as executor:
+            futures = {}
+            for item in pending_items:
+                def process_item(item_data):
+                    _s_idx = item_data["scene_idx"]
+                    _m = item_data["mode"]
+                    _q = item_data["query"]
+                    try:
+                        # Source 캐시 활용
+                        if _m not in source_cache:
+                            source_cache[_m] = _build_source(
+                                args.gs_bucket_name, c_id,
+                                _s_idx, keypoints, _m,
+                                max_past_scenes=args.vh_response_past_scenes_size,
+                            )
+                        source = source_cache[_m]
+                        _, answer, elapsed = _generate_for_mode(
+                            client, args.vh_response_model, gen_configs,
+                            source, _m, _q, _s_idx
+                        )
+                        return item_data, answer, elapsed, None
+                    except Exception as e:
+                        return item_data, None, 0.0, str(e)
+
+                futures[executor.submit(process_item, item)] = item
+
+            for future in concurrent.futures.as_completed(futures):
+                item, answer, elapsed, error = future.result()
+                scene_idx = item["scene_idx"]
+                mode      = item["mode"]
+                query     = item["query"]
+
+                # Query를 처음 만나면 한 번만 출력
+                if query not in printed_queries:
+                    print(f"\n[Scene {scene_idx}] Query: {query}")
+                    printed_queries.add(query)
+
+                if error:
+                    print(f"  -> [{mode}] ERROR: {error}")
+                    answer = f"Error: {error}"
+                else:
+                    length_info = len(answer) if not answer.startswith("Error") else 0
+                    print(f"  -> [{mode}] OK ({elapsed:.1f}s, {length_info}자)")
+
+                record = {
+                    "content_id": c_id,
+                    "scene_idx":  scene_idx,
+                    "mode":       mode,
+                    "query":      query,
+                    "answer":     answer,
+                }
+                append_jsonl(args.output_file, record, lock=file_write_lock)
+                completed_pairs.add((c_id, scene_idx, mode, query))
+                count += 1
+
+        return count
 
     try:
         while True:
-            # 진행 현황 로드
-            completed_pairs = _load_completed_pairs(args.output_file)
+            if not os.path.exists(args.input_file):
+                if not args.watch:
+                    print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
+                    return
+                time.sleep(3)
+                continue
 
-            # voice_hint.jsonl에서 전체 모드 레코드 수집
-            # 포맷: {content_id, scene_idx, mode, queries: [...], start_time, end_time, ...}
-            vh_records = []
-            for rec in load_jsonl(args.input_file):
-                if rec.get("pipeline_done"):
+            with open(args.input_file, "r", encoding="utf-8") as f:
+                f.seek(last_position)
+                new_lines = f.readlines()
+                last_position = f.tell()
+
+            kss_items = []
+            for line in new_lines:
+                if not line.strip():
                     continue
-                c_id    = rec.get("content_id")
-                s_idx   = rec.get("scene_idx")
-                mode    = rec.get("mode")
-                queries = rec.get("queries", [])
-                if c_id and s_idx is not None and mode and queries:
-                    vh_records.append(rec)
+                try:
+                    obj = json.loads(line)
+                    if obj.get("pipeline_done"):
+                        pipeline_done = True
+                    elif obj.get("mode") == "kss":
+                        # KSS 모드 VH 레코드만 추출하여 공통 Query로 사용
+                        kss_items.append(obj)
+                except json.JSONDecodeError:
+                    pass
 
-            if not vh_records and not args.continuous:
-                print(f"Error: {args.input_file} 에 처리할 데이터가 없습니다.")
-                return
+            if kss_items:
+                total_generated += sum(len(rec.get("queries", [])) * len(target_modes) for rec in kss_items)
 
-            # pending 작업 계산
-            pending = []
-            for rec in vh_records:
-                c_id  = rec["content_id"]
-                s_idx = rec["scene_idx"]
-                mode  = rec["mode"]
-                for q_text in rec.get("queries", []):
-                    if (c_id, s_idx, mode, q_text) not in completed_pairs:
-                        pending.append({
-                            "content_id": c_id,
-                            "scene_idx":  s_idx,
-                            "mode":       mode,
-                            "query":      q_text,
-                        })
+                for rec in kss_items:
+                    _process_kss_record(rec)
 
-            if pending:
-                print(f"\n[TODO] 처리할 항목: {len(pending)}개")
+                pending_count = total_generated - len(completed_pairs)
+                print(f"\n▶ [VH Response TODO] Total Generated: {total_generated} | Completed: {len(completed_pairs)} | Pending: {pending_count}")
 
-            new_data_processed = False
-
-            # content_id별로 그룹핑하여 순차 처리
-            pending_by_content = {}
-            for item in pending:
-                pending_by_content.setdefault(item["content_id"], []).append(item)
-
-            for content_id, items in pending_by_content.items():
-                print(f"\nProcessing Content: '{content_id}' ({len(items)}개 항목)")
-
-                if not check_gcs_files_exist(args.gs_bucket_name, content_id):
-                    continue
-
-                preload_content_metadata(args.gs_bucket_name, content_id)
-                keypoints = keypoints_by_content.get(content_id, [])
-
-                # 병렬 처리를 위해 ThreadPoolExecutor 사용 (각 모드/질문 조합별 독립 수행)
-                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                    futures = {}
-                    for item in items:
-                        scene_idx = item["scene_idx"]
-                        mode      = item["mode"]
-                        query     = item["query"]
-
-                        if (content_id, scene_idx, mode, query) in completed_pairs:
-                            continue
-
-                        # 각 항목마다 개별적으로 _build_source 및 _generate_for_mode 수행하는 함수
-                        def process_item(item_data):
-                            s_idx = item_data["scene_idx"]
-                            m = item_data["mode"]
-                            q = item_data["query"]
-                            try:
-                                source = _build_source(
-                                    args.gs_bucket_name, content_id,
-                                    s_idx, keypoints, m,
-                                    max_past_scenes=args.vh_response_past_scenes_size,
-                                )
-                                _, answer, elapsed = _generate_for_mode(
-                                    client, args.vh_response_model, gen_configs,
-                                    source, m, q, s_idx
-                                )
-                                return item_data, answer, elapsed, None
-                            except Exception as e:
-                                return item_data, None, 0.0, str(e)
-                        
-                        futures[executor.submit(process_item, item)] = item
-
-                    for future in concurrent.futures.as_completed(futures):
-                        item, answer, elapsed, error = future.result()
-                        scene_idx = item["scene_idx"]
-                        mode      = item["mode"]
-                        query     = item["query"]
-
-                        print(f"\n[Scene {scene_idx} | {mode}] Query: {query}")
-                        if error:
-                            print(f"[ERROR] 처리 실패: {error}")
-                            status = "ERROR"
-                            answer = f"Error: {error}"
-                        else:
-                            status = "OK" if not answer.startswith("Error") else "ERROR"
-                            length_info = len(answer) if status == "OK" else 0
-                            print(f"-> Response ({elapsed:.1f}s, {length_info}자)")
-                            if status == "OK":
-                                print(answer)
-
-                        # Flat 형태로 개별 저장
-                        record = {
-                            "content_id": content_id,
-                            "scene_idx":  scene_idx,
-                            "mode":       mode,
-                            "query":      query,
-                            "answer":     answer,
-                        }
-                        append_jsonl(args.output_file, record, lock=file_write_lock)
-                        completed_pairs.add((content_id, scene_idx, mode, query))
-
-                new_data_processed = True
-                print(f"\n[OK] '{content_id}' 완료")
-
-            if not args.continuous:
+            if args.watch:
+                if pipeline_done:
+                    print("\n[Watch] Generation 파이프라인의 종료 시그널(pipeline_done)을 감지했습니다. 모든 처리를 완료하고 종료합니다.")
+                    break
+                time.sleep(3)
+            else:
                 break
-            if not new_data_processed:
-                time.sleep(5)
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
+
+    # 결과 파일 정렬 및 누락 점검
+    _validate_vh_responses(args.output_file, args.input_file, target_modes)
+
+    # 다운스트림 Watch 모드 종료 시그널
+    append_jsonl(args.output_file, {"pipeline_done": True})
 
     print_pipeline_done(args.output_file)
 
 
 if __name__ == "__main__":
     main()
+

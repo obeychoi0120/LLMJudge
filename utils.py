@@ -542,6 +542,26 @@ def format_vlm_structure_as_text(vlm_struct):
     return "\n".join(lines)
 
 
+def format_vlm_graph_as_text(vlm_graph):
+    """vlm_graph 리스트를 읽기 좋은 텍스트로 변환합니다.
+
+    예시 출력:
+      (narwhal) -[DOING]-> (swimming)
+      (narwhal) -[AT]-> (ocean)
+      (ice) -[AT]-> (river)
+    """
+    if not vlm_graph or not isinstance(vlm_graph, list):
+        return ""
+    lines = []
+    for triple in vlm_graph:
+        if isinstance(triple, dict):
+            s = triple.get("subject", "?")
+            r = triple.get("relation", "?")
+            o = triple.get("object", "?")
+            lines.append(f"({s}) -[{r}]-> ({o})")
+    return "\n".join(lines)
+
+
 def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_key, start_idx, end_idx):
     """*_processed.jsonl에서 vlm_img_structure 또는 vlm_mm_structure를 추출하여
     [Scene N] 태그와 함께 텍스트 형태로 반환합니다.
@@ -565,6 +585,8 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
                 vlm_data = scene.get(vlm_key, {})
                 if isinstance(vlm_data, str):
                     desc = vlm_data
+                elif isinstance(vlm_data, list):
+                    desc = format_vlm_graph_as_text(vlm_data)
                 else:
                     desc = format_vlm_structure_as_text(vlm_data)
                 
@@ -730,7 +752,9 @@ _TEXT_MODE_FETCHERS = {
     "frag":             lambda gs, cid, s, e: get_processed_frag_fields_by_scene_idx(gs, cid, s, e),
     "vlm":              lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_mm_description", s, e),
     "frag_with_vlm":    lambda gs, cid, s, e: get_processed_frag_with_vlm_by_scene_idx(gs, cid, s, e),
-    "imgvlm":           lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure", s, e),
+    "imgvlm_chunk2":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
+    "imgvlm_chunk3":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk3", s, e),
+    "imgvlm_graph":     lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
     "raw_with_mmvlm":   lambda gs, cid, s, e: get_gcs_raw_with_mmvlm_by_scene_idx(gs, cid, s, e),
 }
 
@@ -929,7 +953,7 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
                     pass
     
     # content_id → scene_idx → 정규 모드 순서(video → raw → frag → frag_with_vlm)로 정렬
-    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm": 3, "frag": 4, "vlm": 5, "frag_with_vlm": 6, "kss": 7}
+    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk3": 4, "imgvlm_graph": 5, "frag": 6, "vlm": 7, "frag_with_vlm": 8, "kss": 9}
     data_records.sort(key=lambda x: (
         x.get("content_id", ""),
         x.get("scene_idx", 0),

@@ -130,7 +130,7 @@ def main():
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
     parser.add_argument("--watch", action="store_true", help="파일을 계속 모니터링하여 새 질문을 실시간으로 평가합니다.")
-    parser.add_argument("--modes", nargs="+", default=["kss", "raw_with_mmvlm", "imgvlm"], choices=["video", "raw", "frag", "frag_with_vlm", "imgvlm", "raw_with_mmvlm", "kss"], help="평가할 모드 직접 지정 (기본값: kss, raw_with_mmvlm, imgvlm)")
+    parser.add_argument("--modes", nargs="+", default=["kss", "video", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"], choices=["kss", "video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"], help="평가할 모드 직접 지정 (기본값: kss, video, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)")
     
 
     args, client = init_pipeline(parser.parse_args())
@@ -138,9 +138,9 @@ def main():
 
     ensure_output_dir(args.scores_file)
 
-    processed_pairs = load_processed_pairs(args.scores_file)
+    processed_pairs = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
     if processed_pairs:
-        print(f"[{len(processed_pairs)}] 개의 (content_id, query) 쌍이 이미 처리됨.")
+        print(f"[{len(processed_pairs)}] 개의 (content_id, mode, query) 쌍이 이미 처리됨.")
 
     if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
         return
@@ -188,10 +188,11 @@ def main():
                         pass
                         
             if new_items:
+                # 모든 scene_item에서 pending 질문을 mode별로 그룹핑
+                pending_by_mode = {}
                 for scene_item in new_items:
                     content_id = scene_item.get("content_id")
                     scene_idx  = scene_item.get("scene_idx")
-                    # 새 flat 포맷: 각 줄이 단일 (content_id, scene_idx, mode) 레코드
                     mode        = scene_item.get("mode", "")
                     queries_list = scene_item.get("queries", [])
 
@@ -202,33 +203,39 @@ def main():
 
                     detailed_summary = summary_map.get((content_id, scene_idx), "")
 
-                    flat_queries = [{"mode": mode, "query": q_text} for q_text in queries_list]
+                    for q_text in queries_list:
+                        total_generated += 1
+                        if (content_id, mode, q_text) not in processed_pairs:
+                            pending_by_mode.setdefault(mode, []).append({
+                                "content_id": content_id,
+                                "scene_idx": scene_idx,
+                                "mode": mode,
+                                "query": q_text,
+                                "detailed_summary": detailed_summary,
+                            })
 
-                    total_generated += len(flat_queries)
-                    pending = [q for q in flat_queries if (content_id, q["query"]) not in processed_pairs]
-                    
-                    if not pending:
-                        continue
-
-                    start_time = float(scene_item.get("start_time", 0.0))
-                    end_time = float(scene_item.get("end_time", 0.0))
-                    print(f"\nEvaluating '{content_id}' Scene {scene_idx} [{mode}] | Range=[{start_time:.1f}s ~ {end_time:.1f}s] ({len(pending)}개 질문)")
-
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                # 모드별 순차 처리, 같은 모드 내 질문은 병렬
+                for mode, items in pending_by_mode.items():
+                    print(f"\n[{mode}] {len(items)}개 질문 병렬 평가 시작...")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
                         futures = [
                             executor.submit(
-                                judge_one, q, content_id, scene_idx, detailed_summary,
+                                judge_one,
+                                {"mode": item["mode"], "query": item["query"]},
+                                item["content_id"], item["scene_idx"], item["detailed_summary"],
                                 client, args, judge_config, file_write_lock
                             )
-                            for q in pending
+                            for item in items
                         ]
                         for future in concurrent.futures.as_completed(futures):
                             future.result()
                             total_evaluated += 1
-                            
-                    processed_pairs.update((content_id, q["query"]) for q in pending)
 
-                # TODO List 현황 출력 (한 사이클 처리 후)
+                    processed_pairs.update(
+                        (item["content_id"], item["mode"], item["query"]) for item in items
+                    )
+
+                # TODO List 현황 출력
                 pending_count = total_generated - total_evaluated
                 print(f"\n▶ [Judging TODO List] Total Generated: {total_generated} | Evaluated: {total_evaluated} | Pending: {pending_count}")
 
