@@ -10,6 +10,7 @@ from utils import (
     ensure_output_dir, load_processed_pairs,
     init_pipeline, load_jsonl, append_jsonl,
     load_summary_map,
+    sort_jsonl_file,
     print_pipeline_banner, print_pipeline_done,
 )
 
@@ -283,8 +284,8 @@ def main():
         print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
 
+    sort_jsonl_file(args.output_file)
     print_pipeline_done(args.output_file)
-
 
 if __name__ == "__main__":
     main()

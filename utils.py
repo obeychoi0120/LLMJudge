@@ -937,34 +937,22 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
         print(f"[Warning] 파일을 찾을 수 없습니다: {file_path}")
         return []
 
+    # 정렬 수행
+    sort_jsonl_file(file_path)
+
     print(f"\n{'='*50}")
-    print(f"결과 파일 정렬 및 검증: {file_path}")
-    
+    print(f"결과 파일 검증: {file_path}")
+
     data_records = []
     with open(file_path, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 try:
                     obj = json.loads(line)
-                    if obj.get("pipeline_done"):
-                        continue
-                    data_records.append(obj)
+                    if not obj.get("pipeline_done"):
+                        data_records.append(obj)
                 except json.JSONDecodeError:
                     pass
-    
-    # content_id → scene_idx → 정규 모드 순서(video → raw → frag → frag_with_vlm)로 정렬
-    _MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk3": 4, "imgvlm_graph": 5, "frag": 6, "vlm": 7, "frag_with_vlm": 8, "kss": 9}
-    data_records.sort(key=lambda x: (
-        x.get("content_id", ""),
-        x.get("scene_idx", 0),
-        _MODE_SORT_ORDER.get(x.get("mode", ""), 99)
-    ))
-    
-    # 덮어쓰기 (시그널 제거된 퓨어 데이터만)
-    with open(file_path, "w", encoding="utf-8") as f:
-        for rec in data_records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    print(f"-> 정렬 완료 ({len(data_records)}개 항목)")
 
     # 누락 점검
     print("\n[최종 누락분 점검]")
@@ -1071,3 +1059,33 @@ def print_pipeline_done(output_path):
     print("\n" + "=" * 50)
     print(f"모든 작업이 완료되었습니다. 저장 위치: {output_path}")
     print("=" * 50)
+
+
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk3": 4, "imgvlm_graph": 5, "frag": 6, "vlm": 7, "frag_with_vlm": 8, "kss": 9}
+
+def sort_jsonl_file(filepath):
+    """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
+    if not os.path.exists(filepath):
+        return
+    records = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    obj = json.loads(line)
+                    if not obj.get("pipeline_done"):
+                        records.append(obj)
+                except json.JSONDecodeError:
+                    pass
+    if not records:
+        return
+    records.sort(key=lambda x: (
+        x.get("content_id", ""),
+        x.get("scene_idx", 0),
+        _MODE_SORT_ORDER.get(x.get("mode", ""), 99),
+        x.get("query", ""),
+    ))
+    with open(filepath, "w", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    print(f"[정렬] {filepath} ({len(records)}개 항목 정렬 완료)")

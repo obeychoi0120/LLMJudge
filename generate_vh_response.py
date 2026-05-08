@@ -18,6 +18,7 @@ from utils import (
     ensure_output_dir,
     preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
+    sort_jsonl_file,
     load_keypoints_by_content, check_input_file,
     load_scenes,
     print_pipeline_banner, print_pipeline_done,
@@ -496,40 +497,19 @@ def _load_completed_pairs(output_path):
 # Validation
 # ============================================================
 
-_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk3": 4, "imgvlm_graph": 5, "frag": 6, "vlm": 7, "frag_with_vlm": 8, "kss": 9}
-
 def _validate_vh_responses(output_file, vh_input_file, target_modes):
     """VH Response 파일을 정렬하고, KSS Query × target mode 기준으로 누락을 점검합니다."""
     if not os.path.exists(output_file):
         print(f"[Warning] 파일을 찾을 수 없습니다: {output_file}")
         return
 
-    print(f"\n{'='*50}")
-    print(f"결과 파일 정렬 및 검증: {output_file}")
-
     # 1) 정렬
-    data_records = []
-    with open(output_file, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                try:
-                    obj = json.loads(line)
-                    if not obj.get("pipeline_done"):
-                        data_records.append(obj)
-                except json.JSONDecodeError:
-                    pass
+    sort_jsonl_file(output_file)
 
-    data_records.sort(key=lambda x: (
-        x.get("content_id", ""),
-        x.get("scene_idx", 0),
-        _MODE_SORT_ORDER.get(x.get("mode", ""), 99),
-        x.get("query", ""),
-    ))
+    print(f"\n{'='*50}")
+    print(f"결과 파일 검증: {output_file}")
 
-    with open(output_file, "w", encoding="utf-8") as f:
-        for rec in data_records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    print(f"-> 정렬 완료 ({len(data_records)}개 항목)")
+    data_records = load_jsonl(output_file)
 
     # 2) KSS Query × target mode 기준 누락 점검
     print("\n[최종 누락분 점검]")
