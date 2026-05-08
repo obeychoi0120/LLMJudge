@@ -622,6 +622,7 @@ def main():
     last_position = 0
     pipeline_done = False
     total_generated = 0
+    _checked_contents = set()
 
     def _process_kss_record(rec):
         """KSS VH 레코드의 queries를 공통 Query로 삼아 모든 target 모드에 대해 Response를 병렬 생성합니다."""
@@ -648,10 +649,11 @@ def main():
             return 0
 
         keypoints = keypoints_by_content.get(c_id, [])
-        if not check_gcs_files_exist(args.gs_bucket_name, c_id):
-            return 0
-
-        preload_content_metadata(args.gs_bucket_name, c_id)
+        if c_id not in _checked_contents:
+            if not check_gcs_files_exist(args.gs_bucket_name, c_id):
+                return 0
+            preload_content_metadata(args.gs_bucket_name, c_id)
+            _checked_contents.add(c_id)
         start_time = float(rec.get("start_time", 0.0))
         end_time = float(rec.get("end_time", 0.0))
         print(f"\n[VH Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | KSS Queries → {len(pending_items)}개 (mode×query) 조합 처리")
