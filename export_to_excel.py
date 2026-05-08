@@ -638,37 +638,33 @@ def aggregate_vh_response_scores(input_dir):
 
     for record in data:
         c_id = record.get("content_id")
-        if not c_id:
+        mode = record.get("mode")
+        judge = record.get("judge", {})
+        if not c_id or not mode or not judge:
             continue
 
-        judge = record.get("judge", {})
+        # total_score: 3개 metric 합계
+        ts = sum(
+            judge.get(k, {}).get("score", 0)
+            for k in metrics[:-1]
+            if isinstance(judge.get(k), dict)
+        )
 
-        for mode, mode_data in judge.items():
-            if not isinstance(mode_data, dict):
-                continue
+        if c_id not in by_video_raw:
+            by_video_raw[c_id] = {}
+        if mode not in by_video_raw[c_id]:
+            by_video_raw[c_id][mode] = {met: [] for met in metrics}
+        if mode not in overall_raw:
+            overall_raw[mode] = {met: [] for met in metrics}
 
-            # total_score: 3개 metric 합계
-            ts = sum(
-                mode_data.get(k, {}).get("score", 0)
-                for k in metrics[:-1]
-                if isinstance(mode_data.get(k), dict)
-            )
+        for met in metrics[:-1]:
+            val = judge.get(met, {}).get("score") if isinstance(judge.get(met), dict) else None
+            if isinstance(val, (int, float)):
+                by_video_raw[c_id][mode][met].append(val)
+                overall_raw[mode][met].append(val)
 
-            if c_id not in by_video_raw:
-                by_video_raw[c_id] = {}
-            if mode not in by_video_raw[c_id]:
-                by_video_raw[c_id][mode] = {met: [] for met in metrics}
-            if mode not in overall_raw:
-                overall_raw[mode] = {met: [] for met in metrics}
-
-            for met in metrics[:-1]:
-                val = mode_data.get(met, {}).get("score") if isinstance(mode_data.get(met), dict) else None
-                if isinstance(val, (int, float)):
-                    by_video_raw[c_id][mode][met].append(val)
-                    overall_raw[mode][met].append(val)
-
-            by_video_raw[c_id][mode]["total_score"].append(ts)
-            overall_raw[mode]["total_score"].append(ts)
+        by_video_raw[c_id][mode]["total_score"].append(ts)
+        overall_raw[mode]["total_score"].append(ts)
 
     # content_id별 평균 계산
     results_by_video = {}
@@ -710,50 +706,47 @@ def export_vh_response_details(input_dir, output_dir):
         print(f"[Skip] {scores_path} 파일이 없어 VH Response Details 내보내기를 건너뜁니다.")
         return
 
-    # (content_id, query) → scene_idx 매핑 및 (content_id, query, mode) → response 매핑
-    scene_idx_map = {}
+    # (content_id, scene_idx, mode, query) → response 매핑
     answer_map = {}
     responses_path = os.path.join(input_dir, "vh_responses.jsonl")
     if os.path.exists(responses_path):
         for r in load_jsonl(responses_path):
             c = r.get("content_id")
-            q = r.get("query")
             s = r.get("scene_idx")
-            ans = r.get("answers", {})
-            if c and q:
-                if s is not None:
-                    scene_idx_map[(c, q)] = s
-                for m, a in ans.items():
-                    answer_map[(c, q, m)] = a
+            m = r.get("mode")
+            q = r.get("query")
+            ans = r.get("answer")
+            if c and s is not None and m and q:
+                answer_map[(c, s, m, q)] = ans
 
     data = load_jsonl(scores_path)
     score_keys = ["answer_relevance", "factual_precision", "response_quality"]
-    mode_order = ["video", "raw", "raw_with_mmvlm", "imgvlm"]
 
     flat_rows = []
     for item in data:
         c_id    = item.get("content_id", "")
-        s_idx   = item.get("scene_idx") or scene_idx_map.get((c_id, item.get("query", "")))
+        s_idx   = item.get("scene_idx")
+        mode    = item.get("mode", "")
         query   = item.get("query", "")
         judge   = item.get("judge", {})
 
-        for mode in mode_order:
-            mode_data = judge.get(mode, {})
-            if not isinstance(mode_data, dict):
-                continue
-            ts = sum(
-                mode_data.get(k, {}).get("score", 0)
-                for k in score_keys
-                if isinstance(mode_data.get(k), dict)
-            )
-            response_text = answer_map.get((c_id, query, mode), "")
-            row = {"content_id": c_id, "scene_idx": s_idx, "query": query, "mode": mode, "response": response_text}
-            for k in score_keys:
-                met_data = mode_data.get(k, {})
-                row[f"rationale_{k}"] = met_data.get("rationale", "") if isinstance(met_data, dict) else ""
-                row[k]               = met_data.get("score", "")     if isinstance(met_data, dict) else ""
-            row["total_score"] = ts
-            flat_rows.append(row)
+        if not isinstance(judge, dict):
+            continue
+
+        ts = sum(
+            judge.get(k, {}).get("score", 0)
+            for k in score_keys
+            if isinstance(judge.get(k), dict)
+        )
+        response_text = answer_map.get((c_id, s_idx, mode, query), "")
+        row = {"content_id": c_id, "scene_idx": s_idx, "mode": mode, "query": query, "response": response_text}
+        
+        for k in score_keys:
+            met_data = judge.get(k, {})
+            row[f"rationale_{k}"] = met_data.get("rationale", "") if isinstance(met_data, dict) else ""
+            row[k]               = met_data.get("score", "")     if isinstance(met_data, dict) else ""
+        row["total_score"] = ts
+        flat_rows.append(row)
 
     if not flat_rows:
         print("[Skip] VH Response Score 데이터가 비어 있습니다.")

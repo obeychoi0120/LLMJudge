@@ -393,21 +393,20 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
 # ============================================================
 
 def _load_completed_pairs(output_path):
-    """완료된 (content_id, query) 쌍을 반환합니다.
-    모든 대상 모드가 에러 없이 완료된 경우만 완료로 간주합니다."""
+    """완료된 (content_id, scene_idx, mode, query) 쌍을 반환합니다."""
     completed = set()
-    _MODES = ("video", "raw", "raw_with_mmvlm", "imgvlm")
     for rec in load_jsonl(output_path):
         c_id = rec.get("content_id")
+        s_idx = rec.get("scene_idx")
+        mode = rec.get("mode")
         query = rec.get("query")
-        if not c_id or not query:
+        answer = rec.get("answer")
+        
+        if not (c_id and s_idx is not None and mode and query):
             continue
-        answers = rec.get("answers", {})
-        if all(
-            answers.get(m) and not str(answers.get(m, "")).startswith("Error")
-            for m in _MODES
-        ):
-            completed.add((c_id, query))
+            
+        if answer and not str(answer).startswith("Error"):
+            completed.add((c_id, s_idx, mode, query))
     return completed
 
 
@@ -416,8 +415,8 @@ def _load_completed_pairs(output_path):
 # ============================================================
 
 def main():
-    parser = get_common_argparser(description="Voice Hint (KSS 모드) 질문에 대해 4가지 Source 모드로 Response를 생성합니다.")
-    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로 (KSS 모드만 사용)")
+    parser = get_common_argparser(description="Voice Hint가 생성한 각 모드의 자체 질문에 대해 Response를 생성합니다.")
+    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--continuous", action="store_true", help="입력 파일을 지속적으로 모니터링하며 새 데이터가 들어오면 처리 (동시 실행용)")
@@ -453,39 +452,40 @@ def main():
             # 진행 현황 로드
             completed_pairs = _load_completed_pairs(args.output_file)
 
-            # voice_hint.jsonl에서 kss 모드 레코드만 수집
+            # voice_hint.jsonl에서 전체 모드 레코드 수집
             # 포맷: {content_id, scene_idx, mode, queries: [...], start_time, end_time, ...}
-            kss_records = []
+            vh_records = []
             for rec in load_jsonl(args.input_file):
                 if rec.get("pipeline_done"):
                     continue
-                if rec.get("mode") != "kss":
-                    continue
                 c_id    = rec.get("content_id")
                 s_idx   = rec.get("scene_idx")
+                mode    = rec.get("mode")
                 queries = rec.get("queries", [])
-                if c_id and s_idx is not None and queries:
-                    kss_records.append(rec)
+                if c_id and s_idx is not None and mode and queries:
+                    vh_records.append(rec)
 
-            if not kss_records and not args.continuous:
-                print(f"Error: {args.input_file} 에 KSS 모드 데이터가 없습니다.")
+            if not vh_records and not args.continuous:
+                print(f"Error: {args.input_file} 에 처리할 데이터가 없습니다.")
                 return
 
             # pending 작업 계산
             pending = []
-            for rec in kss_records:
+            for rec in vh_records:
                 c_id  = rec["content_id"]
                 s_idx = rec["scene_idx"]
+                mode  = rec["mode"]
                 for q_text in rec.get("queries", []):
-                    if (c_id, q_text) not in completed_pairs:
+                    if (c_id, s_idx, mode, q_text) not in completed_pairs:
                         pending.append({
                             "content_id": c_id,
                             "scene_idx":  s_idx,
+                            "mode":       mode,
                             "query":      q_text,
                         })
 
             if pending:
-                print(f"\n[TODO] 처리할 Query: {len(pending)}개")
+                print(f"\n[TODO] 처리할 항목: {len(pending)}개")
 
             new_data_processed = False
 
@@ -495,7 +495,7 @@ def main():
                 pending_by_content.setdefault(item["content_id"], []).append(item)
 
             for content_id, items in pending_by_content.items():
-                print(f"\nProcessing Content: '{content_id}' ({len(items)}개 Query)")
+                print(f"\nProcessing Content: '{content_id}' ({len(items)}개 항목)")
 
                 if not check_gcs_files_exist(args.gs_bucket_name, content_id):
                     continue
@@ -503,76 +503,66 @@ def main():
                 preload_content_metadata(args.gs_bucket_name, content_id)
                 keypoints = keypoints_by_content.get(content_id, [])
 
-                for item in items:
-                    scene_idx = item["scene_idx"]
-                    query     = item["query"]
+                # 병렬 처리를 위해 ThreadPoolExecutor 사용 (각 모드/질문 조합별 독립 수행)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                    futures = {}
+                    for item in items:
+                        scene_idx = item["scene_idx"]
+                        mode      = item["mode"]
+                        query     = item["query"]
 
-                    # 이미 완료된 경우 skip (루프 내에서 추가될 수 있으므로 재확인)
-                    if (content_id, query) in completed_pairs:
-                        continue
+                        if (content_id, scene_idx, mode, query) in completed_pairs:
+                            continue
 
-                    print(f"\n[Scene {scene_idx}] Query: {query}")
-
-                    # Source 빌드
-                    _MODES = ("video", "raw", "raw_with_mmvlm", "imgvlm")
-                    sources = {}
-                    try:
-                            for mode in _MODES:
-                                sources[mode] = _build_source(
+                        # 각 항목마다 개별적으로 _build_source 및 _generate_for_mode 수행하는 함수
+                        def process_item(item_data):
+                            s_idx = item_data["scene_idx"]
+                            m = item_data["mode"]
+                            q = item_data["query"]
+                            try:
+                                source = _build_source(
                                     args.gs_bucket_name, content_id,
-                                    scene_idx, keypoints, mode,
+                                    s_idx, keypoints, m,
                                     max_past_scenes=args.vh_response_past_scenes_size,
                                 )
-                    except Exception as e:
-                        print(f"[ERROR] Source 빌드 실패 (Scene {scene_idx}): {e}")
-                        continue
+                                _, answer, elapsed = _generate_for_mode(
+                                    client, args.vh_response_model, gen_configs,
+                                    source, m, q, s_idx
+                                )
+                                return item_data, answer, elapsed, None
+                            except Exception as e:
+                                return item_data, None, 0.0, str(e)
+                        
+                        futures[executor.submit(process_item, item)] = item
 
-                    # 병렬 Response 생성
-                    answers = {}
-                    elapsed_times = {}
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                        futures = {
-                            executor.submit(
-                                _generate_for_mode,
-                                client, args.vh_response_model, gen_configs,
-                                sources[mode], mode, query, scene_idx,
-                            ): mode
-                            for mode in _MODES
+                    for future in concurrent.futures.as_completed(futures):
+                        item, answer, elapsed, error = future.result()
+                        scene_idx = item["scene_idx"]
+                        mode      = item["mode"]
+                        query     = item["query"]
+
+                        print(f"\n[Scene {scene_idx} | {mode}] Query: {query}")
+                        if error:
+                            print(f"[ERROR] 처리 실패: {error}")
+                            status = "ERROR"
+                            answer = f"Error: {error}"
+                        else:
+                            status = "OK" if not answer.startswith("Error") else "ERROR"
+                            length_info = len(answer) if status == "OK" else 0
+                            print(f"-> Response ({elapsed:.1f}s, {length_info}자)")
+                            if status == "OK":
+                                print(answer)
+
+                        # Flat 형태로 개별 저장
+                        record = {
+                            "content_id": content_id,
+                            "scene_idx":  scene_idx,
+                            "mode":       mode,
+                            "query":      query,
+                            "answer":     answer,
                         }
-                        for future in concurrent.futures.as_completed(futures):
-                            mode, answer, elapsed = future.result()
-                            answers[mode] = answer
-                            elapsed_times[mode] = elapsed
-                            status = "OK" if not answer.startswith("Error") else "ERROR"
-                            
-                            # raw_with_mmvlm, imgvlm은 나오는 대로 즉시 출력
-                            if mode in ("raw_with_mmvlm", "imgvlm"):
-                                if status == "OK":
-                                    length_info = len(answer)
-                                    print(f"\n--- [{mode}] Response ({elapsed:.1f}s, {length_info}자) ---")
-                                    print(answer)
-                                else:
-                                    print(f"    [{mode}] {status} ({elapsed:.1f}s)")
-
-                    # 나머지 모드(raw, video)는 다 끝난 후 출력
-                    for mode in ("raw", "video"):
-                        if mode in answers:
-                            answer = answers[mode]
-                            elapsed = elapsed_times.get(mode, 0.0)
-                            status = "OK" if not answer.startswith("Error") else "ERROR"
-                            length_info = f", {len(answer)}자" if status == "OK" else ""
-                            print(f"    [{mode}] {status} ({elapsed:.1f}s{length_info})")
-
-                    # 저장
-                    record = {
-                        "content_id": content_id,
-                        "scene_idx":  scene_idx,
-                        "query":      query,
-                        "answers":    {m: answers[m] for m in _MODES if m in answers},
-                    }
-                    append_jsonl(args.output_file, record, lock=file_write_lock)
-                    completed_pairs.add((content_id, query))
-                    print(f"  -> Scene {scene_idx} 저장 완료")
+                        append_jsonl(args.output_file, record, lock=file_write_lock)
+                        completed_pairs.add((content_id, scene_idx, mode, query))
 
                 new_data_processed = True
                 print(f"\n[OK] '{content_id}' 완료")

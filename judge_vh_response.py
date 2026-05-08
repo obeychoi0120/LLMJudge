@@ -113,15 +113,18 @@ def main():
 
     ensure_output_dir(args.output_file)
 
-    # 기처리분 로드: (content_id, query) 단위
+    # 기처리분 로드: (content_id, scene_idx, mode, query) 단위
     processed_pairs = set()
-    for rec in load_jsonl(args.output_file):
-        c_id  = rec.get("content_id")
-        query = rec.get("query")
-        if c_id and query:
-            processed_pairs.add((c_id, query))
+    if os.path.exists(args.output_file):
+        for rec in load_jsonl(args.output_file):
+            c_id  = rec.get("content_id")
+            s_idx = rec.get("scene_idx")
+            mode  = rec.get("mode")
+            query = rec.get("query")
+            if c_id and s_idx is not None and mode and query:
+                processed_pairs.add((c_id, s_idx, mode, query))
     if processed_pairs:
-        print(f"[기처리] {len(processed_pairs)}개 (content_id, query) 쌍이 이미 처리됨.")
+        print(f"[기처리] {len(processed_pairs)}개 항목이 이미 평가 완료됨.")
 
     # KSS Anchor 로드
     summary_map = load_summary_map(args.keyscene_summary_file)
@@ -146,77 +149,66 @@ def main():
     total_evaluated = 0
 
     def judge_query_item(data):
-        """단일 {content_id, scene_idx, query, answers} 레코드를 평가합니다."""
+        """단일 {content_id, scene_idx, mode, query, answer} 레코드를 평가합니다."""
         c_id = data["content_id"]
         s_idx = data.get("scene_idx")
+        mode = data.get("mode")
         query = data["query"]
-        answers = data.get("answers", {})
+        generated_answer = data.get("answer")
         anchor = summary_map.get((c_id, s_idx), "")
 
         if not anchor:
             print(f"[Warning] ({c_id}, Scene {s_idx}) KSS Anchor 없음 — 스킵")
             return None
 
+        if not generated_answer or str(generated_answer).startswith("Error"):
+            print(f"[Skip] ({c_id}, Scene {s_idx}, {mode}) 유효한 답변이 없습니다.")
+            return None
+
         print(f"\n{'='*60}")
-        print(f"[Judge] '{c_id}' | Scene {s_idx}")
+        print(f"[Judge] '{c_id}' | Scene {s_idx} | Mode: {mode}")
         print(f"Query: {query}")
         print(f"{'='*60}")
 
-        def judge_for_mode(mode):
-            generated_answer = answers.get(mode)
-            if not generated_answer or str(generated_answer).startswith("Error"):
-                return mode, None
-            score_dict = retry_parse_json(
-                lambda: evaluate_answer(
-                    client=client,
-                    model_name=args.vh_response_judge_model,
-                    judge_config=judge_config,
-                    user_prompt=query,
-                    generated_answer=generated_answer,
-                    keyscene_summary=anchor,
-                ),
-                label=f"VH Judge ({c_id}, {mode})",
-            )
-            return mode, score_dict
+        score_dict = retry_parse_json(
+            lambda: evaluate_answer(
+                client=client,
+                model_name=args.vh_response_judge_model,
+                judge_config=judge_config,
+                user_prompt=query,
+                generated_answer=generated_answer,
+                keyscene_summary=anchor,
+            ),
+            label=f"VH Judge ({c_id}, {mode})",
+        )
 
-        judge_results = {}
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-        try:
-            futures = {m: executor.submit(judge_for_mode, m) for m in _MODE_ORDER}
-            for mode in _MODE_ORDER:
-                _, score_dict = futures[mode].result()
-                if score_dict is None:
-                    print(f"[{mode}] Skip (no valid answer)")
-                    continue
-                judge_results[mode] = score_dict
-                total = sum(
-                    (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
-                    for k in _SCORE_KEYS
-                )
-                scores_str = " | ".join(
-                    f"{k}={score_dict.get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
-                )
-                print(f"\n[{mode}] Total: {total}/15 | {scores_str}")
-                for k in _SCORE_KEYS:
-                    item = score_dict.get(k, {})
-                    score = item.get("score", "?") if isinstance(item, dict) else "?"
-                    rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
-                    print(f"- {k} ({score}/5): {rationale}")
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
-
-        if not judge_results:
+        if not score_dict:
             return None
+
+        total = sum(
+            (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
+            for k in _SCORE_KEYS
+        )
+        scores_str = " | ".join(
+            f"{k}={score_dict.get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
+        )
+        print(f"[{mode}] Total: {total}/15 | {scores_str}")
+        for k in _SCORE_KEYS:
+            item = score_dict.get(k, {})
+            score = item.get("score", "?") if isinstance(item, dict) else "?"
+            rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
+            print(f"- {k} ({score}/5): {rationale}")
 
         record = {
             "content_id": c_id,
             "scene_idx":  s_idx,
-            "query":       query,
-            "judge":       {m: judge_results[m] for m in _MODE_ORDER if m in judge_results},
+            "mode":       mode,
+            "query":      query,
+            "judge":      score_dict
         }
         with file_write_lock:
             append_jsonl(args.output_file, record)
-            processed_pairs.add((c_id, query))
+            processed_pairs.add((c_id, s_idx, mode, query))
         return record
 
     try:
@@ -243,10 +235,12 @@ def main():
                     continue
 
                 c_id  = obj.get("content_id")
+                s_idx = obj.get("scene_idx")
+                mode  = obj.get("mode")
                 query = obj.get("query")
-                if not c_id or not query:
+                if not (c_id and s_idx is not None and mode and query):
                     continue
-                if (c_id, query) in processed_pairs:
+                if (c_id, s_idx, mode, query) in processed_pairs:
                     continue
 
                 result = judge_query_item(obj)
