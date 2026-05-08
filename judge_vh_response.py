@@ -149,7 +149,7 @@ def main():
     total_evaluated = 0
 
     def judge_query_item(data):
-        """단일 {content_id, scene_idx, mode, query, answer} 레코드를 평가합니다."""
+        """단일 {content_id, scene_idx, mode, query, answer} 레코드를 평가합니다. (로깅 없이 결과만 반환)"""
         c_id = data["content_id"]
         s_idx = data.get("scene_idx")
         mode = data.get("mode")
@@ -158,17 +158,9 @@ def main():
         anchor = summary_map.get((c_id, s_idx), "")
 
         if not anchor:
-            print(f"[Warning] ({c_id}, Scene {s_idx}) KSS Anchor 없음 — 스킵")
             return None
-
         if not generated_answer or str(generated_answer).startswith("Error"):
-            print(f"[Skip] ({c_id}, Scene {s_idx}, {mode}) 유효한 답변이 없습니다.")
             return None
-
-        print(f"\n{'='*60}")
-        print(f"[Judge] '{c_id}' | Scene {s_idx} | Mode: {mode}")
-        print(f"Query: {query}")
-        print(f"{'='*60}")
 
         score_dict = retry_parse_json(
             lambda: evaluate_answer(
@@ -189,27 +181,47 @@ def main():
             (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
             for k in _SCORE_KEYS
         )
-        scores_str = " | ".join(
-            f"{k}={score_dict.get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
-        )
-        print(f"[{mode}] Total: {total}/15 | {scores_str}")
-        for k in _SCORE_KEYS:
-            item = score_dict.get(k, {})
-            score = item.get("score", "?") if isinstance(item, dict) else "?"
-            rationale = item.get("rationale", "N/A") if isinstance(item, dict) else "N/A"
-            print(f"- {k} ({score}/5): {rationale}")
 
         record = {
             "content_id": c_id,
             "scene_idx":  s_idx,
             "mode":       mode,
             "query":      query,
-            "judge":      score_dict
+            "judge":      score_dict,
+            "total":      total,
         }
         with file_write_lock:
             append_jsonl(args.output_file, record)
             processed_pairs.add((c_id, s_idx, mode, query))
         return record
+
+    def _process_query_group(query_text, items):
+        """같은 Query의 여러 mode를 병렬 평가 후, Query 한 번 출력 → mode별 점수를 정렬 출력합니다."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
+            futures = {executor.submit(judge_query_item, obj): obj for obj in items}
+            results = []
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
+        if not results:
+            return 0
+
+        # Query 한 번 출력
+        c_id = results[0]["content_id"]
+        s_idx = results[0]["scene_idx"]
+        print(f"\n[Scene {s_idx}] Query: {query_text}")
+
+        # mode 정렬 출력
+        results.sort(key=lambda r: _MODE_ORDER.index(r["mode"]) if r["mode"] in _MODE_ORDER else 99)
+        for r in results:
+            scores_str = " | ".join(
+                f"{k}={r['judge'].get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
+            )
+            print(f"  -> [{r['mode']}] {r['total']}/15 ({scores_str})")
+
+        return len(results)
 
     try:
         while True:
@@ -246,13 +258,17 @@ def main():
                 pending.append(obj)
 
             if pending:
-                print(f"\n[Judge] 새 항목 {len(pending)}개 → 병렬 평가 시작 (max_workers=4)")
-                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                    futures = {executor.submit(judge_query_item, obj): obj for obj in pending}
-                    for future in concurrent.futures.as_completed(futures):
-                        result = future.result()
-                        if result:
-                            total_evaluated += 1
+                # Query별 그룹핑 → Query 단위로 순차, 모드는 병렬
+                from collections import OrderedDict
+                query_groups = OrderedDict()
+                for obj in pending:
+                    q_key = (obj["content_id"], obj["scene_idx"], obj["query"])
+                    query_groups.setdefault(q_key, []).append(obj)
+
+                print(f"\n[Judge] 새 항목 {len(pending)}개 ({len(query_groups)}개 Query) 평가 시작")
+                for (c_id, s_idx, q_text), items in query_groups.items():
+                    total_evaluated += _process_query_group(q_text, items)
+
                 print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
 
             if args.watch:
