@@ -235,10 +235,29 @@ def main():
                 time.sleep(3)
                 continue
 
-            with open(args.answers_file, "r", encoding="utf-8") as f:
-                f.seek(last_position)
-                new_lines     = f.readlines()
-                last_position = f.tell()
+            new_lines = []
+            try:
+                with open(args.answers_file, "r", encoding="utf-8") as f:
+                    f.seek(last_position)
+                    while True:
+                        try:
+                            line = f.readline()
+                        except UnicodeDecodeError:
+                            # 파일 마지막에 한국어 등 멀티바이트 문자가 절반만 기록된 상태
+                            break
+                        
+                        if not line:
+                            break
+                            
+                        # 완벽히 한 줄이 기록되었는지 확인 (JSONL은 \n으로 끝나야 함)
+                        if not line.endswith("\n"):
+                            break
+                            
+                        new_lines.append(line)
+                        last_position = f.tell()
+            except IOError:
+                time.sleep(1)
+                continue
 
             for line in new_lines:
                 if not line.strip():
