@@ -640,65 +640,66 @@ def main():
 
         # Source 캐시: 같은 Scene의 같은 mode는 Source를 1번만 빌드
         source_cache = {}
-
-        # Query별로 한 번만 출력하기 위한 추적
-        printed_queries = set()
         count = 0
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(target_modes)) as executor:
-            futures = {}
-            for item in pending_items:
-                def process_item(item_data):
-                    _s_idx = item_data["scene_idx"]
-                    _m = item_data["mode"]
-                    _q = item_data["query"]
-                    try:
-                        # Source 캐시 활용
-                        if _m not in source_cache:
-                            source_cache[_m] = _build_source(
-                                args.gs_bucket_name, c_id,
-                                _s_idx, keypoints, _m,
-                                max_past_scenes=args.vh_response_past_scenes_size,
+        # Query 단위로 그룹핑
+        from collections import OrderedDict
+        query_groups = OrderedDict()
+        for item in pending_items:
+            query_groups.setdefault(item["query"], []).append(item)
+
+        for q_text, items in query_groups.items():
+            print(f"\n[{c_id} | Scene {s_idx}] \nQuery: {q_text}")
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(target_modes)) as executor:
+                futures = {}
+                for item in items:
+                    def process_item(item_data):
+                        _s_idx = item_data["scene_idx"]
+                        _m = item_data["mode"]
+                        _q = item_data["query"]
+                        try:
+                            # Source 캐시 활용 (같은 Query 내에서는 _m이 중복되지 않으므로 Thread-safe)
+                            if _m not in source_cache:
+                                source_cache[_m] = _build_source(
+                                    args.gs_bucket_name, c_id,
+                                    _s_idx, keypoints, _m,
+                                    max_past_scenes=args.vh_response_past_scenes_size,
+                                )
+                            source = source_cache[_m]
+                            _, answer, elapsed = _generate_for_mode(
+                                client, args.vh_response_model, gen_configs,
+                                source, _m, _q, _s_idx
                             )
-                        source = source_cache[_m]
-                        _, answer, elapsed = _generate_for_mode(
-                            client, args.vh_response_model, gen_configs,
-                            source, _m, _q, _s_idx
-                        )
-                        return item_data, answer, elapsed, None
-                    except Exception as e:
-                        return item_data, None, 0.0, str(e)
+                            return item_data, answer, elapsed, None
+                        except Exception as e:
+                            return item_data, None, 0.0, str(e)
 
-                futures[executor.submit(process_item, item)] = item
+                    futures[executor.submit(process_item, item)] = item
 
-            for future in concurrent.futures.as_completed(futures):
-                item, answer, elapsed, error = future.result()
-                scene_idx = item["scene_idx"]
-                mode      = item["mode"]
-                query     = item["query"]
+                for future in concurrent.futures.as_completed(futures):
+                    item, answer, elapsed, error = future.result()
+                    scene_idx = item["scene_idx"]
+                    mode      = item["mode"]
+                    query     = item["query"]
 
-                # Query를 처음 만나면 한 번만 출력
-                if query not in printed_queries:
-                    print(f"\n[Scene {scene_idx}] Query: {query}")
-                    printed_queries.add(query)
+                    if error:
+                        print(f"  -> [{mode}] ERROR: {error}")
+                        answer = f"Error: {error}"
+                    else:
+                        length_info = len(answer) if not answer.startswith("Error") else 0
+                        print(f"  -> [{mode}] OK ({elapsed:.1f}s, {length_info}자)")
 
-                if error:
-                    print(f"  -> [{mode}] ERROR: {error}")
-                    answer = f"Error: {error}"
-                else:
-                    length_info = len(answer) if not answer.startswith("Error") else 0
-                    print(f"  -> [{mode}] OK ({elapsed:.1f}s, {length_info}자)")
-
-                record = {
-                    "content_id": c_id,
-                    "scene_idx":  scene_idx,
-                    "mode":       mode,
-                    "query":      query,
-                    "answer":     answer,
-                }
-                append_jsonl(args.output_file, record, lock=file_write_lock)
-                completed_pairs.add((c_id, scene_idx, mode, query))
-                count += 1
+                    record = {
+                        "content_id": c_id,
+                        "scene_idx":  scene_idx,
+                        "mode":       mode,
+                        "query":      query,
+                        "answer":     answer,
+                    }
+                    append_jsonl(args.output_file, record, lock=file_write_lock)
+                    completed_pairs.add((c_id, scene_idx, mode, query))
+                    count += 1
 
         return count
 

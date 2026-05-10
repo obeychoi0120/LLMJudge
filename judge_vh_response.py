@@ -212,7 +212,7 @@ def main():
         # Query 한 번 출력
         c_id = results[0]["content_id"]
         s_idx = results[0]["scene_idx"]
-        print(f"\n[Scene {s_idx}] Query: {query_text}")
+        print(f"\n[{c_id} | Scene {s_idx}] \nQuery: {query_text}")
 
         # mode 정렬 출력
         results.sort(key=lambda r: _MODE_ORDER.index(r["mode"]) if r["mode"] in _MODE_ORDER else 99)
@@ -262,11 +262,14 @@ def main():
                 # Query별 그룹핑 → Query 단위로 순차, 모드는 병렬
                 from collections import OrderedDict
                 query_groups = OrderedDict()
+                c_ids = set()
                 for obj in pending:
+                    c_ids.add(obj["content_id"])
                     q_key = (obj["content_id"], obj["scene_idx"], obj["query"])
                     query_groups.setdefault(q_key, []).append(obj)
 
-                print(f"\n[Judge] 새 항목 {len(pending)}개 ({len(query_groups)}개 Query) 평가 시작")
+                c_id_str = ", ".join(sorted(str(c) for c in c_ids))
+                print(f"\n[Judge] [{c_id_str}] 새 항목 {len(pending)}개 ({len(query_groups)}개 Query) 평가 시작")
                 for (c_id, s_idx, q_text), items in query_groups.items():
                     total_evaluated += _process_query_group(q_text, items)
 
