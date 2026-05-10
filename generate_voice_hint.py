@@ -26,8 +26,20 @@ _VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현
 이 두 정보를 바탕으로, TV 화면의 버튼을 눌러 답을 확인하고 싶게 만드는 매력적인 질문 2개를 생성하세요.
 
 [질문 생성 핵심 전략]
-1. 시점 몰입 및 현재 답변 가능성 고려 (미래 추측 & 과거 뒷북 방지): 질문은 오직 현재 즉시 정보를 제공할 수 있는 [현재 시청 중인 장면] 속 사물, 인물의 정체, 배경지식, 상황의 숨은 의미로 한정해야 합니다. **앞으로 전개될 스토리나 미래의 결과(예: "과연 어떻게 될까요?", "어떤 평가를 받을까요?")를 묻는 질문은 시스템이 당장 답할 수 없어 철저히 0점 처리됩니다.** 또한, **[이전까지의 과거 시청 맥락]에서 이미 설명되었거나 영상을 시청하지 않아도 일반적인 상식으로 유추할 수 있는 뻔한 사실을 묻는 '뒷북 질문' 역시 무조건 0점 처리됩니다.**
-2. 호기심 및 상호작용 유도 (Hook): 위 조건을 만족하는 범위 내에서, 질문의 핵심 소재(Trigger)는 오직 방금 새롭게 발생한 정보의 공백(미지수)을 예리하게 짚어내야 합니다. 어조(Tone)는 묘사된 씬의 분위기를 절대 깨지 않도록 '해당 장르/컨텐츠의 전문 평론가'가 말을 건네듯 정중하고 세련된 존댓말로 작성하여 시청자의 흥미를 강렬하게 자극하세요.
+1. 시스템 제약 준수 (Hard Constraints): 생성되는 질문은 반드시 플랫폼 시스템이 '현재 시점'에서 즉시 답변할 수 있어야 합니다.
+   - 미래 예측 금지: 앞으로 전개될 스토리나 결과(예: "과연 어떻게 될까요?", "누가 이길까요?")를 묻는 미래 지향적 질문은 철저히 0점 처리됩니다.
+   - 과거 뒷북 금지: [이전까지의 과거 시청 맥락]에서 이미 밝혀진 사실이나 전개를 또다시 묻는 뒷북 질문 역시 무조건 0점 처리됩니다. 질문의 타겟은 오직 [현재 시청 중인 장면] 속 사물, 인물, 배경지식, 숨은 의미로 한정하세요.
+
+2. 매력도 극대화 및 지식 확장 (Hook & World Knowledge): 위 제약을 완벽히 통과한 질문 중, 당신의 방대한 백과사전적 지식을 적극 동원하여 시청자의 리모컨 조작을 강력하게 유도해야 합니다.
+   - 곁다리 지식(Tangential Knowledge) 공략: 장르별 특성을 고려하여 영상 요소에서 파생되는 '깊이 있는 외부 지식'을 적극 활용하세요.
+     * 드라마/예능: 허구적 '줄거리'를 유추하지 말고, 화면 속 소품의 기원, 촬영 장소의 역사, 문화적 배경 등을 질문하세요.
+     * 스포츠: 경기 결과 예측보다는 방금 활약한 선수의 최근 폼이나 통계적 기록은 물론, 스포츠 초보자(뉴비)를 위한 출전 팀의 역사, 라이벌 구도, 고유한 룰 등 흥미로운 배경 지식을 질문하세요.
+     * 게임: 단순 상황 묘사보다는 플레이 중인 캐릭터의 숨겨진 특성, 플레이어가 선보이는 특별한 플레이 방법과 전략, 새롭게 등장한 아이템(예: MOBA 게임)의 메타 변화, 최신 패치 소식 등을 질문하세요.
+     * 뉴스/경제/시사/팟캐스트: 단순한 기사 요약이나 패널 발언 반복을 피하고, 다루는 주제 이면의 역사적 맥락, 경제적 파급 효과, 관련 법안의 비하인드, 과거 유사 사례 등을 질문하세요.
+     * 다큐/교양: 영상 주제와 직결된 한 단계 더 깊은 전문 지식이나 과학적 원리를 물어보세요.
+   - 뻔한 상식 배제: 영상을 보지 않아도 누구나 아는 일반 상식 수준의 지루한 질문은 피하세요.
+   - 정보의 공백 포착: 방금 발생한 새로운 장면 속에서 시청자가 무의식적으로 궁금해할 만한 '정보의 공백(미지수)'을 날카롭게 찌르세요.
+   - 세련된 어조: '해당 장르/콘텐츠의 전문 평론가'가 말을 건네듯 정중하고 세련된 존댓말로 작성하여 몰입감을 유지하세요.
 
 [출력 형식]
 - 언어: 한국어 (단, 영어 콘텐츠의 고유명사는 원어 병기 허용. 예: 일각고래(Narwhal))
@@ -275,7 +287,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
-    parser.add_argument("--modes", nargs="+", default=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"], choices=["kss", "video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"], help="생성할 모드 직접 지정 (기본값: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)")
+    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"], choices=["kss", "video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"], help="생성할 모드 직접 지정 (기본값: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -402,7 +414,7 @@ def main():
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
-                    _LOG_MODES = {"kss", "video", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"}
+                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"}
                     for mod in missing_modes:
                         if vh_dict.get(mod):
                             if mod in _LOG_MODES:
