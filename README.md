@@ -54,17 +54,17 @@ flowchart TD
 
     subgraph TRACKS[" "]
         direction LR
-        subgraph ATRACK["A-Track: Voice Hint"]
-            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / chunk3 / graph"]
-            VH["voice_hint.jsonl"]
-            A4["A-4. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
-            VHS["voice_hint_scores.jsonl"]
-        end
         subgraph BTRACK["B-Track: VH Response"]
             B1["B-1. generate_vh_response.py\nKSS에서 생성된 고품질 VH를 공통 Query로 사용\n각 모드별 Source로 답변 생성"]
             VHR["vh_responses.jsonl"]
             B2["B-2. judge_vh_response.py\n(KSS + World Knowledge, 3기준 15점)"]
             VHRS["vh_response_scores.jsonl"]
+        end
+        subgraph ATRACK["A-Track: Voice Hint"]
+            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / chunk3 / graph"]
+            VH["voice_hint.jsonl"]
+            A4["A-4. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
+            VHS["voice_hint_scores.jsonl"]
         end
     end
 
