@@ -564,7 +564,7 @@ def main():
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--watch", action="store_true", help="입력 파일을 모니터링하며 새 데이터가 들어오면 실시간으로 처리합니다.")
     parser.add_argument("--modes", nargs="+",
-                        default=["video", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"],
+                        default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"],
                         choices=["video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"],
                         help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변)")
 
