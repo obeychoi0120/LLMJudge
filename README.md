@@ -52,18 +52,20 @@ flowchart TD
         KSS["keyscene_summary.jsonl\n(Ground Truth Anchor)"]
     end
 
-    subgraph ATRACK["A-Track: Voice Hint"]
-        A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / chunk3 / graph"]
-        VH["voice_hint.jsonl"]
-        A4["A-4. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
-        VHS["voice_hint_scores.jsonl"]
-    end
-
-    subgraph BTRACK["B-Track: VH Response"]
-        B1["B-1. generate_vh_response.py\nkss Query x 각 모드별 Source 조합"]
-        VHR["vh_responses.jsonl"]
-        B2["B-2. judge_vh_response.py\n(KSS + World Knowledge, 3기준 15점)"]
-        VHRS["vh_response_scores.jsonl"]
+    subgraph TRACKS[" "]
+        direction LR
+        subgraph ATRACK["A-Track: Voice Hint"]
+            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / chunk3 / graph"]
+            VH["voice_hint.jsonl"]
+            A4["A-4. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
+            VHS["voice_hint_scores.jsonl"]
+        end
+        subgraph BTRACK["B-Track: VH Response"]
+            B1["B-1. generate_vh_response.py\nKSS에서 생성된 고품질 VH를 공통 Query로 사용\n각 모드별 Source로 답변 생성"]
+            VHR["vh_responses.jsonl"]
+            B2["B-2. judge_vh_response.py\n(KSS + World Knowledge, 3기준 15점)"]
+            VHRS["vh_response_scores.jsonl"]
+        end
     end
 
     CL --> A1
@@ -73,20 +75,18 @@ flowchart TD
     GCS -.-> A2
     A2 --> KSS
 
-    KP --> A3
     KSS --> A3
+    KP --> A3
     GCS -.-> A3
     A3 --> VH
-
     VH --> A4
     KSS --> A4
     A4 --> VHS
 
-    VH -- "kss 모드 결과 = 공통 Query" --> B1
+    KSS --> B1
     KP --> B1
     GCS -.-> B1
     B1 --> VHR
-
     VHR --> B2
     KSS --> B2
     B2 --> VHRS
@@ -97,7 +97,7 @@ flowchart TD
 | Step | 스크립트 | Output | 모델 |
 |------|----------|--------|------|
 | A-1 | `identify_keyscene.py` | `keypoint_scenes.jsonl` | Flash Lite |
-| A-2 | `generate_keyscene_summary.py` | `keyscene_summary.jsonl` | Pro → Pro |
+| A-2 | `generate_keyscene_summary.py` | `keyscene_summary.jsonl` | Pro |
 | A-3 | `generate_voice_hint.py` | `voice_hint.jsonl` | Flash Lite |
 | A-4 | `judge_voice_hint.py` | `voice_hint_scores.jsonl` | Pro |
 | B-1 | `generate_vh_response.py` | `vh_responses.jsonl` | Flash Lite |
