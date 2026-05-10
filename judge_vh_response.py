@@ -224,9 +224,14 @@ def main():
 
         return len(results)
 
+    from collections import OrderedDict
+    unprocessed_groups = OrderedDict()
+
     try:
         while True:
             if not os.path.exists(args.answers_file):
+                if not args.watch:
+                    break
                 time.sleep(3)
                 continue
 
@@ -235,7 +240,6 @@ def main():
                 new_lines     = f.readlines()
                 last_position = f.tell()
 
-            pending = []
             for line in new_lines:
                 if not line.strip():
                     continue
@@ -256,31 +260,41 @@ def main():
                     continue
                 if (c_id, s_idx, mode, query) in processed_pairs:
                     continue
-                pending.append(obj)
+                
+                q_key = (c_id, s_idx, query)
+                unprocessed_groups.setdefault(q_key, []).append(obj)
 
-            if pending:
-                # Query별 그룹핑 → Query 단위로 순차, 모드는 병렬
-                from collections import OrderedDict
-                query_groups = OrderedDict()
-                c_ids = set()
-                for obj in pending:
-                    c_ids.add(obj["content_id"])
-                    q_key = (obj["content_id"], obj["scene_idx"], obj["query"])
-                    query_groups.setdefault(q_key, []).append(obj)
+            ready_groups = OrderedDict()
+            for q_key, items in list(unprocessed_groups.items()):
+                # 모든 모드가 모였거나(기본 6개) 파이프라인이 완료되었을 경우에만 평가 진행
+                if len(items) >= len(_MODE_ORDER) or pipeline_done:
+                    ready_groups[q_key] = items
+                    del unprocessed_groups[q_key]
 
+            if ready_groups:
+                c_ids = set(q_key[0] for q_key in ready_groups.keys())
                 c_id_str = ", ".join(sorted(str(c) for c in c_ids))
-                print(f"\n[Judge] [{c_id_str}] 새 항목 {len(pending)}개 ({len(query_groups)}개 Query) 평가 시작")
-                for (c_id, s_idx, q_text), items in query_groups.items():
+                ready_items_count = sum(len(items) for items in ready_groups.values())
+                print(f"\n[Judge] [{c_id_str}] 새 항목 {ready_items_count}개 ({len(ready_groups)}개 Query) 평가 시작")
+                for (c_id, s_idx, q_text), items in ready_groups.items():
                     total_evaluated += _process_query_group(q_text, items)
 
                 print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
 
             if args.watch:
-                if pipeline_done:
-                    print("\n[Watch] pipeline_done 시그널 감지. 종료합니다.")
+                if pipeline_done and not unprocessed_groups:
+                    print("\n[Watch] pipeline_done 시그널 감지 및 모든 평가 완료. 종료합니다.")
                     break
                 time.sleep(3)
             else:
+                if unprocessed_groups:
+                    c_ids = set(q_key[0] for q_key in unprocessed_groups.keys())
+                    c_id_str = ", ".join(sorted(str(c) for c in c_ids))
+                    ready_items_count = sum(len(items) for items in unprocessed_groups.values())
+                    print(f"\n[Judge] [{c_id_str}] 남은 항목 {ready_items_count}개 ({len(unprocessed_groups)}개 Query) 강제 평가 시작")
+                    for (c_id, s_idx, q_text), items in unprocessed_groups.items():
+                        total_evaluated += _process_query_group(q_text, items)
+                    print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
                 break
 
     except KeyboardInterrupt:
