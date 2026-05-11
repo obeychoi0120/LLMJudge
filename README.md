@@ -268,6 +268,10 @@ python generate_keyscene_summary.py               # A-2: KeyScene Summary 생성
 python generate_voice_hint.py                     # A-3: Voice Hint 생성 (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)
 python judge_voice_hint.py                        # A-4: Voice Hint Judge (모드: kss, video, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)
 
+# 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
+python generate_voice_hint.py --modes imgvlm_chunk2 video
+python judge_voice_hint.py --modes imgvlm_chunk2 video
+
 # Watch 모드 병렬 실행:
 python generate_voice_hint.py &                   # 터미널 1
 python judge_voice_hint.py --watch                # 터미널 2
@@ -277,6 +281,10 @@ python judge_voice_hint.py --watch                # 터미널 2
 ```bash
 python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)
 python judge_vh_response.py                       # B-2: Response Judge
+
+# 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
+python generate_vh_response.py --modes imgvlm_chunk2 video
+python judge_vh_response.py --modes imgvlm_chunk2 video
 
 # Watch 모드 병렬 실행:
 python generate_vh_response.py &                  # 터미널 1
@@ -300,9 +308,13 @@ python judge_vh_response.py --watch
 python main.py --input_file content_list.json
 ```
 
-### Analytics
+### Analytics 및 데이터 관리 유틸리티
 ```bash
-python export_to_excel.py                         # Excel 리포트 생성
+# 평가 결과 Excel 리포트 생성
+python export_to_excel.py
+
+# 특정 모드 평가 결과 및 생성 데이터를 파일에서 일괄 삭제 (재평가를 위해)
+python clean_assets.py --modes imgvlm_chunk2 imgvlm_chunk3
 ```
 
 ## 주요 산출 데이터 형식 (assets/)
