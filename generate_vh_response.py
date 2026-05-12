@@ -308,7 +308,6 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
         else:
             label_map = {
                 "raw": "Raw Metadata (speech & text, 처음부터 현재 장면까지)",
-                "vlm": "VLM Structure Only (처음부터 현재 장면까지)",
                 "imgvlm_chunk2": "VLM Image Structure — 2-word Chunks (처음부터 현재 장면까지)",
                 "imgvlm_graph": "VLM Scene Knowledge Graph (처음부터 현재 장면까지)",
                 "raw_with_mmvlm": "Raw ASR/OCR + VLM Multimodal Description (처음부터 현재 장면까지)",

@@ -182,7 +182,7 @@ LLMJudge/
 ├── utils.py                         # Gemini SDK, GCS 연동, 공통 유틸
 ├── export_to_excel.py               # Excel 리포트 생성
 ├── jsonl_to_json.py                 # JSONL → Pretty JSON 변환 유틸
-├── clean_vh_desc.py                 # JSONL 내 특정 모드 제거 유틸
+├── clean_assets.py                  # JSONL 내 특정 모드 제거 유틸
 ├── config.json                      # 실행 설정 (GCP, 모델명 등)
 ├── content_list.json                # 평가 대상 Content ID 목록
 ├── sample_config.json               # config.json 템플릿
@@ -238,17 +238,13 @@ LLMJudge/
     "vh_gen_model": "gemini-3.1-flash-lite-preview",
     "vh_gen_past_scenes_size": 5,
     "vh_thinking_level": "medium",
+    "vh_judge_model": "gemini-3.1-pro-preview",
+    "vh_judge_thinking_level": "high",
     "vh_response_model": "gemini-3.1-flash-lite-preview",
     "vh_response_past_scenes_size": 5,
     "vh_response_thinking_level": "medium",
     "vh_response_judge_model": "gemini-3.1-pro-preview",
-    "vh_response_judge_thinking_level": "high",
-    "vh_judge_model": "gemini-3.1-pro-preview",
-    "vh_judge_thinking_level": "high",
-    "ksd_gen_model": "gemini-3.1-flash-lite-preview",
-    "ksd_gen_thinking_level": "medium",
-    "ksd_judge_model": "gemini-3.1-pro-preview",
-    "ksd_judge_thinking_level": "high"
+    "vh_response_judge_thinking_level": "high"
 }
 ```
 

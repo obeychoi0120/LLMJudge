@@ -6,7 +6,7 @@ import json
 from utils import load_config, get_common_argparser
 
 def main():
-    parser = get_common_argparser("End-to-End LLM Judge Pipeline Orchestrator (Voice Hint & User Query)")
+    parser = get_common_argparser("End-to-End LLM Judge Pipeline Orchestrator (Voice Hint & VH Response)")
     parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
 
     # Voice Hint 입출력 설정
@@ -15,10 +15,7 @@ def main():
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="KeyScene 목록 저장 경로")
     parser.add_argument("--voice_hint_scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 파일 경로")
         
-    # User Query (Deprecated — VH 기반 파이프라인으로 대체됨)
-    # parser.add_argument("--user_queries_file", ...) # 더 이상 사용되지 않음
-
-    # VH Response 입출력 설정 (B-track 신규)
+    # VH Response 입출력 설정 (B-track)
     parser.add_argument("--vh_responses_file",  default="assets/vh_responses.jsonl",      help="VH Response 저장 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--vh_scores_file",      default="assets/vh_response_scores.jsonl", help="VH Response Judge 점수 저장 경로")
 
@@ -108,18 +105,10 @@ def main():
     print(f"-> Voice Hint 평가 점수 저장 완료: {args.voice_hint_scores_file}")
 
     # ───────────────────────────────────────────────
-    # [DEPRECATED] B-1: User Query 생성 (generate_user_query.py)
-    #   → VH(KSS 모드) 질문을 직접 사용하므로 이 단계는 건너뜁니다.
+    # B-1: VH(KSS) Response 생성 (generate_vh_response.py)
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-1. [DEPRECATED] User Query 생성 단계 건너뜀 (VH를 Query로 직접 사용)")
-    print("="*60)
-
-    # ───────────────────────────────────────────────
-    # B-2: VH(KSS) Response 생성 (generate_vh_response.py)
-    # ───────────────────────────────────────────────
-    print("\n" + "="*60)
-    print(">>> B-2. VH Response 생성 (generate_vh_response.py)")
+    print(">>> B-1. VH Response 생성 (generate_vh_response.py)")
     print("="*60)
     cmd = [
         sys.executable, "generate_vh_response.py",
@@ -133,10 +122,10 @@ def main():
     print(f"-> VH Response 저장 완료: {args.vh_responses_file}")
 
     # ──────────────────────────────────────────────
-    # B-3: VH Response Judge (judge_vh_response.py)
+    # B-2: VH Response Judge (judge_vh_response.py)
     # ──────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-3. VH Response Judge (judge_vh_response.py)")
+    print(">>> B-2. VH Response Judge (judge_vh_response.py)")
     print("="*60)
     cmd = [
         sys.executable, "judge_vh_response.py",
@@ -150,10 +139,10 @@ def main():
     print(f"-> VH Response 점수 저장 완료: {args.vh_scores_file}")
 
     # ──────────────────────────────────────────────
-    # B-4: 엑셀 내보내기
+    # B-3: 엑셀 내보내기
     # ──────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> B-4. 엑셀 리포트 내보내기")
+    print(">>> B-3. 엑셀 리포트 내보내기")
     print("="*60)
     subprocess.run([sys.executable, "export_to_excel.py"])
 

@@ -25,9 +25,6 @@ _CONFIG_KEYS = [
     "vh_response_model", "vh_response_thinking_level",
     "vh_response_past_scenes_size",
     "vh_response_judge_model", "vh_response_judge_thinking_level",
-    # C-track: KeyScene Description
-    "ksd_gen_model", "ksd_gen_thinking_level",
-    "ksd_judge_model", "ksd_judge_thinking_level",
 ]
 
 
@@ -83,12 +80,6 @@ def get_common_argparser(description=""):
     parser.add_argument("--vh_response_past_scenes_size", type=int, default=5, help="VH Response 생성 시 과거 맥락에 포함할 최대 Scene 개수")
     parser.add_argument("--vh_response_judge_model", default="gemini-3.1-pro-preview", help="VH Response Judge 모델명")
     parser.add_argument("--vh_response_judge_thinking_level", default="high", help="VH Response Judge 모델의 Thinking Level (low/medium/high)")
-
-    # 모델 공통 (C-track: KeyScene Description)
-    parser.add_argument("--ksd_gen_model", default="gemini-3.1-flash-lite-preview", help="KeyScene Description 생성 모델명")
-    parser.add_argument("--ksd_gen_thinking_level", default="low", help="KeyScene Description 생성 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--ksd_judge_model", default="gemini-3.1-pro-preview", help="KeyScene Description 평가 모델명")
-    parser.add_argument("--ksd_judge_thinking_level", default="high", help="KeyScene Description Judge 모델의 Thinking Level (low/medium/high)")
 
     return parser
 
@@ -281,7 +272,7 @@ def retry_parse_json(fn, label="API", max_retries=3):
 # ============================================================
 
 def check_gcs_files_exist(gs_bucket_name, content_id):
-    """GCS 버킷에 필수 파일 2종(video + final jsonl)이 존재하는지 확인합니다."""
+    """GCS 버킷에 필수 파일 3종(video, final jsonl, ref jsonl)이 존재하는지 확인합니다."""
     client = storage.Client()
     bucket = client.bucket(gs_bucket_name)
 
@@ -356,7 +347,7 @@ def load_scenes(gs_bucket_name, content_id, mode="ref"):
     """지정한 mode의 JSONL을 파싱하여 Scene 리스트로 반환합니다 (캐시 자동 활용).
 
     Args:
-        mode: 'ref', 'processed', 'raw' 중 하나
+        mode: 'video', 'final', 'ref' 중 하나
     """
     if mode not in _GCS_MODE_MAP:
         raise ValueError(f"mode should be one of {list(_GCS_MODE_MAP.keys())}, got '{mode}'.")
@@ -563,13 +554,11 @@ def format_vlm_graph_as_text(vlm_graph):
 
 
 def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_key, start_idx, end_idx):
-    """*_processed.jsonl에서 vlm_img_structure 또는 vlm_mm_structure를 추출하여
+    """*_final.jsonl에서 지정된 VLM 구조 데이터를 추출하여
     [Scene N] 태그와 함께 텍스트 형태로 반환합니다.
 
-    기존 get_gcs_descriptions_by_scene_idx()의 _processed.jsonl 버전입니다.
-
     Args:
-        vlm_key: 'vlm_img_structure' 또는 'vlm_mm_structure'
+        vlm_key: 'vlm_img_structure_chunk2', 'vlm_graph' 등 추출할 VLM 필드 키
     """
     path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
@@ -597,89 +586,7 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
     return "\n\n".join(lines)
 
 
-_PROCESSED_RAW_KEEP_FIELDS = ("scene_idx", "duration", "timeline")
 
-def get_processed_frag_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
-    """*_processed.jsonl에서 주요 필드(scene_idx, duration, timeline)만
-    추출하여 정제된 JSON Lines 텍스트로 반환합니다.
-
-    timeline 내의 각 shot에는 speech_fragments와 text_fragments만 포함됩니다.
-    'frag' 모드 Source로 사용됩니다.
-    """
-    path_template, _ = _GCS_MODE_MAP["final"]
-    blob_path = path_template.format(cid=content_id)
-    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
-
-    lines = []
-    for line in jsonl_text.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            scene = json.loads(line)
-            s_idx = scene.get("scene_idx")
-            if s_idx is None or not (start_idx <= s_idx <= end_idx):
-                continue
-            # timeline에서 speech_fragments/text_fragments만 추출
-            timeline = scene.get("timeline", [])
-            filtered_timeline = []
-            for shot in timeline:
-                filtered_timeline.append({
-                    "shot_id": shot.get("shot_id"),
-                    "time": shot.get("time", ""),
-                    "frag_asr": shot.get("frag_asr", []),
-                    "frag_ocr": shot.get("frag_ocr", []),
-                })
-            filtered = {
-                "scene_idx": s_idx,
-                "duration": scene.get("duration", ""),
-                "timeline": filtered_timeline,
-            }
-            lines.append(json.dumps(filtered, ensure_ascii=False))
-        except json.JSONDecodeError:
-            continue
-    return "\n".join(lines)
-
-
-def get_processed_frag_with_vlm_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
-    """*_processed.jsonl에서 vlm_mm_structure와 파편화된 timeline을 함께
-    추출하여 정제된 JSON Lines 텍스트로 반환합니다.
-
-    'frag_with_vlm' 모드 Source로 사용됩니다.
-    """
-    path_template, _ = _GCS_MODE_MAP["final"]
-    blob_path = path_template.format(cid=content_id)
-    jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
-
-    lines = []
-    for line in jsonl_text.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            scene = json.loads(line)
-            s_idx = scene.get("scene_idx")
-            if s_idx is None or not (start_idx <= s_idx <= end_idx):
-                continue
-            
-            timeline = scene.get("timeline", [])
-            filtered_timeline = []
-            for shot in timeline:
-                filtered_timeline.append({
-                    "shot_id": shot.get("shot_id"),
-                    "time": shot.get("time", ""),
-                    "frag_asr": shot.get("frag_asr", []),
-                    "frag_ocr": shot.get("frag_ocr", []),
-                })
-            
-            filtered = {
-                "scene_idx": s_idx,
-                "duration": scene.get("duration", ""),
-                "vlm_mm_description": scene.get("vlm_mm_description", ""),
-                "timeline": filtered_timeline,
-            }
-            lines.append(json.dumps(filtered, ensure_ascii=False))
-        except json.JSONDecodeError:
-            continue
-    return "\n".join(lines)
 
 
 def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
@@ -751,11 +658,7 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
 # 텍스트 모드별 fetch 함수 매핑
 _TEXT_MODE_FETCHERS = {
     "raw":              lambda gs, cid, s, e: get_gcs_raw_fields_by_scene_idx(gs, cid, s, e),
-    "frag":             lambda gs, cid, s, e: get_processed_frag_fields_by_scene_idx(gs, cid, s, e),
-    "vlm":              lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_mm_description", s, e),
-    "frag_with_vlm":    lambda gs, cid, s, e: get_processed_frag_with_vlm_by_scene_idx(gs, cid, s, e),
     "imgvlm_chunk2":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
-    "imgvlm_chunk3":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk3", s, e),
     "imgvlm_graph":     lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
     "raw_with_mmvlm":   lambda gs, cid, s, e: get_gcs_raw_with_mmvlm_by_scene_idx(gs, cid, s, e),
 }
@@ -778,7 +681,7 @@ def build_mode_parts(gs_bucket_name, content_id, target_modes,
     Args:
         gs_bucket_name: GCS 버킷명
         content_id: 콘텐츠 ID
-        target_modes: 빌드할 모드 리스트 (예: ["video", "raw", "frag", "frag_with_vlm"])
+        target_modes: 빌드할 모드 리스트 (예: ["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"])
         current_start_idx, current_end_idx: 현재 Scene 구간
         past_start_idx, past_end_idx: 과거 Scene 구간 (None이면 과거 없음)
         current_start_time, current_end_time: 현재 Scene의 타임스탬프 오버라이드
@@ -886,43 +789,7 @@ def _retry_api_call(fn, label="API", delay=10):
             time.sleep(delay)
 
 
-# ============================================================
-# API Interaction Helpers (신 SDK Chat 방식)
-# ============================================================
 
-def start_chat_session(client: genai.Client, model: str, config: types.GenerateContentConfig):
-    """Chat 세션을 생성합니다."""
-    return client.chats.create(model=model, config=config)
-
-
-def send_chat_message(chat, user_prompt, file_parts=None):
-    """Chat Session을 통한 Multi-turn 메시지 전송."""
-    if file_parts is None:
-        contents = [user_prompt]
-    elif isinstance(file_parts, list):
-        contents = file_parts + [user_prompt]
-    else:
-        contents = [file_parts, user_prompt]
-
-    return _retry_api_call(
-        lambda: chat.send_message(contents),
-        label="Generation API (Multi-turn)",
-    )
-
-
-def generate_single_turn_response(client: genai.Client, model: str, config: types.GenerateContentConfig, user_prompt, file_part=None):
-    """Single-turn 응답 생성."""
-    if file_part is None:
-        contents = [user_prompt]
-    elif isinstance(file_part, list):
-        contents = file_part + [user_prompt]
-    else:
-        contents = [file_part, user_prompt]
-
-    return _retry_api_call(
-        lambda: client.models.generate_content(model=model, contents=contents, config=config),
-        label="Generation API (Single-turn)",
-    )
 
 
 # ============================================================
@@ -933,7 +800,9 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
     """JSONL 파일을 content_id, scene_idx, mode 순으로 정렬하고 누락된 Scene/모드을 점검합니다.
     - 기존의 'pipeline_done' 시그널은 정렬 과정에서 제거됩니다.
     - 각 줄이 (content_id, scene_idx, mode) 단위의 flat 포맷임을 가정합니다.
-    - 모든 데이터가 완벽하면 True, 누락이 있으면 False를 반환합니다.
+
+    Returns:
+        (missing_scenes, data_records) 튜플. missing_scenes는 누락 항목 리스트, data_records는 전체 레코드 리스트.
     """
     if not os.path.exists(file_path):
         print(f"[Warning] 파일을 찾을 수 없습니다: {file_path}")
@@ -1063,7 +932,7 @@ def print_pipeline_done(output_path):
     print("=" * 50)
 
 
-_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk3": 4, "imgvlm_graph": 5, "frag": 6, "vlm": 7, "frag_with_vlm": 8, "kss": 9}
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_graph": 4, "kss": 5}
 
 def sort_jsonl_file(filepath):
     """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
