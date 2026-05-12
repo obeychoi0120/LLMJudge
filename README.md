@@ -8,7 +8,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ### 2-Track 평가체계
 
-- **A-Track (Voice Hint)**: 7개 모드(kss, video, raw, raw_with_mmvlm, imgvlm_chunk2/chunk3/graph)의 Source를 기반으로 시청자의 호기심을 유발하는 질문을, KSS Anchor 기준으로 품질 평가
+- **A-Track (Voice Hint)**: 6개 모드(kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)의 Source를 기반으로 시청자의 호기심을 유발하는 질문을, KSS Anchor 기준으로 품질 평가
 - **B-Track (VH Response)**: A-Track의 **kss 모드로 생성된 공통 Query**를 기준, 각 모드별 Source로 답변 생성 → KSS + World Knowledge 기반 품질 비교. 동일한 질문으로 데이터소스 간 **통제 실험**을 수행
 
 ---
@@ -61,7 +61,7 @@ flowchart TD
             VHRS["vh_response_scores.jsonl"]
         end
         subgraph ATRACK["A-Track: Voice Hint"]
-            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / chunk3 / graph"]
+            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / imgvlm_graph"]
             VH["voice_hint.jsonl"]
             A4["A-4. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
             VHS["voice_hint_scores.jsonl"]
@@ -141,7 +141,7 @@ KSS(KeyScene Summary)와 대조해 평가하되, 시청자의 몰입감 유지�
 | **Temporal Immersion** | 시청자의 현재 시청시점 대비 자연스러운, 과거 맥락 활용과 미래의 전개를 암시 (시제 혼동없이는 감점) |
 | **Curiosity & Hook** | 호기심을 유발하는 구체적이고 흥미로운 질문을 제공하면서도 스포일러를 회피하는지 |
 
-> 대조 비교 평가 대상: `kss`, `video`, `raw_with_mmvlm`, `imgvlm_chunk2`, `imgvlm_chunk3`, `imgvlm_graph`
+> 대조 비교 평가 대상: `kss`, `video`, `raw`, `raw_with_mmvlm`, `imgvlm_chunk2`, `imgvlm_graph`
 
 #### B-Track: VH Response Judge (3-Criteria, 15점 만점)
 
@@ -265,43 +265,37 @@ python generate_keyscene_summary.py               # A-2: KeyScene Summary 생성
 
 ### A-Track (Voice Hint)
 ```bash
-python generate_voice_hint.py                     # A-3: Voice Hint 생성 (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)
-python judge_voice_hint.py                        # A-4: Voice Hint Judge (모드: kss, video, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)
+python generate_voice_hint.py                     # A-3: Voice Hint 생성 (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
+python judge_voice_hint.py                        # A-4: Voice Hint Judge (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
 
 # 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
 python generate_voice_hint.py --modes imgvlm_chunk2 video
 python judge_voice_hint.py --modes imgvlm_chunk2 video
-
-# Watch 모드 병렬 실행:
-python generate_voice_hint.py &                   # 터미널 1
-python judge_voice_hint.py --watch                # 터미널 2
 ```
 
 ### B-Track (VH Response)
 ```bash
-python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)
+python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
 python judge_vh_response.py                       # B-2: Response Judge
 
 # 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
 python generate_vh_response.py --modes imgvlm_chunk2 video
-python judge_vh_response.py --modes imgvlm_chunk2 video
-
-# Watch 모드 병렬 실행:
-python generate_vh_response.py &                  # 터미널 1
-python judge_vh_response.py --watch               # 터미널 2
 ```
 
-### Watch 모드: 파이프라인 실시간 연계
+### 누락분 자동 재처리
 
-Generation과 Judging 스크립트를 **별도 터미널에서 동시에 실행**할 수 있습니다. Judge 스크립트에 `--watch` 옵션을 주면 새로운 결과가 쌓일 때마다 자동으로, `pipeline_done` 시그널이 수신되면 정상 종료합니다.
+모든 생성·평가 스크립트는 **재시작 안전(Restart-Safe)** 하게 설계되어 있습니다. 스크립트를 재실행하면 이미 완료된 항목은 건너뛰고 **누락분만 자동으로 재처리**합니다. Judge 스크립트는 내부적으로 최대 **3회(MAX_RETRY)** 재시도합니다.
 
 ```bash
-# 터미널 1: 생성
-python generate_vh_response.py
+# 중간에 중단되거나 일부 항목이 실패했을 경우 그냥 재실행하면 됩니다:
+python generate_voice_hint.py
+python judge_voice_hint.py
 
-# 터미널 2: 실시간 Judge
-python judge_vh_response.py --watch
+python generate_vh_response.py
+python judge_vh_response.py
 ```
+
+> **데이터 없으면 즉시 종료**: 입력 파일(`voice_hint.jsonl`, `vh_responses.jsonl` 등)이 없거나 필수 데이터(KSS 레코드 등)가 없으면 오류를 출력하고 즉시 종료됩니다. 선행 스크립트를 먼저 실행하세요.
 
 ### 통합 실행 (A+B Track)
 ```bash
@@ -314,7 +308,7 @@ python main.py --input_file content_list.json
 python export_to_excel.py
 
 # 특정 모드 평가 결과 및 생성 데이터를 파일에서 일괄 삭제 (재평가를 위해)
-python clean_assets.py --modes imgvlm_chunk2 imgvlm_chunk3
+python clean_assets.py --modes imgvlm_chunk2 imgvlm_graph
 ```
 
 ## 주요 산출 데이터 형식 (assets/)
@@ -332,7 +326,6 @@ python clean_assets.py --modes imgvlm_chunk2 imgvlm_chunk3
     },
     "raw_with_mmvlm": { "...": "..." },
     "imgvlm_chunk2": { "...": "..." },
-    "imgvlm_chunk3": { "...": "..." },
     "imgvlm_graph": { "...": "..." }
   }
 }

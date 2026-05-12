@@ -1,8 +1,7 @@
 import os
-import json
-import time
 import concurrent.futures
 import threading
+from collections import OrderedDict
 from utils import (
     get_common_argparser,
     make_generate_config,
@@ -107,25 +106,15 @@ def main():
     parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="VH Response JSONL 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
-    parser.add_argument("--watch", action="store_true", help="answers_file을 모니터링하며 새로운 Response를 실시간으로 평가합니다.")
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_judge_config(thinking_level=args.vh_response_judge_thinking_level)
 
     ensure_output_dir(args.output_file)
 
-    # 기처리분 로드: (content_id, scene_idx, mode, query) 단위
-    processed_pairs = set()
-    if os.path.exists(args.output_file):
-        for rec in load_jsonl(args.output_file):
-            c_id  = rec.get("content_id")
-            s_idx = rec.get("scene_idx")
-            mode  = rec.get("mode")
-            query = rec.get("query")
-            if c_id and s_idx is not None and mode and query:
-                processed_pairs.add((c_id, s_idx, mode, query))
-    if processed_pairs:
-        print(f"[기처리] {len(processed_pairs)}개 항목이 이미 평가 완료됨.")
+    if not os.path.exists(args.answers_file):
+        print(f"[Error] {args.answers_file} 파일이 없습니다. generate_vh_response.py를 먼저 실행하세요.")
+        return
 
     # KSS Anchor 로드
     summary_map = load_summary_map(args.keyscene_summary_file)
@@ -134,20 +123,11 @@ def main():
     else:
         print(f"[Warning] KSS 파일을 찾을 수 없거나 비어있습니다: {args.keyscene_summary_file}")
 
-    print_pipeline_banner(f"VH Response 품질 평가 파이프라인을 시작합니다. (Watch 모드: {args.watch})")
+    print_pipeline_banner("VH Response 품질 평가 파이프라인을 시작합니다.")
 
     file_write_lock = threading.Lock()
     _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
-    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"]
-
-    if not os.path.exists(args.answers_file) and not args.watch:
-        print(f"[Info] {args.answers_file} 파일이 존재하지 않습니다. 평가를 건너뜁니다.")
-        print_pipeline_done(args.output_file)
-        return
-
-    last_position = 0
-    pipeline_done = False
-    total_evaluated = 0
+    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"]
 
     def judge_query_item(data):
         """단일 {content_id, scene_idx, mode, query, answer} 레코드를 평가합니다. (로깅 없이 결과만 반환)"""
@@ -224,53 +204,31 @@ def main():
 
         return len(results)
 
-    from collections import OrderedDict
-    unprocessed_groups = OrderedDict()
+    MAX_RETRY = 3
 
     try:
-        while True:
-            if not os.path.exists(args.answers_file):
-                if not args.watch:
-                    break
-                time.sleep(3)
-                continue
+        for attempt in range(MAX_RETRY):
+            # 기처리분 재로드
+            processed_pairs = set()
+            if os.path.exists(args.output_file):
+                for rec in load_jsonl(args.output_file):
+                    c_id  = rec.get("content_id")
+                    s_idx = rec.get("scene_idx")
+                    mode  = rec.get("mode")
+                    query = rec.get("query")
+                    if c_id and s_idx is not None and mode and query:
+                        processed_pairs.add((c_id, s_idx, mode, query))
+            if attempt == 0 and processed_pairs:
+                print(f"[기처리] {len(processed_pairs)}개 항목이 이미 평가 완료됨.")
 
-            new_lines = []
-            try:
-                with open(args.answers_file, "r", encoding="utf-8") as f:
-                    f.seek(last_position)
-                    while True:
-                        try:
-                            line = f.readline()
-                        except UnicodeDecodeError:
-                            # 파일 마지막에 한국어 등 멀티바이트 문자가 절반만 기록된 상태
-                            break
-                        
-                        if not line:
-                            break
-                            
-                        # 완벽히 한 줄이 기록되었는지 확인 (JSONL은 \n으로 끝나야 함)
-                        if not line.endswith("\n"):
-                            break
-                            
-                        new_lines.append(line)
-                        last_position = f.tell()
-            except IOError:
-                time.sleep(1)
-                continue
+            # 전체 파일 로드 → 미처리 항목 그룹핑
+            all_data = [r for r in load_jsonl(args.answers_file) if not r.get("pipeline_done")]
+            if not all_data:
+                print("[Error] 평가할 Response 데이터가 없습니다. generate_vh_response.py를 먼저 실행하세요.")
+                return
 
-            for line in new_lines:
-                if not line.strip():
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                if obj.get("pipeline_done"):
-                    pipeline_done = True
-                    continue
-
+            unprocessed_groups = OrderedDict()
+            for obj in all_data:
                 c_id  = obj.get("content_id")
                 s_idx = obj.get("scene_idx")
                 mode  = obj.get("mode")
@@ -279,42 +237,47 @@ def main():
                     continue
                 if (c_id, s_idx, mode, query) in processed_pairs:
                     continue
-                
                 q_key = (c_id, s_idx, query)
                 unprocessed_groups.setdefault(q_key, []).append(obj)
 
-            ready_groups = OrderedDict()
-            for q_key, items in list(unprocessed_groups.items()):
-                # 모든 모드가 모였거나(기본 6개) 파이프라인이 완료되었을 경우에만 평가 진행
-                if len(items) >= len(_MODE_ORDER) or pipeline_done:
-                    ready_groups[q_key] = items
-                    del unprocessed_groups[q_key]
-
-            if ready_groups:
-                c_ids = set(q_key[0] for q_key in ready_groups.keys())
-                c_id_str = ", ".join(sorted(str(c) for c in c_ids))
-                ready_items_count = sum(len(items) for items in ready_groups.values())
-                print(f"\n[Judge] [{c_id_str}] 새 항목 {ready_items_count}개 ({len(ready_groups)}개 Query) 평가 시작")
-                for (c_id, s_idx, q_text), items in ready_groups.items():
-                    total_evaluated += _process_query_group(q_text, items)
-
-                print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
-
-            if args.watch:
-                if pipeline_done and not unprocessed_groups:
-                    print("\n[Watch] pipeline_done 시그널 감지 및 모든 평가 완료. 종료합니다.")
-                    break
-                time.sleep(3)
-            else:
-                if unprocessed_groups:
-                    c_ids = set(q_key[0] for q_key in unprocessed_groups.keys())
-                    c_id_str = ", ".join(sorted(str(c) for c in c_ids))
-                    ready_items_count = sum(len(items) for items in unprocessed_groups.values())
-                    print(f"\n[Judge] [{c_id_str}] 남은 항목 {ready_items_count}개 ({len(unprocessed_groups)}개 Query) 강제 평가 시작")
-                    for (c_id, s_idx, q_text), items in unprocessed_groups.items():
-                        total_evaluated += _process_query_group(q_text, items)
-                    print(f"\n▶ [Judge] 누적 평가 완료: {total_evaluated}개")
+            if not unprocessed_groups:
+                print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
                 break
+
+            total_pending = sum(len(v) for v in unprocessed_groups.values())
+            print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] {len(unprocessed_groups)}개 Query, {total_pending}개 항목 평가 시작...")
+
+            pass_evaluated = 0
+            for (c_id, s_idx, q_text), items in unprocessed_groups.items():
+                pass_evaluated += _process_query_group(q_text, items)
+
+            print(f"\n▶ [Pass {attempt + 1}] {pass_evaluated}개 평가 완료")
+
+            # 누락 재확인
+            processed_after = set()
+            if os.path.exists(args.output_file):
+                for rec in load_jsonl(args.output_file):
+                    c_id  = rec.get("content_id")
+                    s_idx = rec.get("scene_idx")
+                    mode  = rec.get("mode")
+                    query = rec.get("query")
+                    if c_id and s_idx is not None and mode and query:
+                        processed_after.add((c_id, s_idx, mode, query))
+
+            remaining_count = sum(
+                1 for r in all_data
+                if r.get("content_id") and r.get("scene_idx") is not None
+                and r.get("mode") and r.get("query")
+                and (r["content_id"], r["scene_idx"], r["mode"], r["query"]) not in processed_after
+            )
+
+            if remaining_count == 0:
+                print("[완료] 모든 항목이 처리되었습니다.")
+                break
+            if attempt < MAX_RETRY - 1:
+                print(f"[Retry {attempt + 1}/{MAX_RETRY}] {remaining_count}개 누락 → 재시도합니다.")
+            else:
+                print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {remaining_count}개 미처리 항목이 남아있습니다.")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

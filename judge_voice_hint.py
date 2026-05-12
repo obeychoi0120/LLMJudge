@@ -148,18 +148,13 @@ def main():
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
-    parser.add_argument("--watch", action="store_true", help="파일을 계속 모니터링하여 새 질문을 실시간으로 평가합니다.")
-    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"], choices=["kss", "video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"], help="평가할 모드 직접 지정 (기본값: kss, video, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)")
+    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"], choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"], help="평가할 모드 직접 지정 (기본값: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)")
     
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_query_judge_config(thinking_level=args.vh_judge_thinking_level)
 
     ensure_output_dir(args.scores_file)
-
-    processed_pairs = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
-    if processed_pairs:
-        print(f"[{len(processed_pairs)}] 개의 (content_id, mode, query) 쌍이 이미 처리됨.")
 
     if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
         return
@@ -171,137 +166,108 @@ def main():
     elif not os.path.exists(args.kss_file):
         print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.kss_file}")
 
-    print_pipeline_banner(f"Voice Hint 질문 품질 평가 프로세스 시작 (Watch 모드: {args.watch})")
+    print_pipeline_banner("Voice Hint 질문 품질 평가 프로세스 시작")
 
     file_write_lock = threading.Lock()
-    last_position = 0
-    pipeline_done = False
-    
-    total_generated = 0
-    total_evaluated = len(processed_pairs)
-    
-    accumulated_groups = {}
-    accumulated_modes = {}
     target_modes_set = set(args.modes)
-    target_mode_order = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"]
+    target_mode_order = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"]
+    MAX_RETRY = 3
 
     try:
-        while True:
-            if not os.path.exists(args.input_file):
-                if not args.watch:
-                    print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
-                    return
-                time.sleep(2)
-                continue
-                
-            with open(args.input_file, "r", encoding="utf-8") as f:
-                f.seek(last_position)
-                new_lines = f.readlines()
-                last_position = f.tell()
-                
-            new_items = []
-            for line in new_lines:
-                if line.strip():
-                    try:
-                        obj = json.loads(line)
-                        if obj.get("pipeline_done"):
-                            pipeline_done = True
-                        else:
-                            new_items.append(obj)
-                    except json.JSONDecodeError:
-                        pass
-                        
-            if new_items:
-                for scene_item in new_items:
-                    content_id = scene_item.get("content_id")
-                    scene_idx  = scene_item.get("scene_idx")
-                    mode        = scene_item.get("mode", "")
-                    queries_list = scene_item.get("queries", [])
+        for attempt in range(MAX_RETRY):
+            # 기처리분 재로드
+            processed_pairs = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
+            if attempt == 0 and processed_pairs:
+                print(f"[{len(processed_pairs)}] 개의 (content_id, mode, query) 쌍이 이미 처리됨.")
 
-                    if not content_id or scene_idx is None or not mode:
-                        continue
-                    if mode not in target_modes_set:
-                        continue
+            # 전체 파일 로드 → 미처리 항목만 그룹핑
+            accumulated_groups = {}
+            for scene_item in load_jsonl(args.input_file):
+                if scene_item.get("pipeline_done"):
+                    continue
+                content_id   = scene_item.get("content_id")
+                scene_idx    = scene_item.get("scene_idx")
+                mode         = scene_item.get("mode", "")
+                queries_list = scene_item.get("queries", [])
 
-                    group_key = (content_id, scene_idx)
-                    accumulated_modes.setdefault(group_key, set()).add(mode)
+                if not content_id or scene_idx is None or not mode:
+                    continue
+                if mode not in target_modes_set:
+                    continue
 
-                    detailed_summary = summary_map.get((content_id, scene_idx), "")
+                detailed_summary = summary_map.get((content_id, scene_idx), "")
+                group_key = (content_id, scene_idx)
 
-                    for q_text in queries_list:
-                        total_generated += 1
-                        if (content_id, mode, q_text) not in processed_pairs:
-                            accumulated_groups.setdefault(group_key, []).append({
-                                "content_id": content_id,
-                                "scene_idx": scene_idx,
-                                "mode": mode,
-                                "query": q_text,
-                                "detailed_summary": detailed_summary,
-                            })
+                for q_text in queries_list:
+                    if (content_id, mode, q_text) not in processed_pairs:
+                        accumulated_groups.setdefault(group_key, []).append({
+                            "content_id": content_id,
+                            "scene_idx": scene_idx,
+                            "mode": mode,
+                            "query": q_text,
+                            "detailed_summary": detailed_summary,
+                        })
 
-            # 준비된 그룹(씬) 판별: 해당 씬의 모든 타겟 모드가 기록되었거나 파이프라인이 끝났을 때
-            ready_groups = {}
-            for group_key, modes_set in list(accumulated_modes.items()):
-                if pipeline_done or modes_set.issuperset(target_modes_set):
-                    items = accumulated_groups.pop(group_key, [])
-                    if items:
-                        ready_groups[group_key] = items
-                    del accumulated_modes[group_key]
-
-            if ready_groups or pipeline_done:
-                # 그룹별 순차 처리, 같은 Scene 내의 수집된 모든 질문은 병렬 처리
-                for (c_id, s_idx), items in ready_groups.items():
-                    print(f"\n[{c_id} | Scene {s_idx}] {len(items)}개 질문(전체 모드) 병렬 평가 시작...")
-                    
-                    results_list = []
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
-                        futures = [
-                            executor.submit(
-                                judge_one,
-                                {"mode": item["mode"], "query": item["query"]},
-                                item["content_id"], item["scene_idx"], item["detailed_summary"],
-                                client, args, judge_config, file_write_lock
-                            )
-                            for item in items
-                        ]
-                        for future in concurrent.futures.as_completed(futures):
-                            res = future.result()
-                            if res:
-                                results_list.append(res)
-                            total_evaluated += 1
-
-                    processed_pairs.update(
-                        (item["content_id"], item["mode"], item["query"]) for item in items
-                    )
-                    
-                    # 지정된 mode 순서대로 결과 정렬
-                    def sort_key(r):
-                        m = r.get("mode", "")
-                        return target_mode_order.index(m) if m in target_mode_order else 999
-
-                    results_list.sort(key=sort_key)
-                    
-                    # 정렬된 순서대로 한꺼번에 출력
-                    print(f"--- [{c_id} | Scene {s_idx} 평가 완료] ---")
-                    for r in results_list:
-                        if r.get("success"):
-                            if r.get("out_str"):
-                                print(r["out_str"])
-                        else:
-                            if r.get("msg"):
-                                print(r["msg"])
-
-                # TODO List 현황 출력
-                pending_count = total_generated - total_evaluated
-                print(f"\n▶ [Judging TODO List] Total Generated: {total_generated} | Evaluated: {total_evaluated} | Pending: {pending_count}")
-
-            if args.watch:
-                if pipeline_done:
-                    print("\n[Watch] Generation 파이프라인의 종료 시그널(pipeline_done)을 감지했습니다. 모든 처리를 완료하고 종료합니다.")
-                    break
-                time.sleep(3)
-            else:
+            if not accumulated_groups:
+                print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
                 break
+
+            total_pending = sum(len(v) for v in accumulated_groups.values())
+            print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] {len(accumulated_groups)}개 Scene, {total_pending}개 질문 평가 시작...")
+
+            pass_evaluated = 0
+            for (c_id, s_idx), items in accumulated_groups.items():
+                print(f"\n[{c_id} | Scene {s_idx}] {len(items)}개 질문(전체 모드) 병렬 평가 시작...")
+
+                results_list = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(items))) as executor:
+                    futures = [
+                        executor.submit(
+                            judge_one,
+                            {"mode": item["mode"], "query": item["query"]},
+                            item["content_id"], item["scene_idx"], item["detailed_summary"],
+                            client, args, judge_config, file_write_lock
+                        )
+                        for item in items
+                    ]
+                    for future in concurrent.futures.as_completed(futures):
+                        res = future.result()
+                        if res:
+                            results_list.append(res)
+                        pass_evaluated += 1
+
+                def sort_key(r):
+                    m = r.get("mode", "")
+                    return target_mode_order.index(m) if m in target_mode_order else 999
+
+                results_list.sort(key=sort_key)
+                print(f"--- [{c_id} | Scene {s_idx} 평가 완료] ---")
+                for r in results_list:
+                    if r.get("success"):
+                        if r.get("out_str"):
+                            print(r["out_str"])
+                    else:
+                        if r.get("msg"):
+                            print(r["msg"])
+
+            print(f"\n▶ [Pass {attempt + 1}] {pass_evaluated}개 평가 완료")
+
+            # 누락 재확인
+            processed_after = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
+            remaining_count = sum(
+                1 for rec in load_jsonl(args.input_file)
+                if not rec.get("pipeline_done") and rec.get("mode") in target_modes_set
+                for q in rec.get("queries", [])
+                if (rec.get("content_id"), rec.get("mode"), q) not in processed_after
+            )
+
+            if remaining_count == 0:
+                print("[완료] 모든 항목이 처리되었습니다.")
+                break
+            if attempt < MAX_RETRY - 1:
+                print(f"[Retry {attempt + 1}/{MAX_RETRY}] {remaining_count}개 누락 → 재시도합니다.")
+            else:
+                print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {remaining_count}개 미처리 항목이 남아있습니다.")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

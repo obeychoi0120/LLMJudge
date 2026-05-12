@@ -76,33 +76,6 @@ _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
 - 3단계 (Hook 및 질문 기획): 현재 장면 텍스트의 새 단서에 집중하여 질문 기획.
 """
 
-_VOICE_HINT_PROMPT_FRAG = _VOICE_HINT_BASE + """
-[입력 형식 설명]
-당신에게는 파편화된 음성 인식(ASR) 및 화면 글씨(OCR) 텍스트가 제공됩니다.
-- frag_asr: 원문 순서가 파괴되어 랜덤으로 뒤섞인 2어절 묶음 파편
-- frag_ocr: 원문 순서가 파괴된 2어절 묶음 파편
-
-[사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (노이즈 필터링 및 의미 유추): 파편화된 텍스트들을 논리적으로 조합하여 원래 발화 맥락을 유추하고 명백한 오류를 자연스럽게 교정.
-- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
-- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (Hook 및 질문 기획): 유추한 발화 맥락의 새 단서에 집중하여 질문 기획.
-"""
-
-_VOICE_HINT_PROMPT_FRAG_WITH_VLM = _VOICE_HINT_BASE + """
-[입력 형식 설명]
-당신에게는 VLM 구조화 데이터와 파편화된 ASR/OCR 텍스트가 종합되어 제공됩니다.
-- vlm_mm_description: 시각·음성을 종합하여 장면의 상황을 자연어 문장으로 서술한 정보
-- timeline 내 frag_asr/frag_ocr: 원문 순서가 파괴된 2어절 묶음 파편
-
-[사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (노이즈 필터링 및 의미 유추): VLM 구조화 데이터와 파편화된 텍스트들을 조합하여 장면 전체의 맥락을 종합적으로 유추하고 명백한 오류를 자연스럽게 교정.
-- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
-- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (Hook 및 질문 기획): 종합하여 유추한 현재 장면의 새 단서에 집중하여 질문 기획.
-"""
 
 _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
 [입력 형식 설명]
@@ -121,22 +94,6 @@ _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
 - 4단계 (Hook 및 질문 기획): 구조화 데이터에서 유추한 현재 장면의 새 단서에 집중하여 질문 기획.
 """
 
-_VOICE_HINT_PROMPT_IMGVLM_CHUNK3 = _VOICE_HINT_BASE + """
-[입력 형식 설명]
-당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
-- vlm_img_structure: 시각 정보를 Subjects(주체), Actions(행동), Contexts(맥락/환경)로 구조화한 데이터
-- 각 필드는 저작권 보호를 위해 3어절 단위로 뒤섞인 파편(fragment) 형태입니다.
-- [MASKED] 토큰이 포함된 경우 해당 고유명사를 추측하지 마세요.
-
-이 데이터는 영상의 시각 프레임에서 추출된 구조화된 메타데이터입니다.
-
-[사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (장면 맥락 유추): 구조화 데이터(vlm_img_structure)의 Subjects, Actions, Contexts 파편을 논리적으로 조합하여 현재 장면의 전체적인 맥락을 유추.
-- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
-- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (Hook 및 질문 기획): 구조화 데이터에서 유추한 현재 장면의 새 단서에 집중하여 질문 기획.
-"""
 
 _VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE + """
 [입력 형식 설명]
@@ -190,10 +147,7 @@ def make_voice_hint_configs(thinking_level=0):
         "raw": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW, thinking_level=thinking_level),
         "raw_with_mmvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
         "imgvlm_chunk2": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2, thinking_level=thinking_level),
-        "imgvlm_chunk3": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK3, thinking_level=thinking_level),
         "imgvlm_graph": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH, thinking_level=thinking_level),
-        "frag": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG, thinking_level=thinking_level),
-        "frag_with_vlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_FRAG_WITH_VLM, thinking_level=thinking_level),
         "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level)
     }
 
@@ -287,7 +241,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
-    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"], choices=["kss", "video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"], help="생성할 모드 직접 지정 (기본값: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk3, imgvlm_graph)")
+    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"], choices=["kss", "video", "raw", "imgvlm_chunk2", "imgvlm_graph", "raw_with_mmvlm"], help="생성할 모드 직접 지정 (기본값: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -414,13 +368,11 @@ def main():
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
-                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"}
+                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"}
                     for mod in missing_modes:
                         if vh_dict.get(mod):
                             if mod in _LOG_MODES:
                                 print(f"\n-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
-                                if vh_dict.get("rationales", {}).get(mod):
-                                    print(f"[Rationale]: {vh_dict['rationales'][mod]}\n")
                                 for qi, q in enumerate(vh_dict[mod], 1):
                                     print(f"{qi}. {q}")
                             else:
@@ -446,14 +398,8 @@ def main():
         mode_key="queries"
     )
 
-    if is_perfect:
-        try:
-            append_jsonl(args.output_file, {"pipeline_done": True})
-            print(f"\n[Signal] 모든 모드({args.modes}) 처리가 완벽히 끝나 Pipeline 종료 시그널을 기록했습니다.")
-        except Exception as e:
-            print(f"\n[Warning] Pipeline 완료 시그널 기록 실패: {e}")
-    else:
-        print("\n[Info] 아직 누락된 Scene이나 모드가 있어 완료 시그널을 기록하지 않았습니다.")
+    if not is_perfect:
+        print("\n[Info] 아직 누락된 Scene이나 모드가 있습니다. 스크립트를 다시 실행하면 누락분만 재처리됩니다.")
 
     print_pipeline_done(args.output_file)
 

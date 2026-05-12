@@ -10,8 +10,6 @@ from utils import (
     check_gcs_files_exist,
     _retry_api_call,
     get_gcs_raw_fields_by_scene_idx,
-    get_processed_frag_fields_by_scene_idx,
-    get_processed_frag_with_vlm_by_scene_idx,
     get_processed_vlm_descriptions_by_scene_idx,
     get_gcs_raw_with_mmvlm_by_scene_idx,
     parse_duration_to_times,
@@ -67,72 +65,6 @@ _VH_RESPONSE_PROMPT_RAW = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
-_VH_RESPONSE_PROMPT_FRAG = _VH_RESPONSE_PROMPT_BASE + """
-
-[시청 기억의 구조]
-제공되는 시청 기억은 오직 '음성 기록(ASR)'과 '화면 텍스트(OCR)' 파편으로만 이루어져 있습니다.
-  - scene_idx: Scene 인덱스
-  - duration: Scene 시작~종료 시간
-  - timeline: shot 단위 파편화된 메타데이터 배열
-    - speech_fragments: 순서가 뒤섞인 ASR 2어절 묶음 파편 (원문 순서 파괴됨)
-    - text_fragments: 순서가 뒤섞인 OCR 2어절 묶음 파편 (원문 순서 파괴됨)
-
-[분석 및 대화 지시사항]
-1. **메타데이터 파편화 복원 및 노이즈 필터링 (매우 중요)**
-   - 제공된 데이터는 저작권 보호를 위해 2어절 단위로 끊어 순서를 뒤섞은 형태입니다. 각 파편은 인접한 2개 단어의 관계를 보존하지만, 전체 문장 순서는 파괴되었습니다.
-   - 파편들을 논리적으로 조합하고, 문맥과 상식을 동원하여 원래 어떤 발화나 자막이었을지 유추해야 합니다.
-   - 음성 인식(ASR) 및 자막(OCR) 오탈자가 있을 수 있으므로 상식을 동원해 자연스럽게 교정하세요.
-
-2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
-   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
-   - 영상 내용만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
-   - 유추한 발화 맥락과 사전 지식을 결합하여, 시청자가 "이 AI는 정말 똑똑하다!"라고 느끼도록 풍부하고 정확한 답변을 제공하세요.
-   - 단, 데이터에서 유추한 내용과 명백히 모순되는 정보는 제공하지 마세요.
-
-3. **현재 장면 우선 (답변을 이끌어내는 시점)**
-   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
-   - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
-
-4. **완벽한 TV 파트너 톤앤매너**
-   - "단어 파편에 따르면", "텍스트 조각을 조합해보면" 등 데이터 구조를 암시하는 말은 절대 금지합니다.
-   - "방금 들린 대화에 따르면~", "화면에 나온 정보에서~"처럼 실제 영상의 소리를 듣거나 텍스트를 본 것처럼 친숙한 구어체를 사용하세요.
-
-5. **대화 이어가기**
-   - 정보만 전달하고 끝내지 마세요.
-   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
-
-_VH_RESPONSE_PROMPT_FRAG_WITH_VLM = _VH_RESPONSE_PROMPT_BASE + """
-
-[시청 기억의 구조]
-제공되는 시청 기억은 '시각 정보(VLM)'와 '파편화된 음성/화면 텍스트 정보'를 종합하여 분석한 구조화된 데이터입니다.
-  - vlm_mm_description: 시각·음성을 종합하여 장면의 상황을 자연어 문장으로 서술한 정보
-  - timeline: shot 단위 파편화된 메타데이터 배열
-    - frag_asr: 순서가 뒤섞인 ASR 2어절 묶음 파편 (원문 순서 파괴됨)
-    - frag_ocr: 순서가 뒤섞인 OCR 2어절 묶음 파편 (원문 순서 파괴됨)
-
-[분석 및 대화 지시사항]
-1. **메타데이터 파편화 복원 및 노이즈 필터링 (매우 중요)**
-   - 시청 기억은 소형 VLM이 자동 생성한 데이터와 저작권 보호를 위해 2어절 단위로 끊어 뒤섞은 텍스트 모음입니다. 각 파편은 인접한 2개 단어의 관계를 보존합니다.
-   - 파편들을 종합하여 원래의 발화 맥락과 시각적 상황을 유추하세요.
-   - 표면적 텍스트를 맹신하지 말고, 앞뒤 맥락과 풍부한 일반 상식을 결합하여 명백한 오류를 자연스럽게 교정·필터링하세요.
-
-2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
-   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
-   - 영상 내용만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
-   - 영상에서 얻은 맥락과 사전 지식을 자연스럽게 결합하여, 시청자가 "이 AI는 정말 똑똑하다!"라고 느끼도록 풍부하고 정확한 답변을 제공하세요.
-   - 단, 영상 내용과 명백히 모순되는 정보는 제공하지 마세요.
-
-3. **현재 장면 우선 (답변을 이끌어내는 시점)**
-   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
-   - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
-
-4. **완벽한 TV 파트너 톤앤매너**
-   - "JSON", "타임스탬프", "시청 기록에 따르면" 등 시스템 용어는 절대 금지합니다.
-   - "지금 화면을 보면~", "방금 나온 대화에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
-
-5. **대화 이어가기**
-   - 정보만 전달하고 끝내지 마세요.
-   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
 _VH_RESPONSE_PROMPT_RAW_WITH_MMVLM = _VH_RESPONSE_PROMPT_BASE + """
 
@@ -230,38 +162,6 @@ _VH_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
-_VH_RESPONSE_PROMPT_IMGVLM_CHUNK3 = _VH_RESPONSE_PROMPT_BASE + """
-
-[시청 기억의 구조]
-제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 메타데이터**만으로 이루어져 있습니다.
-각 Scene별로 다음의 구조화 정보가 제공됩니다:
-  - Subjects: 장면의 주체 (등장인물, 주요 피사체) — 3어절 뒤섞인 파편
-  - Actions: 관찰된 주요 행동 — 3어절 뒤섞인 파편
-  - Contexts: 장면의 배경 환경 및 맥락 정보 — 3어절 뒤섞인 파편
-
-이 데이터는 저작권 보호를 위해 3어절 단위로 파편화되어 순서가 뒤섞인 형태입니다. [MASKED] 토큰이 포함된 경우 해당 고유명사를 추측하지 마세요.
-
-[분석 및 대화 지시사항]
-1. **구조화 데이터 복원 및 분석 (매우 중요)**
-   - Subjects, Actions, Contexts 파편을 논리적으로 조합하여 장면의 전체적인 맥락을 입체적으로 파악하세요.
-   - 파편들을 문맥과 상식을 동원하여 원래 의미를 유추하세요.
-
-2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
-   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
-   - 구조화 데이터만으로 답변이 불충분할 경우, 당신이 가진 사전 지식(World Knowledge)을 적극적으로 활용하세요.
-   - 단, 구조화 데이터에서 유추한 내용과 명백히 모순되는 정보는 제공하지 마세요.
-
-3. **현재 장면 우선 (답변을 이끌어내는 시점)**
-   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
-
-4. **완벽한 TV 파트너 톤앤매너**
-   - "메타데이터", "구조화 데이터", "Subjects 필드", "파편" 등 시스템 용어는 절대 금지입니다.
-   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
-
-5. **대화 이어가기**
-   - 정보만 전달하고 끝내지 마세요.
-   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
-
 _VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
@@ -301,20 +201,8 @@ def make_vh_gen_config(thinking_level=None):
             system_instruction=_VH_RESPONSE_PROMPT_RAW,
             thinking_level=thinking_level,
         ),
-        "frag": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_FRAG,
-            thinking_level=thinking_level,
-        ),
-        "frag_with_vlm": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_FRAG_WITH_VLM,
-            thinking_level=thinking_level,
-        ),
         "imgvlm_chunk2": make_generate_config(
             system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2,
-            thinking_level=thinking_level,
-        ),
-        "imgvlm_chunk3": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK3,
             thinking_level=thinking_level,
         ),
         "imgvlm_graph": make_generate_config(
@@ -344,7 +232,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         content_id: 콘텐츠 ID
         scene_idx: 현재 KeyScene의 scene_idx
         keypoints: 해당 content_id의 전체 keypoint 목록 (list of dict)
-        mode: 'video' | 'raw' | 'imgvlm' | 'raw_with_mmvlm' | 'frag' | 'frag_with_vlm'
+        mode: 'video' | 'raw' | 'raw_with_mmvlm' | 'imgvlm_chunk2' | 'imgvlm_graph'
         max_past_scenes: None이면 Scene 0부터 전체, 정수이면 현재 KeyScene 기준 최근 N개 Scene만 사용
 
     Returns:
@@ -389,32 +277,16 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
             return get_gcs_raw_fields_by_scene_idx(
                 gs_bucket_name, content_id, start_idx, scene_idx
             )
-        elif mode == "frag":
-            return get_processed_frag_fields_by_scene_idx(
-                gs_bucket_name, content_id, start_idx, scene_idx
-            )
         elif mode == "imgvlm_chunk2":
             return get_processed_vlm_descriptions_by_scene_idx(
                 gs_bucket_name, content_id, "vlm_img_structure_chunk2", start_idx, scene_idx
-            )
-        elif mode == "imgvlm_chunk3":
-            return get_processed_vlm_descriptions_by_scene_idx(
-                gs_bucket_name, content_id, "vlm_img_structure_chunk3", start_idx, scene_idx
             )
         elif mode == "imgvlm_graph":
             return get_processed_vlm_descriptions_by_scene_idx(
                 gs_bucket_name, content_id, "vlm_graph", start_idx, scene_idx
             )
-        elif mode == "vlm":
-            return get_processed_vlm_descriptions_by_scene_idx(
-                gs_bucket_name, content_id, "vlm_mm_structure", start_idx, scene_idx
-            )
         elif mode == "raw_with_mmvlm":
             return get_gcs_raw_with_mmvlm_by_scene_idx(
-                gs_bucket_name, content_id, start_idx, scene_idx
-            )
-        elif mode == "frag_with_vlm":
-            return get_processed_frag_with_vlm_by_scene_idx(
                 gs_bucket_name, content_id, start_idx, scene_idx
             )
         else:
@@ -437,11 +309,8 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
         else:
             label_map = {
                 "raw": "Raw Metadata (speech & text, 처음부터 현재 장면까지)",
-                "frag": "Fragmented Metadata (speech_fragments & text_fragments, 처음부터 현재 장면까지)",
                 "vlm": "VLM Structure Only (처음부터 현재 장면까지)",
-                "frag_with_vlm": "VLM + Fragmented Metadata (처음부터 현재 장면까지)",
                 "imgvlm_chunk2": "VLM Image Structure — 2-word Chunks (처음부터 현재 장면까지)",
-                "imgvlm_chunk3": "VLM Image Structure — 3-word Chunks (처음부터 현재 장면까지)",
                 "imgvlm_graph": "VLM Scene Knowledge Graph (처음부터 현재 장면까지)",
                 "raw_with_mmvlm": "Raw ASR/OCR + VLM Multimodal Description (처음부터 현재 장면까지)",
             }
@@ -562,10 +431,9 @@ def main():
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
-    parser.add_argument("--watch", action="store_true", help="입력 파일을 모니터링하며 새 데이터가 들어오면 실시간으로 처리합니다.")
     parser.add_argument("--modes", nargs="+",
-                        default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph"],
-                        choices=["video", "raw", "frag", "frag_with_vlm", "imgvlm_chunk2", "imgvlm_chunk3", "imgvlm_graph", "raw_with_mmvlm"],
+                        default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"],
+                        choices=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"],
                         help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변)")
 
     args, client = init_pipeline(parser.parse_args())
@@ -584,24 +452,15 @@ def main():
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
-    # 기처리분 로드: (content_id, scene_idx, mode, query)
-    completed_pairs = _load_completed_pairs(args.output_file)
-    if completed_pairs:
-        print(f"[기처리] {len(completed_pairs)}개 항목이 이미 처리 완료됨.")
+    if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
+        return
 
-    print_pipeline_banner(f"VH Response 생성 파이프라인을 시작합니다. (Watch 모드: {args.watch})")
+    print_pipeline_banner("VH Response 생성 파이프라인을 시작합니다.")
     print(f"[Mode] KSS Query → Target Response Modes: {target_modes}")
     if args.vh_response_past_scenes_size:
         print(f"[Window] vh_response_past_scenes_size={args.vh_response_past_scenes_size} 설정: 현재 KeyScene 기준 최근 {args.vh_response_past_scenes_size}개 KeyPoint 내 Scene만 Source로 사용합니다.")
 
-    if not os.path.exists(args.input_file) and not args.watch:
-        if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
-            return
-
     file_write_lock = threading.Lock()
-    last_position = 0
-    pipeline_done = False
-    total_generated = 0
     _checked_contents = set()
 
     def _process_kss_record(rec):
@@ -703,50 +562,48 @@ def main():
 
         return count
 
+    MAX_RETRY = 3
     try:
-        while True:
-            if not os.path.exists(args.input_file):
-                if not args.watch:
-                    print(f"Error: {args.input_file} 파일이 존재하지 않습니다.")
-                    return
-                time.sleep(3)
-                continue
+        for attempt in range(MAX_RETRY):
+            # 기처리분 재로드
+            completed_pairs = _load_completed_pairs(args.output_file)
+            if attempt == 0 and completed_pairs:
+                print(f"[기처리] {len(completed_pairs)}개 항목이 이미 처리 완료됨.")
 
-            with open(args.input_file, "r", encoding="utf-8") as f:
-                f.seek(last_position)
-                new_lines = f.readlines()
-                last_position = f.tell()
+            # 전체 KSS 레코드 로드
+            all_kss_records = [
+                r for r in load_jsonl(args.input_file)
+                if r.get("mode") == "kss" and not r.get("pipeline_done")
+            ]
+            if not all_kss_records:
+                print("[Error] KSS 모드 레코드가 없습니다. generate_voice_hint.py를 먼저 실행하세요.")
+                return
 
-            kss_items = []
-            for line in new_lines:
-                if not line.strip():
-                    continue
-                try:
-                    obj = json.loads(line)
-                    if obj.get("pipeline_done"):
-                        pipeline_done = True
-                    elif obj.get("mode") == "kss":
-                        # KSS 모드 VH 레코드만 추출하여 공통 Query로 사용
-                        kss_items.append(obj)
-                except json.JSONDecodeError:
-                    pass
+            total_expected = sum(len(r.get("queries", [])) * len(target_modes) for r in all_kss_records)
+            print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] KSS 레코드 {len(all_kss_records)}개, 예상 조합 {total_expected}개 (mode×query) 처리")
 
-            if kss_items:
-                total_generated += sum(len(rec.get("queries", [])) * len(target_modes) for rec in kss_items)
+            for rec in all_kss_records:
+                _process_kss_record(rec)
 
-                for rec in kss_items:
-                    _process_kss_record(rec)
+            # 누락 재확인
+            completed_pairs = _load_completed_pairs(args.output_file)
+            missing = [
+                (r.get("content_id"), r.get("scene_idx"), m, q)
+                for r in all_kss_records
+                for q in r.get("queries", [])
+                for m in target_modes
+                if (r.get("content_id"), r.get("scene_idx"), m, q) not in completed_pairs
+            ]
 
-                pending_count = total_generated - len(completed_pairs)
-                print(f"\n▶ [VH Response TODO] Total Generated: {total_generated} | Completed: {len(completed_pairs)} | Pending: {pending_count}")
+            print(f"\n▶ [VH Response Pass {attempt + 1}] 완료: {len(completed_pairs)} | Pending: {len(missing)}")
 
-            if args.watch:
-                if pipeline_done:
-                    print("\n[Watch] Generation 파이프라인의 종료 시그널(pipeline_done)을 감지했습니다. 모든 처리를 완료하고 종료합니다.")
-                    break
-                time.sleep(3)
-            else:
+            if not missing:
+                print("[완료] 모든 항목이 처리되었습니다.")
                 break
+            if attempt < MAX_RETRY - 1:
+                print(f"[Retry {attempt + 1}/{MAX_RETRY}] {len(missing)}개 누락 → 재시도합니다.")
+            else:
+                print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {len(missing)}개 미처리 항목이 남아있습니다.")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
@@ -755,12 +612,8 @@ def main():
     # 결과 파일 정렬 및 누락 점검
     _validate_vh_responses(args.output_file, args.input_file, target_modes)
 
-    # 다운스트림 Watch 모드 종료 시그널
-    append_jsonl(args.output_file, {"pipeline_done": True})
-
     print_pipeline_done(args.output_file)
 
 
 if __name__ == "__main__":
     main()
-
