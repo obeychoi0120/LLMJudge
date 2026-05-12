@@ -215,11 +215,78 @@ LLMJudge/
    ```
    `config.json`에 GCP 프로젝트 ID와 GCS 버킷 이름을 설정합니다.
 
-3. **GCS 디렉토리 구조**
+3. **GCS 디렉토리 구조 및 데이터 업로드**
+
+   파이프라인은 GCS 버킷에서 3종의 파일을 읽습니다. 아래 경로 규칙을 **반드시** 준수해야 합니다.
+
    ```text
-   gs://{bucket}/video_540p/{content_id}_540p.mp4
-   gs://{bucket}/jsonl/{content_id}_final.jsonl
-   gs://{bucket}/jsonl/{content_id}_ref.jsonl
+   gs://{bucket}/
+   ├── video_540p/
+   │   └── {content_id}_540p.mp4          # 540p 다운스케일 비디오
+   └── jsonl/
+       ├── {content_id}_final.jsonl       # Scene별 메타데이터 (VLM 구조 포함)
+       └── {content_id}_ref.jsonl         # Scene별 참조 메타데이터 (speech, texts, sounds)
+   ```
+
+   | 파일 | 설명 | 필수 |
+   |------|------|:----:|
+   | `{content_id}_540p.mp4` | Gemini 모델에 입력되는 비디오. 540p 해상도 권장 | ✅ |
+   | `{content_id}_final.jsonl` | 각 Scene의 전체 메타데이터 (VLM 이미지 구조, 타임라인 등) | ✅ |
+   | `{content_id}_ref.jsonl` | 각 Scene의 참조 메타데이터 (speech, texts, sounds, duration 등) | ✅ |
+
+   > **참고**: `content_id`는 `content_list.json`에 등록하는 ID와 동일해야 합니다.
+
+   #### GCS 버킷 생성
+
+   자신만의 버킷을 생성하려면 아래 명령어를 사용합니다.
+   ```bash
+   # 버킷 생성 (리전: us-central1)
+   gcloud storage buckets create gs://my-llmjudge-bucket \
+       --project=your-gcp-project-id \
+       --location=us-central1\
+       --uniform-bucket-level-access
+
+   # 생성 확인
+   gcloud storage buckets describe gs://my-llmjudge-bucket
+   ```
+
+   생성 후 `config.json`의 `gs_bucket_name`을 생성한 버킷 이름으로 변경합니다.
+   ```json
+   {
+       "gs_bucket_name": "my-llmjudge-bucket"
+   }
+   ```
+
+   > **참고**: 버킷 이름은 전역적으로 고유해야 합니다. 팀 내 충돌을 방지하려면 `{팀명}-llmjudge-{이니셜}` 같은 네이밍 컨벤션을 권장합니다.
+
+   #### 데이터 업로드 방법
+
+   **gcloud storage를 사용한 업로드:**
+   ```bash
+   gcloud storage cp /path/to/{content_id}_540p.mp4   gs://{bucket}/video_540p/
+   gcloud storage cp /path/to/{content_id}_final.jsonl gs://{bucket}/jsonl/
+   gcloud storage cp /path/to/{content_id}_ref.jsonl   gs://{bucket}/jsonl/
+   ```
+
+   **업로드 후 검증:**
+   ```bash
+   # 특정 content_id의 파일 존재 확인
+   gcloud storage ls gs://{bucket}/video_540p/{content_id}_540p.mp4
+   gcloud storage ls gs://{bucket}/jsonl/{content_id}_final.jsonl
+   gcloud storage ls gs://{bucket}/jsonl/{content_id}_ref.jsonl
+
+   # 또는 파이프라인을 실행하면 자동으로 3종 파일 존재 여부를 검증합니다.
+   # → [OK] '{content_id}'에 필요한 미디어 및 메타데이터가 모두 GCS에 존재합니다.
+   ```
+
+   #### content_list.json 등록
+
+   업로드한 콘텐츠를 파이프라인에서 처리하려면 `content_list.json`에 해당 `content_id`를 추가합니다.
+   ```json
+   [
+       "my_video_001",
+       "my_video_002"
+   ]
    ```
 
 4. **`config.json` 주요 설정 키** (sample_config.json 참조)
@@ -252,17 +319,17 @@ LLMJudge/
 
 ### 공통 인프라 (모든 Track 공유)
 
-아래 두 스크립트는 **모든 Track의 공통 선행**입니다. B Track 실행 전 반드시 완료해야 합니다.
+아래 두 스크립트는 **모든 Track의 공통 선행**입니다. A/B Track 실행 전 반드시 완료해야 합니다.
 
 ```bash
-python identify_keyscene.py                       # A-1: KeyScene 식별 → keypoint_scenes.jsonl
-python generate_keyscene_summary.py               # A-2: KeyScene Summary 생성 → keyscene_summary.jsonl (Ground Truth Anchor)
+python identify_keyscene.py                       # O-1: KeyScene 식별 → keypoint_scenes.jsonl
+python generate_keyscene_summary.py               # O-2: KeyScene Summary 생성 → keyscene_summary.jsonl (Ground Truth Anchor)
 ```
 
 ### A-Track (Voice Hint)
 ```bash
-python generate_voice_hint.py                     # A-3: Voice Hint 생성 (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
-python judge_voice_hint.py                        # A-4: Voice Hint Judge (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
+python generate_voice_hint.py                     # A-1: Voice Hint 생성 (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
+python judge_voice_hint.py                        # A-2: Voice Hint Judge (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
 
 # 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
 python generate_voice_hint.py --modes imgvlm_chunk2 video

@@ -37,10 +37,10 @@ def main():
     ]
 
     # ───────────────────────────────────────────────
-    # A-1: KeyScene 식별 (identify_keyscene.py)
+    # O-1: KeyScene 식별 (identify_keyscene.py)
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> A-1. KeyScene 식별 (identify_keyscene.py)")
+    print(">>> O-1. KeyScene 식별 (identify_keyscene.py)")
     print("="*60)
     cmd_kp = [
         sys.executable, "identify_keyscene.py",
@@ -53,10 +53,10 @@ def main():
     print(f"-> KeyScene 저장 완료: {args.keypoints_file}")
 
     # ───────────────────────────────────────────────
-    # A-2: KeyScene Summary 생성 (generate_keyscene_summary.py)
+    # O-2: KeyScene Summary 생성 (generate_keyscene_summary.py)
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> A-2. KeyScene Summary 생성 (generate_keyscene_summary.py)")
+    print(">>> O-2. KeyScene Summary 생성 (generate_keyscene_summary.py)")
     print("="*60)
     cmd_ks = [
         sys.executable, "generate_keyscene_summary.py",
@@ -72,10 +72,10 @@ def main():
     print(f"-> KeyScene Summary 저장 완료: {args.keyscene_summary_file}")
 
     # ───────────────────────────────────────────────
-    # A-3: Voice Hint 생성 (generate_voice_hint.py)
+    # A-1: Voice Hint 생성 (generate_voice_hint.py)
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> A-3. Voice Hint 생성 (generate_voice_hint.py)")
+    print(">>> A-1. Voice Hint 생성 (generate_voice_hint.py)")
     print("="*60)
     cmd_vh = [
         sys.executable, "generate_voice_hint.py",
@@ -88,10 +88,10 @@ def main():
     print(f"-> Voice Hint 저장 완료: {args.voice_hints_file}")
 
     # ───────────────────────────────────────────────
-    # A-4: Voice Hint 질문 품질 Judge (judge_voice_hint.py)
+    # A-2: Voice Hint 질문 품질 Judge (judge_voice_hint.py)
     # ───────────────────────────────────────────────
     print("\n" + "="*60)
-    print(">>> A-4. Voice Hint 질문 품질 평가 (judge_voice_hint.py)")
+    print(">>> A-2. Voice Hint 질문 품질 평가 (judge_voice_hint.py)")
     print("="*60)
     cmd = [
         sys.executable, "judge_voice_hint.py",
