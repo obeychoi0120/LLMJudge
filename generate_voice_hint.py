@@ -80,15 +80,14 @@ _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
 _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
 [입력 형식 설명]
 당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
-- vlm_img_structure: 시각 정보를 Subjects(주체), Actions(행동), Contexts(맥락/환경)로 구조화한 데이터
+- vlm_img_structure: 시각 정보를 Subjects(주체), Contexts(행동/환경/맥락)로 구조화한 데이터
 - 각 필드는 저작권 보호를 위해 2어절 단위로 뒤섞인 파편(fragment) 형태입니다.
-- [MASKED] 토큰이 포함된 경우 해당 고유명사를 추측하지 마세요.
 
 이 데이터는 영상의 시각 프레임에서 추출된 구조화된 메타데이터입니다.
 
 [사고 과정 (Chain-of-Thought) 가이드]
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (장면 맥락 유추): 구조화 데이터(vlm_img_structure)의 Subjects, Actions, Contexts 파편을 논리적으로 조합하여 현재 장면의 전체적인 맥락을 유추.
+- 1단계 (장면 맥락 유추): 구조화 데이터(vlm_img_structure)의 Subjects, Contexts 파편을 논리적으로 조합하여 현재 장면의 전체적인 맥락을 유추.
 - 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
 - 4단계 (Hook 및 질문 기획): 구조화 데이터에서 유추한 현재 장면의 새 단서에 집중하여 질문 기획.
