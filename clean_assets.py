@@ -8,7 +8,7 @@ import shutil
 ASSET_FILES = [
     "assets/voice_hint.jsonl",
     "assets/voice_hint_scores.jsonl",
-    "assets/vh_response.jsonl",
+    "assets/vh_responses.jsonl",
     "assets/vh_response_scores.jsonl"
 ]
 
