@@ -600,34 +600,10 @@ def main():
             print(f"[Discovery {discovery_pass}] KSS 레코드 {len(all_kss_records)}개, 미처리 {pending_count}개 조합 발견")
             print(f"{'='*50}")
 
-            # 내부 Retry 루프: API 실패에 대한 재시도
-            for attempt in range(MAX_RETRY):
-                if attempt > 0:
-                    completed_pairs = _load_completed_pairs(args.output_file)
+            for rec in all_kss_records:
+                _process_kss_record(rec)
 
-                print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] 처리 시작...")
-
-                for rec in all_kss_records:
-                    _process_kss_record(rec)
-
-                # 누락 재확인
-                completed_pairs = _load_completed_pairs(args.output_file)
-                missing = [
-                    (r.get("content_id"), r.get("scene_idx"), m, q)
-                    for r in all_kss_records
-                    for q in r.get("queries", [])
-                    for m in target_modes
-                    if (r.get("content_id"), r.get("scene_idx"), m, q) not in completed_pairs
-                ]
-
-                print(f"\n▶ [Pass {attempt + 1}] 완료: {len(completed_pairs)} | Pending: {len(missing)}")
-
-                if not missing:
-                    break
-                if attempt < MAX_RETRY - 1:
-                    print(f"[Retry {attempt + 1}/{MAX_RETRY}] {len(missing)}개 누락 → 재시도합니다.")
-                else:
-                    print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {len(missing)}개 미처리 항목이 남아있습니다.")
+            print(f"\n▶ [Discovery {discovery_pass}] 완료")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
