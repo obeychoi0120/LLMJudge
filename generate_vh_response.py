@@ -562,46 +562,72 @@ def main():
 
     MAX_RETRY = 3
     try:
-        for attempt in range(MAX_RETRY):
-            # 기처리분 재로드
+        discovery_pass = 0
+        while True:
+            discovery_pass += 1
+
+            # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 KSS 레코드를 감지
             completed_pairs = _load_completed_pairs(args.output_file)
-            if attempt == 0 and completed_pairs:
+            if discovery_pass == 1 and completed_pairs:
                 print(f"[기처리] {len(completed_pairs)}개 항목이 이미 처리 완료됨.")
 
-            # 전체 KSS 레코드 로드
             all_kss_records = [
                 r for r in load_jsonl(args.input_file)
                 if r.get("mode") == "kss" and not r.get("pipeline_done")
             ]
+
             if not all_kss_records:
-                print("[Error] KSS 모드 레코드가 없습니다. generate_voice_hint.py를 먼저 실행하세요.")
-                return
+                if discovery_pass == 1:
+                    print("[Error] KSS 모드 레코드가 없습니다. generate_voice_hint.py를 먼저 실행하세요.")
+                    return
+                else:
+                    print("[완료] 입력 파일에 처리할 KSS 레코드가 없습니다.")
+                    break
 
-            total_expected = sum(len(r.get("queries", [])) * len(target_modes) for r in all_kss_records)
-            print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] KSS 레코드 {len(all_kss_records)}개, 예상 조합 {total_expected}개 (mode×query) 처리")
-
-            for rec in all_kss_records:
-                _process_kss_record(rec)
-
-            # 누락 재확인
-            completed_pairs = _load_completed_pairs(args.output_file)
-            missing = [
-                (r.get("content_id"), r.get("scene_idx"), m, q)
-                for r in all_kss_records
+            # 미처리 항목 개수 확인
+            pending_count = sum(
+                1 for r in all_kss_records
                 for q in r.get("queries", [])
                 for m in target_modes
                 if (r.get("content_id"), r.get("scene_idx"), m, q) not in completed_pairs
-            ]
+            )
 
-            print(f"\n▶ [VH Response Pass {attempt + 1}] 완료: {len(completed_pairs)} | Pending: {len(missing)}")
-
-            if not missing:
+            if pending_count == 0:
                 print("[완료] 모든 항목이 처리되었습니다.")
                 break
-            if attempt < MAX_RETRY - 1:
-                print(f"[Retry {attempt + 1}/{MAX_RETRY}] {len(missing)}개 누락 → 재시도합니다.")
-            else:
-                print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {len(missing)}개 미처리 항목이 남아있습니다.")
+
+            print(f"\n{'='*50}")
+            print(f"[Discovery {discovery_pass}] KSS 레코드 {len(all_kss_records)}개, 미처리 {pending_count}개 조합 발견")
+            print(f"{'='*50}")
+
+            # 내부 Retry 루프: API 실패에 대한 재시도
+            for attempt in range(MAX_RETRY):
+                if attempt > 0:
+                    completed_pairs = _load_completed_pairs(args.output_file)
+
+                print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] 처리 시작...")
+
+                for rec in all_kss_records:
+                    _process_kss_record(rec)
+
+                # 누락 재확인
+                completed_pairs = _load_completed_pairs(args.output_file)
+                missing = [
+                    (r.get("content_id"), r.get("scene_idx"), m, q)
+                    for r in all_kss_records
+                    for q in r.get("queries", [])
+                    for m in target_modes
+                    if (r.get("content_id"), r.get("scene_idx"), m, q) not in completed_pairs
+                ]
+
+                print(f"\n▶ [Pass {attempt + 1}] 완료: {len(completed_pairs)} | Pending: {len(missing)}")
+
+                if not missing:
+                    break
+                if attempt < MAX_RETRY - 1:
+                    print(f"[Retry {attempt + 1}/{MAX_RETRY}] {len(missing)}개 누락 → 재시도합니다.")
+                else:
+                    print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {len(missing)}개 미처리 항목이 남아있습니다.")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

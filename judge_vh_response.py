@@ -207,8 +207,11 @@ def main():
     MAX_RETRY = 3
 
     try:
-        for attempt in range(MAX_RETRY):
-            # 기처리분 재로드
+        discovery_pass = 0
+        while True:
+            discovery_pass += 1
+
+            # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 Response를 감지
             processed_pairs = set()
             if os.path.exists(args.output_file):
                 for rec in load_jsonl(args.output_file):
@@ -218,14 +221,19 @@ def main():
                     query = rec.get("query")
                     if c_id and s_idx is not None and mode and query:
                         processed_pairs.add((c_id, s_idx, mode, query))
-            if attempt == 0 and processed_pairs:
+            if discovery_pass == 1 and processed_pairs:
                 print(f"[기처리] {len(processed_pairs)}개 항목이 이미 평가 완료됨.")
 
             # 전체 파일 로드 → 미처리 항목 그룹핑
             all_data = [r for r in load_jsonl(args.answers_file) if not r.get("pipeline_done")]
+
             if not all_data:
-                print("[Error] 평가할 Response 데이터가 없습니다. generate_vh_response.py를 먼저 실행하세요.")
-                return
+                if discovery_pass == 1:
+                    print("[Error] 평가할 Response 데이터가 없습니다. generate_vh_response.py를 먼저 실행하세요.")
+                    return
+                else:
+                    print("[완료] 입력 파일에 처리할 Response가 없습니다.")
+                    break
 
             unprocessed_groups = OrderedDict()
             for obj in all_data:
@@ -241,43 +249,78 @@ def main():
                 unprocessed_groups.setdefault(q_key, []).append(obj)
 
             if not unprocessed_groups:
-                print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
+                if discovery_pass == 1:
+                    print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
+                else:
+                    print("[완료] 추가 항목이 없습니다. 모든 평가가 완료되었습니다.")
                 break
 
             total_pending = sum(len(v) for v in unprocessed_groups.values())
-            print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] {len(unprocessed_groups)}개 Query, {total_pending}개 항목 평가 시작...")
+            print(f"\n{'='*50}")
+            print(f"[Discovery {discovery_pass}] {len(unprocessed_groups)}개 Query, 미처리 {total_pending}개 항목 발견")
+            print(f"{'='*50}")
 
-            pass_evaluated = 0
-            for (c_id, s_idx, q_text), items in unprocessed_groups.items():
-                pass_evaluated += _process_query_group(q_text, items)
+            # 내부 Retry 루프: API 실패에 대한 재시도
+            for attempt in range(MAX_RETRY):
+                if attempt > 0:
+                    # 재시도 시 기처리분 재로드 → 미처리 항목 재계산
+                    processed_pairs = set()
+                    if os.path.exists(args.output_file):
+                        for rec in load_jsonl(args.output_file):
+                            c_id  = rec.get("content_id")
+                            s_idx = rec.get("scene_idx")
+                            mode  = rec.get("mode")
+                            query = rec.get("query")
+                            if c_id and s_idx is not None and mode and query:
+                                processed_pairs.add((c_id, s_idx, mode, query))
 
-            print(f"\n▶ [Pass {attempt + 1}] {pass_evaluated}개 평가 완료")
+                    unprocessed_groups = OrderedDict()
+                    for obj in all_data:
+                        c_id  = obj.get("content_id")
+                        s_idx = obj.get("scene_idx")
+                        mode  = obj.get("mode")
+                        query = obj.get("query")
+                        if not (c_id and s_idx is not None and mode and query):
+                            continue
+                        if (c_id, s_idx, mode, query) in processed_pairs:
+                            continue
+                        q_key = (c_id, s_idx, query)
+                        unprocessed_groups.setdefault(q_key, []).append(obj)
+                    if not unprocessed_groups:
+                        break
 
-            # 누락 재확인
-            processed_after = set()
-            if os.path.exists(args.output_file):
-                for rec in load_jsonl(args.output_file):
-                    c_id  = rec.get("content_id")
-                    s_idx = rec.get("scene_idx")
-                    mode  = rec.get("mode")
-                    query = rec.get("query")
-                    if c_id and s_idx is not None and mode and query:
-                        processed_after.add((c_id, s_idx, mode, query))
+                print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] 처리 시작...")
 
-            remaining_count = sum(
-                1 for r in all_data
-                if r.get("content_id") and r.get("scene_idx") is not None
-                and r.get("mode") and r.get("query")
-                and (r["content_id"], r["scene_idx"], r["mode"], r["query"]) not in processed_after
-            )
+                pass_evaluated = 0
+                for (c_id, s_idx, q_text), items in unprocessed_groups.items():
+                    pass_evaluated += _process_query_group(q_text, items)
 
-            if remaining_count == 0:
-                print("[완료] 모든 항목이 처리되었습니다.")
-                break
-            if attempt < MAX_RETRY - 1:
-                print(f"[Retry {attempt + 1}/{MAX_RETRY}] {remaining_count}개 누락 → 재시도합니다.")
-            else:
-                print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {remaining_count}개 미처리 항목이 남아있습니다.")
+                print(f"\n▶ [Pass {attempt + 1}] {pass_evaluated}개 평가 완료")
+
+                # 누락 재확인
+                processed_after = set()
+                if os.path.exists(args.output_file):
+                    for rec in load_jsonl(args.output_file):
+                        c_id  = rec.get("content_id")
+                        s_idx = rec.get("scene_idx")
+                        mode  = rec.get("mode")
+                        query = rec.get("query")
+                        if c_id and s_idx is not None and mode and query:
+                            processed_after.add((c_id, s_idx, mode, query))
+
+                remaining_count = sum(
+                    1 for r in all_data
+                    if r.get("content_id") and r.get("scene_idx") is not None
+                    and r.get("mode") and r.get("query")
+                    and (r["content_id"], r["scene_idx"], r["mode"], r["query"]) not in processed_after
+                )
+
+                if remaining_count == 0:
+                    break
+                if attempt < MAX_RETRY - 1:
+                    print(f"[Retry {attempt + 1}/{MAX_RETRY}] {remaining_count}개 누락 → 재시도합니다.")
+                else:
+                    print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {remaining_count}개 미처리 항목이 남아있습니다.")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

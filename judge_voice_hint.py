@@ -174,13 +174,16 @@ def main():
     MAX_RETRY = 3
 
     try:
-        for attempt in range(MAX_RETRY):
-            # 기처리분 재로드
+        discovery_pass = 0
+        while True:
+            discovery_pass += 1
+
+            # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 VH 레코드를 감지
             processed_pairs = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
-            if attempt == 0 and processed_pairs:
+            if discovery_pass == 1 and processed_pairs:
                 print(f"[{len(processed_pairs)}] 개의 (content_id, mode, query) 쌍이 이미 처리됨.")
 
-            # 전체 파일 로드 → 미처리 항목만 그룹핑
+            # 미처리 항목 그룹핑
             accumulated_groups = {}
             for scene_item in load_jsonl(args.input_file):
                 if scene_item.get("pipeline_done"):
@@ -209,65 +212,100 @@ def main():
                         })
 
             if not accumulated_groups:
-                print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
+                if discovery_pass == 1:
+                    print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
+                else:
+                    print("[완료] 추가 항목이 없습니다. 모든 평가가 완료되었습니다.")
                 break
 
             total_pending = sum(len(v) for v in accumulated_groups.values())
-            print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] {len(accumulated_groups)}개 Scene, {total_pending}개 질문 평가 시작...")
+            print(f"\n{'='*50}")
+            print(f"[Discovery {discovery_pass}] {len(accumulated_groups)}개 Scene, 미처리 {total_pending}개 질문 발견")
+            print(f"{'='*50}")
 
-            pass_evaluated = 0
-            for (c_id, s_idx), items in accumulated_groups.items():
-                print(f"\n[{c_id} | Scene {s_idx}] {len(items)}개 질문(전체 모드) 병렬 평가 시작...")
+            # 내부 Retry 루프: API 실패에 대한 재시도
+            for attempt in range(MAX_RETRY):
+                if attempt > 0:
+                    # 재시도 시 기처리분 재로드 → 미처리 항목 재계산
+                    processed_pairs = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
+                    accumulated_groups = {}
+                    for scene_item in load_jsonl(args.input_file):
+                        if scene_item.get("pipeline_done"):
+                            continue
+                        content_id   = scene_item.get("content_id")
+                        scene_idx    = scene_item.get("scene_idx")
+                        mode         = scene_item.get("mode", "")
+                        queries_list = scene_item.get("queries", [])
+                        if not content_id or scene_idx is None or not mode:
+                            continue
+                        if mode not in target_modes_set:
+                            continue
+                        detailed_summary = summary_map.get((content_id, scene_idx), "")
+                        group_key = (content_id, scene_idx)
+                        for q_text in queries_list:
+                            if (content_id, mode, q_text) not in processed_pairs:
+                                accumulated_groups.setdefault(group_key, []).append({
+                                    "content_id": content_id, "scene_idx": scene_idx,
+                                    "mode": mode, "query": q_text,
+                                    "detailed_summary": detailed_summary,
+                                })
+                    if not accumulated_groups:
+                        break
 
-                results_list = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(items))) as executor:
-                    futures = [
-                        executor.submit(
-                            judge_one,
-                            {"mode": item["mode"], "query": item["query"]},
-                            item["content_id"], item["scene_idx"], item["detailed_summary"],
-                            client, args, judge_config, file_write_lock
-                        )
-                        for item in items
-                    ]
-                    for future in concurrent.futures.as_completed(futures):
-                        res = future.result()
-                        if res:
-                            results_list.append(res)
-                        pass_evaluated += 1
+                print(f"\n[Pass {attempt + 1}/{MAX_RETRY}] 처리 시작...")
 
-                def sort_key(r):
-                    m = r.get("mode", "")
-                    return target_mode_order.index(m) if m in target_mode_order else 999
+                pass_evaluated = 0
+                for (c_id, s_idx), items in accumulated_groups.items():
+                    print(f"\n[{c_id} | Scene {s_idx}] {len(items)}개 질문(전체 모드) 병렬 평가 시작...")
 
-                results_list.sort(key=sort_key)
-                print(f"--- [{c_id} | Scene {s_idx} 평가 완료] ---")
-                for r in results_list:
-                    if r.get("success"):
-                        if r.get("out_str"):
-                            print(r["out_str"])
-                    else:
-                        if r.get("msg"):
-                            print(r["msg"])
+                    results_list = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(items))) as executor:
+                        futures = [
+                            executor.submit(
+                                judge_one,
+                                {"mode": item["mode"], "query": item["query"]},
+                                item["content_id"], item["scene_idx"], item["detailed_summary"],
+                                client, args, judge_config, file_write_lock
+                            )
+                            for item in items
+                        ]
+                        for future in concurrent.futures.as_completed(futures):
+                            res = future.result()
+                            if res:
+                                results_list.append(res)
+                            pass_evaluated += 1
 
-            print(f"\n▶ [Pass {attempt + 1}] {pass_evaluated}개 평가 완료")
+                    def sort_key(r):
+                        m = r.get("mode", "")
+                        return target_mode_order.index(m) if m in target_mode_order else 999
 
-            # 누락 재확인
-            processed_after = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
-            remaining_count = sum(
-                1 for rec in load_jsonl(args.input_file)
-                if not rec.get("pipeline_done") and rec.get("mode") in target_modes_set
-                for q in rec.get("queries", [])
-                if (rec.get("content_id"), rec.get("mode"), q) not in processed_after
-            )
+                    results_list.sort(key=sort_key)
+                    print(f"--- [{c_id} | Scene {s_idx} 평가 완료] ---")
+                    for r in results_list:
+                        if r.get("success"):
+                            if r.get("out_str"):
+                                print(r["out_str"])
+                        else:
+                            if r.get("msg"):
+                                print(r["msg"])
 
-            if remaining_count == 0:
-                print("[완료] 모든 항목이 처리되었습니다.")
-                break
-            if attempt < MAX_RETRY - 1:
-                print(f"[Retry {attempt + 1}/{MAX_RETRY}] {remaining_count}개 누락 → 재시도합니다.")
-            else:
-                print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {remaining_count}개 미처리 항목이 남아있습니다.")
+                print(f"\n▶ [Pass {attempt + 1}] {pass_evaluated}개 평가 완료")
+
+                # 누락 재확인
+                processed_after = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
+                remaining_count = sum(
+                    1 for rec in load_jsonl(args.input_file)
+                    if not rec.get("pipeline_done") and rec.get("mode") in target_modes_set
+                    for q in rec.get("queries", [])
+                    if (rec.get("content_id"), rec.get("mode"), q) not in processed_after
+                )
+
+                if remaining_count == 0:
+                    break
+                if attempt < MAX_RETRY - 1:
+                    print(f"[Retry {attempt + 1}/{MAX_RETRY}] {remaining_count}개 누락 → 재시도합니다.")
+                else:
+                    print(f"[Warning] 최대 재시도 횟수({MAX_RETRY}) 초과. {remaining_count}개 미처리 항목이 남아있습니다.")
 
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")

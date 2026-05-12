@@ -345,22 +345,52 @@ python judge_vh_response.py                       # B-2: Response Judge
 python generate_vh_response.py --modes imgvlm_chunk2 video
 ```
 
-### 누락분 자동 재처리
+### 누락분 자동 재처리 및 Discovery Loop
 
-모든 생성·평가 스크립트는 **재시작 안전(Restart-Safe)** 하게 설계되어 있습니다. 스크립트를 재실행하면 이미 완료된 항목은 건너뛰고 **누락분만 자동으로 재처리**합니다. Judge 스크립트는 내부적으로 최대 **3회(MAX_RETRY)** 재시도합니다.
+모든 생성·평가 스크립트는 **재시작 안전(Restart-Safe)** 하게 설계되어 있습니다. 스크립트를 재실행하면 이미 완료된 항목은 건너뛰고 **누락분만 자동으로 재처리**합니다.
+
+또한 `generate_vh_response.py`, `judge_voice_hint.py`, `judge_vh_response.py`는 **Discovery Loop**를 내장하고 있어, 현재 입력 파일에 있는 항목을 모두 처리한 뒤 **입력 파일을 다시 읽어** 새로 추가된 항목이 있는지 확인합니다. 더 이상 처리할 항목이 없을 때 자동 종료됩니다.
+
+```
+┌─────────────────────────────────────────┐
+│          Discovery Loop (outer)         │
+│                                         │
+│  1. 입력 파일 (재)로드                    │
+│  2. 미처리 항목 확인                      │
+│  3. 없으면 → 종료                        │
+│                                         │
+│  ┌───────────────────────────────────┐  │
+│  │      Retry Loop (inner, ×3)      │  │
+│  │  - API 호출 & 처리               │  │
+│  │  - 실패 항목 재시도              │  │
+│  └───────────────────────────────────┘  │
+│                                         │
+│  4. 입력 파일을 다시 읽어 새 항목 감지     │
+│     → 있으면 1번으로 돌아감               │
+└─────────────────────────────────────────┘
+```
+
+### 병렬 실행
+
+Discovery Loop 덕분에 파이프라인의 각 단계를 **별도 터미널에서 동시에 실행**할 수 있습니다. 앞 단계에서 생성된 데이터를 뒷 단계가 자동으로 감지하여 처리합니다.
 
 ```bash
-# 중간에 중단되거나 일부 항목이 실패했을 경우 그냥 재실행하면 됩니다:
+# Terminal 1 — Voice Hint 생성
 python generate_voice_hint.py
+
+# Terminal 2 — VH가 생성되는 대로 평가 (Discovery Loop으로 새 VH 자동 감지)
 python judge_voice_hint.py
 
+# Terminal 3 — KSS VH가 생성되는 대로 Response 생성 (Discovery Loop)
 python generate_vh_response.py
+
+# Terminal 4 — Response가 생성되는 대로 평가 (Discovery Loop)
 python judge_vh_response.py
 ```
 
-> **데이터 없으면 즉시 종료**: 입력 파일(`voice_hint.jsonl`, `vh_responses.jsonl` 등)이 없거나 필수 데이터(KSS 레코드 등)가 없으면 오류를 출력하고 즉시 종료됩니다. 선행 스크립트를 먼저 실행하세요.
+> **참고**: `generate_voice_hint.py`가 선행으로 최소 1개의 KSS 레코드를 생성한 뒤 나머지를 시작하세요. 입력 파일이 아예 존재하지 않으면 오류를 출력하고 종료됩니다.
 
-### 통합 실행 (A+B Track)
+### 통합 실행 (순차, A+B Track)
 ```bash
 python main.py --input_file content_list.json
 ```
