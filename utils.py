@@ -726,15 +726,17 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
                         ocr_list.append(item)
 
             filtered = {"scene_idx": s_idx, "duration": scene.get("duration", "")}
+
+            # vlm_mm_description 먼저: 장면 개요 (context anchor)
+            mm_desc = scene.get("vlm_mm_description", "")
+            if mm_desc:
+                filtered["vlm_mm_description"] = mm_desc
+
+            # speech/on_screen_text 나중: 사실 정보로 보정 (recency bias 활용)
             if speech:
                 filtered["speech"] = speech
             if ocr_list:
                 filtered["on_screen_text"] = ocr_list
-
-            # vlm_mm_description (같은 레코드에서 추출)
-            mm_desc = scene.get("vlm_mm_description", "")
-            if mm_desc:
-                filtered["vlm_mm_description"] = mm_desc
 
             lines.append(json.dumps(filtered, ensure_ascii=False))
         except json.JSONDecodeError:
