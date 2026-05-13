@@ -9,7 +9,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 ### 2-Track 평가체계
 
 - **A-Track (Voice Hint)**: 6개 모드(kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)의 Source를 기반으로 시청자의 호기심을 유발하는 질문을, KSS Anchor 기준으로 품질 평가
-- **B-Track (VH Response)**: A-Track의 **kss 모드로 생성된 공통 Query**를 기준, 각 모드별 Source로 답변 생성 → KSS + World Knowledge 기반 품질 비교. 동일한 질문으로 데이터소스 간 **통제 실험**을 수행
+- **B-Track (VH Response)**: A-Track의 **kss 모드로 생성된 공통 Query**를 기준, 각 모드별 Source로 답변 생성 → KSS + World Knowledge 기반 품질 비교. 동일한 질문으로 데이터소스 간 **통제 실험**을 수행. `blank` 모드는 컨텍스트 없이 World Knowledge만으로 답변하는 베이스라인
 
 ---
 
@@ -22,19 +22,38 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 `imgvlm` 모드는 온디바이스 VLM이 추출한 시각 메타데이터에 다단계 변환을 **비가역적으로 적용하여**, 원본 서술문/문장을 복원할 수 없는 형태로 가공합니다. 3단계 처리 프로세스는 다음과 같습니다:
 
 1. **구조화 (Structuring)**: VLM 추출 원문을 의미 단위로 Subjects / Actions / Contexts 3개 카테고리로 분류
-2. **2워드 단편화 (Bigram Fragmentation)**: 각 항목을 무작위로 2워드 단위로 잘라 내 원문 순서와의 대응을 완전히 제거
+2. **2워드 단편화 (Bigram Fragmentation)**: 각 항목을 무작위로 2워드 단위로 잘라 내 원문 순서와의 대응을 완전히 제거. 파편 끝 잔류 구두점(`;` `.` `,`)은 자동 정제되며, 파편 간 구분자는 `' | '`를 사용
 3. **고유명사 마스킹**: 작품명, 캐릭터명, 지명 등 식별자를 `[MASKED]` 토큰으로 대체
 
 ```
 VLM 원문:  "A narwhal swims gracefully through the Arctic waters near ice floes"
 
-구조화 + 단편화 후:
-  Subjects: ["near ice", "A narwhal"]                    (셔플됨)
-  Actions:  ["gracefully through", "swims [MASKED]"]     (단편화 + 마스킹)
-  Contexts: ["ice floes", "the Arctic", "waters near"]   (셔플됨)
+구조화 + 단편화 후 (구분자: ' | '):
+  Subjects: near ice | A narwhal                          (셔플됨)
+  Actions:  gracefully through | swims [MASKED]           (단편화 + 마스킹)
+  Contexts: ice floes | the Arctic | waters near          (셔플됨)
 ```
 
 > **`raw` / `raw_with_mmvlm` 모드**는 원본 ASR/OCR를 그대로 사용하므로, **저작권 계약 완료된 컨텐츠에만 사용 가능한** 모드입니다.
+
+> `imgvlm_chunk2` 모드는 최종적으로 각 Scene 데이터를 `<vlm_img_structure>` XML 태그로 감싸고, Scene 헤더에 시간 정보(`[Scene N] (시작s ~ 종료s)`)를 포함하여 LLM에 전달합니다.
+
+### 데이터 Source 구조: Scene 단위 병합 (raw / raw_with_mmvlm)
+
+`raw` 및 `raw_with_mmvlm` 모드는 원본 ASR/OCR 데이터를 **Scene 단위로 병합**하여 LLM에 전달합니다.
+- **speech**: Scene 내 모든 Shot의 ASR을 시간 순서대로 이어 붙인 **통합 내러티브** 텍스트
+- **on_screen_text**: Shot별 OCR을 `' | '` 구분자로 연결한 문자열 (Shot 내부 중복만 제거)
+
+```json
+{
+  "scene_idx": 3,
+  "duration": "15.2-22.8",
+  "speech": "첫 번째 발화 내용 두 번째 발화 내용",
+  "on_screen_text": "간판A, 자막B | 간판A, 자막C | 자막D"
+}
+```
+
+`raw_with_mmvlm` 모드는 위 구조에 Scene 레벨의 `vlm_mm_description`(시각·음성 종합 서술)이 **보조 참고용으로** 추가됩니다. `speech`/`on_screen_text`가 1차 사실 소스이며, `vlm_mm_description`과 충돌 시 이들을 우선합니다.
 
 ## 전체 파이프라인 구성
 
@@ -338,30 +357,32 @@ python judge_voice_hint.py --modes imgvlm_chunk2 video
 
 ### B-Track (VH Response)
 ```bash
-python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
+python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph, blank)
 python judge_vh_response.py                       # B-2: Response Judge
 
 # 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
 python generate_vh_response.py --modes imgvlm_chunk2 video
+python judge_vh_response.py --modes imgvlm_chunk2 video
 ```
 
 ### 누락분 자동 재처리 및 Discovery Loop
 
 모든 생성·평가 스크립트는 **재시작 안전(Restart-Safe)** 하게 설계되어 있습니다. 스크립트를 재실행하면 이미 완료된 항목은 건너뛰고 **누락분만 자동으로 재처리**합니다.
 
-또한 `generate_vh_response.py`, `judge_voice_hint.py`, `judge_vh_response.py`는 **Discovery Loop**를 내장하고 있어, 현재 입력 파일에 있는 항목을 모두 처리한 뒤 **입력 파일을 다시 읽어** 새로 추가된 항목이 있는지 확인합니다. 더 이상 처리할 항목이 없을 때 자동 종료됩니다.
+또한 `generate_vh_response.py`, `judge_voice_hint.py`, `judge_vh_response.py`는 **Discovery Loop**를 내장하고 있어, 현재 입력 파일에 있는 항목을 모두 처리한 뒤 **20초 간격으로 입력 파일을 다시 폴링**하여 새로 추가된 항목이 있는지 확인합니다. **3회 연속** 새 항목이 없을 때 자동 종료됩니다.
 
 ```
-┌────────────────────────────────────────┐
-│          Discovery Loop                │
-│                                        │
-│  1. 입력 파일 (재)로드                  │
-│  2. 미처리 항목 확인                    │
-│  3. 없으면 → 종료                       │
-│  4. 미처리 항목 처리                    │
-│  5. 입력 파일을 다시 읽어 새 항목 감지    │
-│     → 있으면 1번으로 돌아감              │
-└────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│              Discovery Loop                     │
+│                                                 │
+│  1. 입력 파일 (재)로드                            │
+│  2. 미처리 항목 확인                              │
+│  3. 없으면 → 20초 대기 후 재확인                   │
+│     → 3회 연속 비어있으면 → 종료                   │
+│  4. 미처리 항목 처리                              │
+│  5. 입력 파일을 다시 읽어 새 항목 감지              │
+│     → 있으면 1번으로 돌아감                        │
+└─────────────────────────────────────────────────┘
 ```
 
 ### 병렬 실행

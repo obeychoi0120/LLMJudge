@@ -14,6 +14,7 @@ from utils import (
     load_summary_map, check_input_file,
     sort_jsonl_file,
     print_pipeline_banner, print_pipeline_done,
+    print_scores_summary,
 )
 
 # ───────────────────────────────────────────────
@@ -130,15 +131,16 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
         ]
 
         out_str = ""
+        score_details = ""
         if score_dict:
             score_details = ", ".join([
                 f"{label}: {score_dict.get(key, {}).get('score', 'N/A')}/5"
                 for key, label in _ITEM_LABELS
             ])
-            out_str = f"Mode ({mode}) | Score: {total}/10 | {score_details}\nQuery: {query_text}\n"
+            out_str = f"Query: {query_text}\nScore: {total}/10 | {score_details}"
             
         append_jsonl(args.scores_file, score_record, lock=file_write_lock)
-        return {"mode": mode, "query": query_text, "success": True, "out_str": out_str}
+        return {"mode": mode, "query": query_text, "success": True, "out_str": out_str, "total": total}
 
     except Exception as e:
         return {"mode": mode, "query": query_text, "success": False, "msg": f"[Error] Judge 최종 실패 ({mode}): {e}"}
@@ -212,9 +214,18 @@ def main():
             if not accumulated_groups:
                 if discovery_pass == 1:
                     print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
+                    break
                 else:
-                    print("[완료] 추가 항목이 없습니다. 모든 평가가 완료되었습니다.")
-                break
+                    empty_streak = getattr(main, '_empty_streak', 0) + 1
+                    main._empty_streak = empty_streak
+                    if empty_streak >= 3:
+                        print(f"[완료] {empty_streak}회 연속 추가 항목 없음. 모든 평가가 완료되었습니다.")
+                        break
+                    print(f"[대기] 추가 항목 없음 ({empty_streak}/3). 20초 후 재확인...")
+                    time.sleep(20)
+                    continue
+            else:
+                main._empty_streak = 0
 
             total_pending = sum(len(v) for v in accumulated_groups.values())
             print(f"\n{'='*50}")
@@ -222,7 +233,14 @@ def main():
             print(f"{'='*50}")
 
             pass_evaluated = 0
+            completed_content_ids = set()
+            prev_c_id = None
+            _VH_SCORE_KEYS = ["curiosity_and_hook", "temporal_immersion"]
             for (c_id, s_idx), items in accumulated_groups.items():
+                if prev_c_id and prev_c_id != c_id and prev_c_id not in completed_content_ids:
+                    completed_content_ids.add(prev_c_id)
+                    print_scores_summary(args.scores_file, prev_c_id, _VH_SCORE_KEYS, target_mode_order, max_score=10)
+                prev_c_id = c_id
                 print(f"\n[{c_id} | Scene {s_idx}] {len(items)}개 질문(전체 모드) 병렬 평가 시작...")
 
                 results_list = []
@@ -248,13 +266,24 @@ def main():
 
                 results_list.sort(key=sort_key)
                 print(f"--- [{c_id} | Scene {s_idx} 평가 완료] ---")
+
+                # Mode별 그룹핑 출력
+                from collections import defaultdict
+                mode_groups = defaultdict(list)
                 for r in results_list:
-                    if r.get("success"):
-                        if r.get("out_str"):
-                            print(r["out_str"])
-                    else:
-                        if r.get("msg"):
-                            print(r["msg"])
+                    if r.get("success") and r.get("out_str"):
+                        mode_groups[r["mode"]].append(r)
+                    elif not r.get("success") and r.get("msg"):
+                        print(r["msg"])
+
+                for mode in [m for m in target_mode_order if m in mode_groups]:
+                    print(f"\nMode ({mode})")
+                    for r in mode_groups[mode]:
+                        print(r["out_str"])
+
+            # 마지막 content_id 집계
+            if prev_c_id and prev_c_id not in completed_content_ids:
+                print_scores_summary(args.scores_file, prev_c_id, _VH_SCORE_KEYS, target_mode_order, max_score=10)
 
             print(f"\n▶ [Discovery {discovery_pass}] {pass_evaluated}개 평가 완료")
 

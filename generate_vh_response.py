@@ -36,16 +36,18 @@ _VH_RESPONSE_PROMPT_BASE = """당신은 시청자와 나란히 소파에 앉아 
 _VH_RESPONSE_PROMPT_RAW = _VH_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
-제공되는 시청 기억은 오직 '음성 기록(ASR)'과 '화면 텍스트(OCR)'로만 이루어져 있습니다.
+제공되는 시청 기억은 '음성 기록(ASR)'과 '화면 텍스트(OCR)'로 구성되며, Scene 단위로 제공됩니다.
+각 Scene의 구조:
   - scene_idx: Scene 인덱스
   - duration: Scene 시작~종료 시간
-  - speech: 발화된 음성 텍스트
-  - texts: 화면에 나타난 OCR 텍스트
+  - speech: Scene 내 모든 음성을 시간 순서대로 이어 붙인 통합 텍스트
+  - on_screen_text: Scene 내 화면 텍스트를 Shot 구간별 ' | ' 구분자로 연결한 문자열
 
 [분석 및 대화 지시사항]
 1. **텍스트 분석 및 노이즈 교정 (매우 중요)**
-   - 음성 인식(ASR) 및 자막(OCR) 오탈자가 있을 수 있으므로 상식을 동원해 자연스럽게 교정하세요.
-   - 단어들을 논리적으로 조합하고, 문맥과 상식을 동원하여 상황을 유추해야 합니다.
+   - speech는 연속된 내러티브로 읽고, 문맥과 상식을 동원하여 ASR 오탈자를 자연스럽게 교정하세요.
+   - on_screen_text에서 ' | ' 구분자는 Shot 경계를 나타냅니다. 여러 구간에 걸쳐 반복되는 텍스트는 고정 배경(간판, 자막 등)이므로 대화 흐름과 구분하세요.
+   - ASR과 OCR을 교차 검증하여 오탈자를 교정하고, 단어들을 논리적으로 조합하여 상황을 유추해야 합니다.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
    - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
@@ -69,18 +71,22 @@ _VH_RESPONSE_PROMPT_RAW = _VH_RESPONSE_PROMPT_BASE + """
 _VH_RESPONSE_PROMPT_RAW_WITH_MMVLM = _VH_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
-제공되는 시청 기억은 '온전한 음성 기록(ASR)'과 '화면 텍스트(OCR)', 그리고 소형 VLM이 시각·음성을 종합하여 장면의 상황을 자연어로 서술한 정보(vlm_mm_description)로 구성되어 있습니다.
+제공되는 시청 기억은 '음성 기록(ASR)'과 '화면 텍스트(OCR)'가 Scene 단위로 구성되며,
+추가로 소형 VLM이 시각·음성을 종합하여 장면을 서술한 보조 참고 정보(vlm_mm_description)가 함께 제공됩니다.
+
+각 Scene의 구조:
   - scene_idx: Scene 인덱스
   - duration: Scene 시작~종료 시간
-  - speech: 발화된 음성 텍스트
-  - on_screen_text: 화면에 나타난 OCR 텍스트
-  - vlm_mm_description: 시각·음성을 종합하여 장면 상황을 서술한 자연어 정보
+  - speech: Scene 내 모든 음성을 시간 순서대로 이어 붙인 통합 텍스트 **(1차 사실 소스)**
+  - on_screen_text: Scene 내 화면 텍스트를 Shot 구간별 ' | ' 구분자로 연결한 문자열 **(1차 사실 소스)**
+  - vlm_mm_description: 시각·음성 종합 서술 **(보조 참고용 — 부정확할 수 있음)**
 
 [분석 및 대화 지시사항]
-1. **텍스트 및 시각 정보 종합 분석 (매우 중요)**
-   - 음성/화면 텍스트는 사실적 정보원으로 우선 활용하세요.
-   - VLM 서술(vlm_mm_description)은 시각적 맥락 보조 자료로 활용하되, 음성 정보와 충돌 시 음성 정보를 우선하세요.
-   - 음성 인식(ASR) 및 자막(OCR) 오탈자가 있을 수 있으므로 상식을 동원해 자연스럽게 교정하세요.
+1. **텍스트 우선 분석 (매우 중요)**
+   - **speech(음성)와 on_screen_text(화면 텍스트)를 먼저 읽고** 대화 흐름, 등장인물, 주제를 파악하세요.
+   - ASR과 OCR을 교차 검증하여 오탈자를 교정하세요.
+   - on_screen_text에서 ' | ' 구분자는 Shot 경계를 나타냅니다. 여러 구간에 걸쳐 반복되는 텍스트는 고정 배경이므로 대화 흐름과 구분하세요.
+   - vlm_mm_description은 시각적 맥락 보조로만 참고하되, **speech/on_screen_text와 충돌할 경우 speech/on_screen_text를 우선**하세요.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
    - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
@@ -132,17 +138,19 @@ _VH_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아
 _VH_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _VH_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
-제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 메타데이터**만으로 이루어져 있습니다.
-이 데이터는 저작권 보호를 위해 2어절 단위로 파편화되어 순서가 뒤섞인 형태입니다.
-
-각 Scene별로 다음의 구조화 정보가 제공됩니다:
-  - Subjects: 장면의 주체 (등장인물, 주요 피사체) — 2어절 뒤섞인 파편
-  - Contexts: 장면의 행동, 배경 환경 및 맥락 정보 — 2어절 뒤섞인 파편
+제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 시각 정보**만으로 이루어져 있습니다.
+각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
+  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체) — 2어절 단위 파편
+  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보 — 2어절 단위 파편
+  - 파편은 저작권 보호를 위해 원문을 2어절 단위로 분할하고 순서를 뒤섞은 것입니다.
+  - 파편 구분자는 ' | '이며, [MASKED]는 저작권 보호 마스킹이므로 무시하세요.
 
 [분석 및 대화 지시사항]
-1. **구조화 데이터 복원 및 분석 (매우 중요)**
-   - Subjects, Contexts 파편을 논리적으로 조합하여 장면의 전체적인 맥락을 입체적으로 파악하세요.
-   - 파편들을 문맥과 상식을 동원하여 원래 의미를 유추하세요.
+1. **구조화 데이터 분석 (매우 중요)**
+   - Subjects 파편에서 핵심 주체(인물, 주요 피사체)를 먼저 추출하세요.
+   - Contexts 파편과 교차 매칭하여 각 주체의 행동, 위치, 상태를 구체화하세요.
+   - [MASKED] 토큰은 저작권 보호 마스킹이므로 무시하고, 나머지 파편만으로 추론하세요.
+   - 파편이 불완전하더라도 당신의 사전 지식(World Knowledge)으로 적극 보충하세요.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
    - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
@@ -154,7 +162,7 @@ _VH_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _VH_RESPONSE_PROMPT_BASE + """
    - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
 
 4. **완벽한 TV 파트너 톤앤매너**
-   - "메타데이터", "구조화 데이터", "Subjects 필드", "파편" 등 시스템 용어는 절대 금지입니다.
+   - "메타데이터", "구조화 데이터", "Subjects 필드", "파편", "vlm_img_structure" 등 시스템 용어는 절대 금지입니다.
    - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
 
 5. **대화 이어가기**
@@ -192,6 +200,25 @@ _VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
+_VH_RESPONSE_PROMPT_BLANK = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
+
+당신에게는 현재 영상에 대한 어떠한 시청 정보도 제공되지 않습니다.
+오직 당신이 가진 사전 지식(World Knowledge)만을 활용하여 시청자의 질문에 답변해 주세요.
+
+[대화 지시사항]
+1. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
+   - 시청자에게 만족스럽고 유익한 답변을 제공하는 것이 최우선 목표입니다.
+   - 질문의 맥락과 키워드를 단서로 삼아, 당신이 가진 사전 지식(World Knowledge)을 최대한 활용하세요.
+   - 시청자가 "이 AI는 정말 똑똑하다!"라고 느끼도록 풍부하고 정확한 답변을 제공하세요.
+
+2. **완벽한 TV 파트너 톤앤매너**
+   - "데이터가 없어서" 등 시스템 한계를 암시하는 말은 절대 금지합니다.
+   - "아, 그거요!" 처럼 자연스럽고 친숙한 구어체를 사용하세요.
+
+3. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가벼운 공감이나 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+
 
 def make_vh_gen_config(thinking_level=None):
     """VH Response 생성용 GenerateContentConfig 딕셔너리를 반환합니다."""
@@ -216,6 +243,10 @@ def make_vh_gen_config(thinking_level=None):
             system_instruction=_VH_RESPONSE_PROMPT_VIDEO,
             thinking_level=thinking_level,
         ),
+        "blank": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_BLANK,
+            thinking_level=thinking_level,
+        ),
     }
 
 
@@ -231,7 +262,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         content_id: 콘텐츠 ID
         scene_idx: 현재 KeyScene의 scene_idx
         keypoints: 해당 content_id의 전체 keypoint 목록 (list of dict)
-        mode: 'video' | 'raw' | 'raw_with_mmvlm' | 'imgvlm_chunk2' | 'imgvlm_graph'
+        mode: 'video' | 'raw' | 'raw_with_mmvlm' | 'imgvlm_chunk2' | 'imgvlm_graph' | 'blank'
         max_past_scenes: None이면 Scene 0부터 전체, 정수이면 현재 KeyScene 기준 최근 N개 Scene만 사용
 
     Returns:
@@ -239,6 +270,9 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
     """
     # 현재 KeyScene의 end_time을 ref JSONL에서 조회
     ref_scenes = load_scenes(gs_bucket_name, content_id, mode="ref")
+
+    if mode == "blank":
+        return None
 
     if mode == "video":
         # video: start_offset ~ end_offset 클리핑
@@ -298,7 +332,12 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
     try:
         time.sleep(1)
 
-        if mode == "video":
+        if mode == "blank":
+            contents = [
+                "--- 질문 ---",
+                query,
+            ]
+        elif mode == "video":
             contents = [
                 "--- [Video Clip (처음부터 현재 장면까지)] ---",
                 source,
@@ -431,8 +470,8 @@ def main():
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--modes", nargs="+",
                         default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"],
-                        choices=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"],
-                        help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변)")
+                        choices=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph", "blank"],
+                        help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변). blank=컨텍스트 없이 World Knowledge만 사용")
 
     args, client = init_pipeline(parser.parse_args())
 

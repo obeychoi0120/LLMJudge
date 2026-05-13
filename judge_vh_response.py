@@ -1,4 +1,5 @@
 import os
+import time
 import concurrent.futures
 import threading
 from collections import OrderedDict
@@ -11,6 +12,7 @@ from utils import (
     load_summary_map,
     sort_jsonl_file,
     print_pipeline_banner, print_pipeline_done,
+    print_scores_summary,
 )
 
 # ============================================================
@@ -106,6 +108,7 @@ def main():
     parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="VH Response JSONL 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
+    parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph", "blank"], choices=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph", "blank"], help="평가할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_judge_config(thinking_level=args.vh_response_judge_thinking_level)
@@ -126,8 +129,9 @@ def main():
     print_pipeline_banner("VH Response 품질 평가 파이프라인을 시작합니다.")
 
     file_write_lock = threading.Lock()
+    target_modes_set = set(args.modes)
     _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
-    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"]
+    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph", "blank"]
 
     def judge_query_item(data):
         """단일 {content_id, scene_idx, mode, query, answer} 레코드를 평가합니다. (로깅 없이 결과만 반환)"""
@@ -241,6 +245,8 @@ def main():
                 query = obj.get("query")
                 if not (c_id and s_idx is not None and mode and query):
                     continue
+                if mode not in target_modes_set:
+                    continue
                 if (c_id, s_idx, mode, query) in processed_pairs:
                     continue
                 q_key = (c_id, s_idx, query)
@@ -249,9 +255,18 @@ def main():
             if not unprocessed_groups:
                 if discovery_pass == 1:
                     print("[완료] 평가할 항목이 없거나 이미 모두 처리되었습니다.")
+                    break
                 else:
-                    print("[완료] 추가 항목이 없습니다. 모든 평가가 완료되었습니다.")
-                break
+                    empty_streak = getattr(main, '_empty_streak', 0) + 1
+                    main._empty_streak = empty_streak
+                    if empty_streak >= 3:
+                        print(f"[완료] {empty_streak}회 연속 추가 항목 없음. 모든 평가가 완료되었습니다.")
+                        break
+                    print(f"[대기] 추가 항목 없음 ({empty_streak}/3). 20초 후 재확인...")
+                    time.sleep(20)
+                    continue
+            else:
+                main._empty_streak = 0
 
             total_pending = sum(len(v) for v in unprocessed_groups.values())
             print(f"\n{'='*50}")
@@ -259,8 +274,18 @@ def main():
             print(f"{'='*50}")
 
             pass_evaluated = 0
+            completed_content_ids = set()
+            prev_c_id = None
             for (c_id, s_idx, q_text), items in unprocessed_groups.items():
+                if prev_c_id and prev_c_id != c_id and prev_c_id not in completed_content_ids:
+                    completed_content_ids.add(prev_c_id)
+                    print_scores_summary(args.output_file, prev_c_id, _SCORE_KEYS, _MODE_ORDER, max_score=15)
+                prev_c_id = c_id
                 pass_evaluated += _process_query_group(q_text, items)
+
+            # 마지막 content_id 집계
+            if prev_c_id and prev_c_id not in completed_content_ids:
+                print_scores_summary(args.output_file, prev_c_id, _SCORE_KEYS, _MODE_ORDER, max_score=15)
 
             print(f"\n▶ [Discovery {discovery_pass}] {pass_evaluated}개 평가 완료")
 

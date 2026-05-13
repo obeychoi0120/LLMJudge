@@ -217,6 +217,59 @@ def append_jsonl(path, record, lock=None):
             f.write(line)
 
 
+def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_score=None):
+    """scores JSONL에서 특정 content_id의 mode별 평균 점수를 집계하여 출력합니다.
+
+    Args:
+        scores_file: 점수 JSONL 파일 경로
+        content_id: 집계 대상 content_id
+        score_keys: 점수 키 목록 (예: ["curiosity_and_hook", "temporal_immersion"])
+        mode_order: 모드 정렬 순서 리스트
+        max_score: 총점 만점 (None이면 표시 안 함)
+    """
+    records = [r for r in load_jsonl(scores_file) if r.get("content_id") == content_id]
+    if not records:
+        return
+
+    # mode별 점수 수집
+    mode_scores = {}
+    for rec in records:
+        mode = rec.get("mode", "")
+        judge = rec.get("judge", {})
+        scores = {}
+        for k in score_keys:
+            val = judge.get(k, {})
+            scores[k] = val.get("score", 0) if isinstance(val, dict) else 0
+        mode_scores.setdefault(mode, []).append(scores)
+
+    if not mode_scores:
+        return
+
+    # 정렬
+    sorted_modes = sorted(
+        mode_scores.keys(),
+        key=lambda m: mode_order.index(m) if m in mode_order else 999,
+    )
+
+    # 출력
+    max_label = f"/{max_score}" if max_score else ""
+    print(f"\n{'─'*50}")
+    print(f"📊 [{content_id}] Mode별 평균 점수 집계")
+    print(f"{'─'*50}")
+
+    for mode in sorted_modes:
+        entries = mode_scores[mode]
+        n = len(entries)
+        avgs = {}
+        for k in score_keys:
+            avgs[k] = sum(e[k] for e in entries) / n
+        total_avg = sum(avgs.values())
+        parts = " | ".join(f"{k}={avgs[k]:.2f}" for k in score_keys)
+        print(f"  {mode:20s}: {total_avg:.2f}{max_label} ({parts}) [n={n}]")
+
+    print(f"{'─'*50}")
+
+
 def init_pipeline(args):
     """CLI 초기화를 일괄 수행합니다: config 병합 → 필수 인자 검증 → client 생성.
 
@@ -426,12 +479,12 @@ def get_gcs_text_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_i
 
 
 def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
-    """*_raw.jsonl(또는 *_ref.jsonl)에서 Shot별 raw_speech/raw_ocr을
-    Scene 단위로 병합하여 정제된 JSON Lines 텍스트로 반환합니다.
+    """*_final.jsonl에서 raw_asr/raw_ocr을 Scene 단위로 병합하여
+    정제된 JSON Lines 텍스트로 반환합니다.
 
     'raw' 모드 Source로 사용됩니다.
-    - speech: 모든 Shot의 raw_speech를 시간 순서대로 이어 붙인 통합 텍스트
-    - on_screen_text: 모든 Shot의 raw_ocr에서 중복 제거한 고유 텍스트 목록
+    - speech: 모든 Shot의 raw_asr를 시간 순서대로 이어 붙인 통합 텍스트 (Narrative)
+    - on_screen_text: Shot별 OCR을 ' | ' 구분자로 연결 (Shot 내부 중복만 제거)
     """
     path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
@@ -449,7 +502,7 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
 
             timeline = scene.get("timeline", [])
 
-            # Shot별 raw_asr를 시간 순서대로 concat
+            # ASR: Scene 단위로 concat (Narrative 흐름 유지)
             speech_parts = []
             for shot in timeline:
                 text = (shot.get("raw_asr") or "").strip()
@@ -457,24 +510,28 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
                     speech_parts.append(text)
             speech = " ".join(speech_parts)
 
-            # Shot별 raw_ocr를 중복 제거 (쉼표로 구분된 복수 항목도 분리)
-            seen_ocr = set()
-            ocr_list = []
+            # OCR: Shot별 중복 제거 후 ' | ' 구분자로 연결
+            shot_ocr_groups = []
             for shot in timeline:
                 raw_ocr = (shot.get("raw_ocr") or "").strip()
                 if not raw_ocr:
                     continue
+                seen = set()
+                ocr_items = []
                 for item in raw_ocr.split(","):
                     item = item.strip()
-                    if item and item not in seen_ocr:
-                        seen_ocr.add(item)
-                        ocr_list.append(item)
+                    if item and item not in seen:
+                        seen.add(item)
+                        ocr_items.append(item)
+                if ocr_items:
+                    shot_ocr_groups.append(", ".join(ocr_items))
+            on_screen_text = " | ".join(shot_ocr_groups) if shot_ocr_groups else ""
 
             filtered = {"scene_idx": s_idx, "duration": scene.get("duration", "")}
             if speech:
                 filtered["speech"] = speech
-            if ocr_list:
-                filtered["on_screen_text"] = ocr_list
+            if on_screen_text:
+                filtered["on_screen_text"] = on_screen_text
             lines.append(json.dumps(filtered, ensure_ascii=False))
         except json.JSONDecodeError:
             continue
@@ -498,15 +555,24 @@ def parse_duration_to_times(duration):
     return float(parts[0]), float(parts[1])
 
 
+def _clean_fragment(frag):
+    """파편 끝의 불필요한 구두점(; . ,)을 제거합니다.
+
+    VLM 파편화 과정에서 원문 구두점이 파편 끝에 잔류하여
+    구분자와 충돌하거나 LLM의 파편 경계 인식을 방해하는 문제를 해결합니다.
+    """
+    return frag.rstrip(";.,").strip()
+
+
 def format_vlm_structure_as_text(vlm_struct):
     """vlm_img_structure 또는 vlm_mm_structure 딕셔너리를 읽기 좋은 텍스트로 변환합니다.
 
     신규 포맷 (subjects, actions, contexts) 및 구 포맷 (subject, environment, actions, context) 모두 지원합니다.
+    신규 포맷의 파편은 노이즈 구두점 정제 후 ' | ' 구분자로 연결됩니다.
 
     예시 출력 (신규):
-      Subjects: him. The; with various; background features; A man; ...
-      Actions: the man.; his chin.; he listens; ...
-      Contexts: of the; the chat; (A Man; ...
+      Subjects: him The | with various | background features | A man | ...
+      Contexts: of the | the chat | A Man | ...
 
     예시 출력 (구):
       Subject: A marine animal swimming through ice-covered waters
@@ -517,17 +583,20 @@ def format_vlm_structure_as_text(vlm_struct):
     if not vlm_struct or not isinstance(vlm_struct, dict):
         return ""
     lines = []
-    # 신규 포맷: subjects, actions, contexts
+    # 신규 포맷: subjects, actions, contexts (파편 정제 + ' | ' 구분자)
     if vlm_struct.get("subjects"):
-        lines.append(f"Subjects: {'; '.join(vlm_struct['subjects'])}")
+        cleaned = [_clean_fragment(f) for f in vlm_struct["subjects"] if _clean_fragment(f)]
+        lines.append(f"Subjects: {' | '.join(cleaned)}")
     elif vlm_struct.get("subject"):
         lines.append(f"Subject: {vlm_struct['subject']}")
     if vlm_struct.get("environment"):
         lines.append(f"Environment: {vlm_struct['environment']}")
     if vlm_struct.get("actions"):
-        lines.append(f"Actions: {'; '.join(vlm_struct['actions'])}")
+        cleaned = [_clean_fragment(f) for f in vlm_struct["actions"] if _clean_fragment(f)]
+        lines.append(f"Actions: {' | '.join(cleaned)}")
     if vlm_struct.get("contexts"):
-        lines.append(f"Contexts: {'; '.join(vlm_struct['contexts'])}")
+        cleaned = [_clean_fragment(f) for f in vlm_struct["contexts"] if _clean_fragment(f)]
+        lines.append(f"Contexts: {' | '.join(cleaned)}")
     elif vlm_struct.get("context"):
         lines.append(f"Context: {', '.join(vlm_struct['context'])}")
     return "\n".join(lines)
@@ -557,9 +626,14 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
     """*_final.jsonl에서 지정된 VLM 구조 데이터를 추출하여
     [Scene N] 태그와 함께 텍스트 형태로 반환합니다.
 
+    vlm_img_structure_chunk2 키의 경우:
+      - Scene 헤더에 duration 시간 정보를 포함합니다.
+      - <vlm_img_structure> XML 태그로 감싸서 데이터 경계를 명확히 합니다.
+
     Args:
         vlm_key: 'vlm_img_structure_chunk2', 'vlm_graph' 등 추출할 VLM 필드 키
     """
+    is_chunk2 = vlm_key == "vlm_img_structure_chunk2"
     path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
@@ -580,7 +654,17 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
                     desc = format_vlm_structure_as_text(vlm_data)
                 
                 if desc:
-                    lines.append(f"[Scene {s_idx}]\n{desc}")
+                    # chunk2: Scene 헤더에 시간 정보 + XML 태그
+                    if is_chunk2:
+                        duration = scene.get("duration")
+                        if duration:
+                            start_t, end_t = parse_duration_to_times(duration)
+                            header = f"[Scene {s_idx}] ({start_t:.1f}s ~ {end_t:.1f}s)"
+                        else:
+                            header = f"[Scene {s_idx}]"
+                        lines.append(f"{header}\n<vlm_img_structure>\n{desc}\n</vlm_img_structure>")
+                    else:
+                        lines.append(f"[Scene {s_idx}]\n{desc}")
         except json.JSONDecodeError:
             continue
     return "\n\n".join(lines)
@@ -591,9 +675,13 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
 
 def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, end_idx):
     """*_final.jsonl에서 raw_asr/raw_ocr과 vlm_mm_description을
-    Scene 단위로 결합하여 정제된 JSON Lines 텍스트로 반환합니다.
+    Scene 단위로 병합하여 정제된 JSON Lines 텍스트로 반환합니다.
 
     'raw_with_mmvlm' 모드 Source로 사용됩니다.
+    - speech: 모든 Shot의 raw_asr를 시간 순서대로 concat (Narrative)
+    - on_screen_text: Shot별 OCR을 ' | ' 구분자로 연결
+    - speech/on_screen_text를 1차 사실 소스로 먼저 배치하고,
+      vlm_mm_description은 시각적 맥락 보조 참고로 뒤에 배치합니다.
     """
     path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
@@ -609,9 +697,12 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
             if s_idx is None or not (start_idx <= s_idx <= end_idx):
                 continue
 
+            filtered = {"scene_idx": s_idx, "duration": scene.get("duration", "")}
+
+            # ASR/OCR (1차 사실 소스 — 먼저 배치)
             timeline = scene.get("timeline", [])
 
-            # Shot별 raw_asr concat
+            # ASR: Scene 단위로 concat (Narrative 흐름 유지)
             speech_parts = []
             for shot in timeline:
                 text = (shot.get("raw_asr") or "").strip()
@@ -619,31 +710,32 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
                     speech_parts.append(text)
             speech = " ".join(speech_parts)
 
-            # Shot별 raw_ocr 중복 제거
-            seen_ocr = set()
-            ocr_list = []
+            # OCR: Shot별 중복 제거 후 ' | ' 구분자로 연결
+            shot_ocr_groups = []
             for shot in timeline:
                 raw_ocr = (shot.get("raw_ocr") or "").strip()
                 if not raw_ocr:
                     continue
+                seen = set()
+                ocr_items = []
                 for item in raw_ocr.split(","):
                     item = item.strip()
-                    if item and item not in seen_ocr:
-                        seen_ocr.add(item)
-                        ocr_list.append(item)
+                    if item and item not in seen:
+                        seen.add(item)
+                        ocr_items.append(item)
+                if ocr_items:
+                    shot_ocr_groups.append(", ".join(ocr_items))
+            on_screen_text = " | ".join(shot_ocr_groups) if shot_ocr_groups else ""
 
-            filtered = {"scene_idx": s_idx, "duration": scene.get("duration", "")}
+            if speech:
+                filtered["speech"] = speech
+            if on_screen_text:
+                filtered["on_screen_text"] = on_screen_text
 
-            # vlm_mm_description 먼저: 장면 개요 (context anchor)
+            # vlm_mm_description: 시각적 맥락 보조 참고 (speech/OCR 뒤에 배치)
             mm_desc = scene.get("vlm_mm_description", "")
             if mm_desc:
                 filtered["vlm_mm_description"] = mm_desc
-
-            # speech/on_screen_text 나중: 사실 정보로 보정 (recency bias 활용)
-            if speech:
-                filtered["speech"] = speech
-            if ocr_list:
-                filtered["on_screen_text"] = ocr_list
 
             lines.append(json.dumps(filtered, ensure_ascii=False))
         except json.JSONDecodeError:
@@ -932,7 +1024,7 @@ def print_pipeline_done(output_path):
     print("=" * 50)
 
 
-_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_graph": 4, "kss": 5}
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_graph": 4, "blank": 5, "kss": 6}
 
 def sort_jsonl_file(filepath):
     """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
