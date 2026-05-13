@@ -469,7 +469,7 @@ def main():
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--modes", nargs="+",
-                        default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"],
+                        default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph", "blank"],
                         choices=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph", "blank"],
                         help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변). blank=컨텍스트 없이 World Knowledge만 사용")
 
