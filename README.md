@@ -11,6 +11,28 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 - **A-Track (Voice Hint)**: 6개 모드(kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)의 Source를 기반으로 시청자의 호기심을 유발하는 질문을, KSS Anchor 기준으로 품질 평가
 - **B-Track (VH Response)**: A-Track의 **kss 모드로 생성된 공통 Query**를 기준, 각 모드별 Source로 답변 생성 → KSS + World Knowledge 기반 품질 비교. 동일한 질문으로 데이터소스 간 **통제 실험**을 수행. `blank` 모드는 컨텍스트 없이 World Knowledge만으로 답변하는 베이스라인
 
+#### A-Track 모드 (Voice Hint 생성)
+
+| Mode | 데이터 소스 | 설명 |
+|------|------------|------|
+| `kss` | KeyScene Summary (Ground Truth) | Pro 모델이 비디오+메타데이터를 종합 분석하여 생성한 고품질 요약. 다른 모드의 **평가 기준(Anchor)** 역할 |
+| `video` | 원본 비디오 클립 | 540p 비디오를 직접 Gemini에 전달하여 시각·청각 정보를 종합 분석 |
+| `raw` | ASR + OCR (원본 텍스트) | Scene별 음성 인식(speech) + 화면 텍스트(on_screen_text)만 사용. **저작권 계약 필요** |
+| `raw_with_mmvlm` | ASR + OCR + VLM 멀티모달 서술 | `raw`에 소형 VLM의 시각·음성 종합 서술(vlm_mm_description)을 보조 참고로 추가. **저작권 계약 필요** |
+| `imgvlm_chunk2` | VLM 시각 구조화 데이터 (2어절 단편) | 시각 프레임에서 추출한 Subjects/Contexts를 2어절 단위로 단편화·셔플·마스킹한 저작권 안전 형태 |
+| `imgvlm_graph` | VLM 장면 지식 그래프 | 시각 프레임에서 추출한 (subject)-[relation]->(object) 트리플로 장면 관계를 압축 표현 |
+
+#### B-Track 모드 (VH Response 생성)
+
+| Mode | 데이터 소스 | 설명 |
+|------|------------|------|
+| `video` | 원본 비디오 클립 | A-Track과 동일. 비디오를 직접 시청·분석하여 답변 |
+| `raw` | ASR + OCR | A-Track과 동일. 음성·텍스트 교차 검증 후 답변. **저작권 계약 필요** |
+| `raw_with_mmvlm` | ASR + OCR + VLM 서술 | A-Track과 동일. ASR/OCR 우선, VLM 서술 보조. **저작권 계약 필요** |
+| `imgvlm_chunk2` | VLM 구조화 데이터 (2어절 단편) | A-Track과 동일. 단편화된 파편을 재조합하여 답변 |
+| `imgvlm_graph` | VLM 지식 그래프 | A-Track과 동일. 트리플 관계를 논리적으로 연결하여 답변 |
+| `blank` | 없음 (World Knowledge only) | **컨텍스트를 일절 제공하지 않고** 질문만 전달. 모델의 사전 지식만으로 답변하는 베이스라인 |
+
 ---
 
 ## 저작권 안전한 데이터 구조 (Copyright-Safe Architecture)
@@ -33,27 +55,6 @@ VLM 원문:  "A narwhal swims gracefully through the Arctic waters near ice floe
   Actions:  gracefully through | swims [MASKED]           (단편화 + 마스킹)
   Contexts: ice floes | the Arctic | waters near          (셔플됨)
 ```
-
-> **`raw` / `raw_with_mmvlm` 모드**는 원본 ASR/OCR를 그대로 사용하므로, **저작권 계약 완료된 컨텐츠에만 사용 가능한** 모드입니다.
-
-> `imgvlm_chunk2` 모드는 최종적으로 각 Scene 데이터를 `<vlm_img_structure>` XML 태그로 감싸고, Scene 헤더에 시간 정보(`[Scene N] (시작s ~ 종료s)`)를 포함하여 LLM에 전달합니다.
-
-### 데이터 Source 구조: Scene 단위 병합 (raw / raw_with_mmvlm)
-
-`raw` 및 `raw_with_mmvlm` 모드는 원본 ASR/OCR 데이터를 **Scene 단위로 병합**하여 LLM에 전달합니다.
-- **speech**: Scene 내 모든 Shot의 ASR을 시간 순서대로 이어 붙인 **통합 내러티브** 텍스트
-- **on_screen_text**: Shot별 OCR을 `' | '` 구분자로 연결한 문자열 (Shot 내부 중복만 제거)
-
-```json
-{
-  "scene_idx": 3,
-  "duration": "15.2-22.8",
-  "speech": "첫 번째 발화 내용 두 번째 발화 내용",
-  "on_screen_text": "간판A, 자막B | 간판A, 자막C | 자막D"
-}
-```
-
-`raw_with_mmvlm` 모드는 위 구조에 Scene 레벨의 `vlm_mm_description`(시각·음성 종합 서술)이 **보조 참고용으로** 추가됩니다. `speech`/`on_screen_text`가 1차 사실 소스이며, `vlm_mm_description`과 충돌 시 이들을 우선합니다.
 
 ## 전체 파이프라인 구성
 
@@ -147,7 +148,18 @@ flowchart TD
 
 생성된 KSS는 이후 모든 Judge 스크립트에서 **Ground Truth Anchor**로 참조됩니다.
 
-### 3. 평가 기준(Judge): 채점 프레임워크
+### 3. Voice Hint 생성 및 평가 철학: Tangential World Knowledge (곁다리 지식)
+
+Voice Hint 파이프라인(A-Track)은 시청자가 스마트 TV 리모컨을 눌러 능동적으로 상호작용하도록 유도하기 위해 **'곁다리 지식(Tangential World Knowledge)'**을 핵심 전략으로 사용합니다. 
+
+단순히 영상의 '줄거리(Narrative)'나 '팩트'를 묻는 것을 넘어, 장르별 특성에 맞춰 화면에 등장한 시각/청각적 요소를 트리거로 삼아 다음과 같은 확장 지식을 질문합니다. 평가지표(Judge) 역시 KSS 원문에 해당 내용이 없더라도 이러한 확장된 지식 기반 질문을 훌륭한 '호기심(Curiosity & Hook) 자극 요소'로 간주하여 고평가(5점)하도록 설계되었습니다:
+
+*   **드라마/예능:** 허구적 플롯 대신 화면 속 소품의 기원이나 촬영 장소의 문화적/역사적 배경
+*   **스포츠:** 결과 예측 대신 방금 활약한 선수의 폼, 이적 비하인드, 뉴비(초보자)를 위한 팀 역사 및 라이벌 구도
+*   **게임:** 단순 상황 묘사 대신 플레이어의 전략, 캐릭터 특성, 아이템 메타 변화, 최신 패치 소식
+*   **뉴스/시사/다큐:** 단순 멘트 요약 대신 보도 이면의 역사적 맥락, 경제적 파급 효과, 정책의 비하인드, 과거 유사 사례
+
+### 4. 평가 기준(Judge): 채점 프레임워크
 
 모든 Judge는 **rationale + score의 flat JSON 포맷**을 출력합니다.
 
@@ -160,7 +172,6 @@ KSS(KeyScene Summary)와 대조해 평가하되, 시청자의 몰입감 유지�
 | **Temporal Immersion** | 시청자의 현재 시청시점 대비 자연스러운, 과거 맥락 활용과 미래의 전개를 암시 (시제 혼동없이는 감점) |
 | **Curiosity & Hook** | 호기심을 유발하는 구체적이고 흥미로운 질문을 제공하면서도 스포일러를 회피하는지 |
 
-> 대조 비교 평가 대상: `kss`, `video`, `raw`, `raw_with_mmvlm`, `imgvlm_chunk2`, `imgvlm_graph`
 
 #### B-Track: VH Response Judge (3-Criteria, 15점 만점)
 
@@ -173,17 +184,6 @@ KSS(KeyScene Summary)와 대조해 평가하되, 시청자의 몰입감 유지�
 #### ~~C-Track: Description Judge~~ (Deprecated)
 
 > KeyScene Description 평가는 현 파이프라인에서 제외 되었습니다. 관련 스크립트는 `archived/`에 보관되어있습니다.
-
-### 4. Voice Hint 생성 및 평가 철학: Tangential World Knowledge (곁다리 지식)
-
-Voice Hint 파이프라인(A-Track)은 시청자가 스마트 TV 리모컨을 눌러 능동적으로 상호작용하도록 유도하기 위해 **'곁다리 지식(Tangential World Knowledge)'**을 핵심 전략으로 사용합니다. 
-
-단순히 영상의 '줄거리(Narrative)'나 '팩트'를 묻는 것을 넘어, 장르별 특성에 맞춰 화면에 등장한 시각/청각적 요소를 트리거로 삼아 다음과 같은 확장 지식을 질문합니다. 평가지표(Judge) 역시 KSS 원문에 해당 내용이 없더라도 이러한 확장된 지식 기반 질문을 훌륭한 '호기심(Curiosity & Hook) 자극 요소'로 간주하여 고평가(5점)하도록 설계되었습니다:
-
-*   **드라마/예능:** 허구적 플롯 대신 화면 속 소품의 기원이나 촬영 장소의 문화적/역사적 배경
-*   **스포츠:** 결과 예측 대신 방금 활약한 선수의 폼, 이적 비하인드, 뉴비(초보자)를 위한 팀 역사 및 라이벌 구도
-*   **게임:** 단순 상황 묘사 대신 플레이어의 전략, 캐릭터 특성, 아이템 메타 변화, 최신 패치 소식
-*   **뉴스/시사/다큐:** 단순 멘트 요약 대신 보도 이면의 역사적 맥락, 경제적 파급 효과, 정책의 비하인드, 과거 유사 사례
 
 ---
 
@@ -370,20 +370,6 @@ python judge_vh_response.py --modes imgvlm_chunk2 video
 모든 생성·평가 스크립트는 **재시작 안전(Restart-Safe)** 하게 설계되어 있습니다. 스크립트를 재실행하면 이미 완료된 항목은 건너뛰고 **누락분만 자동으로 재처리**합니다.
 
 또한 `generate_vh_response.py`, `judge_voice_hint.py`, `judge_vh_response.py`는 **Discovery Loop**를 내장하고 있어, 현재 입력 파일에 있는 항목을 모두 처리한 뒤 **20초 간격으로 입력 파일을 다시 폴링**하여 새로 추가된 항목이 있는지 확인합니다. **3회 연속** 새 항목이 없을 때 자동 종료됩니다.
-
-```
-┌─────────────────────────────────────────────────┐
-│              Discovery Loop                     │
-│                                                 │
-│  1. 입력 파일 (재)로드                            │
-│  2. 미처리 항목 확인                              │
-│  3. 없으면 → 20초 대기 후 재확인                   │
-│     → 3회 연속 비어있으면 → 종료                   │
-│  4. 미처리 항목 처리                              │
-│  5. 입력 파일을 다시 읽어 새 항목 감지              │
-│     → 있으면 1번으로 돌아감                        │
-└─────────────────────────────────────────────────┘
-```
 
 ### 병렬 실행
 
