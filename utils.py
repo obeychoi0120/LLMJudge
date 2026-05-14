@@ -484,7 +484,7 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
 
     'raw' 모드 Source로 사용됩니다.
     - speech: 모든 Shot의 raw_asr를 시간 순서대로 이어 붙인 통합 텍스트 (Narrative)
-    - on_screen_text: Shot별 OCR을 ' | ' 구분자로 연결 (Shot 내부 중복만 제거)
+    - on_screen_text: Scene 전체 OCR을 중복 제거하여 연결
     """
     path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
@@ -510,22 +510,17 @@ def get_gcs_raw_fields_by_scene_idx(gs_bucket_name, content_id, start_idx, end_i
                     speech_parts.append(text)
             speech = " ".join(speech_parts)
 
-            # OCR: Shot별 중복 제거 후 ' | ' 구분자로 연결
-            shot_ocr_groups = []
+            # OCR: Scene 전체 중복 제거 (순서 유지)
+            seen_ocr = dict()
             for shot in timeline:
                 raw_ocr = (shot.get("raw_ocr") or "").strip()
                 if not raw_ocr:
                     continue
-                seen = set()
-                ocr_items = []
                 for item in raw_ocr.split(","):
                     item = item.strip()
-                    if item and item not in seen:
-                        seen.add(item)
-                        ocr_items.append(item)
-                if ocr_items:
-                    shot_ocr_groups.append(", ".join(ocr_items))
-            on_screen_text = " | ".join(shot_ocr_groups) if shot_ocr_groups else ""
+                    if item and item not in seen_ocr:
+                        seen_ocr[item] = None
+            on_screen_text = ", ".join(seen_ocr.keys()) if seen_ocr else ""
 
             filtered = {"scene_idx": s_idx, "duration": scene.get("duration", "")}
             if speech:
@@ -679,7 +674,7 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
 
     'raw_with_mmvlm' 모드 Source로 사용됩니다.
     - speech: 모든 Shot의 raw_asr를 시간 순서대로 concat (Narrative)
-    - on_screen_text: Shot별 OCR을 ' | ' 구분자로 연결
+    - on_screen_text: Scene 전체 OCR을 중복 제거하여 연결
     - speech/on_screen_text를 1차 사실 소스로 먼저 배치하고,
       vlm_mm_description은 시각적 맥락 보조 참고로 뒤에 배치합니다.
     """
@@ -710,22 +705,17 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
                     speech_parts.append(text)
             speech = " ".join(speech_parts)
 
-            # OCR: Shot별 중복 제거 후 ' | ' 구분자로 연결
-            shot_ocr_groups = []
+            # OCR: Scene 전체 중복 제거 (순서 유지)
+            seen_ocr = dict()
             for shot in timeline:
                 raw_ocr = (shot.get("raw_ocr") or "").strip()
                 if not raw_ocr:
                     continue
-                seen = set()
-                ocr_items = []
                 for item in raw_ocr.split(","):
                     item = item.strip()
-                    if item and item not in seen:
-                        seen.add(item)
-                        ocr_items.append(item)
-                if ocr_items:
-                    shot_ocr_groups.append(", ".join(ocr_items))
-            on_screen_text = " | ".join(shot_ocr_groups) if shot_ocr_groups else ""
+                    if item and item not in seen_ocr:
+                        seen_ocr[item] = None
+            on_screen_text = ", ".join(seen_ocr.keys()) if seen_ocr else ""
 
             if speech:
                 filtered["speech"] = speech

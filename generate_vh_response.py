@@ -41,12 +41,11 @@ _VH_RESPONSE_PROMPT_RAW = _VH_RESPONSE_PROMPT_BASE + """
   - scene_idx: Scene 인덱스
   - duration: Scene 시작~종료 시간
   - speech: Scene 내 모든 음성을 시간 순서대로 이어 붙인 통합 텍스트
-  - on_screen_text: Scene 내 화면 텍스트를 Shot 구간별 ' | ' 구분자로 연결한 문자열
+  - on_screen_text: Scene 내 화면 텍스트를 중복 제거하여 나열한 문자열
 
 [분석 및 대화 지시사항]
 1. **텍스트 분석 및 노이즈 교정 (매우 중요)**
    - speech는 연속된 내러티브로 읽고, 문맥과 상식을 동원하여 ASR 오탈자를 자연스럽게 교정하세요.
-   - on_screen_text에서 ' | ' 구분자는 Shot 경계를 나타냅니다. 여러 구간에 걸쳐 반복되는 텍스트는 고정 배경(간판, 자막 등)이므로 대화 흐름과 구분하세요.
    - ASR과 OCR을 교차 검증하여 오탈자를 교정하고, 단어들을 논리적으로 조합하여 상황을 유추해야 합니다.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
@@ -78,14 +77,13 @@ _VH_RESPONSE_PROMPT_RAW_WITH_MMVLM = _VH_RESPONSE_PROMPT_BASE + """
   - scene_idx: Scene 인덱스
   - duration: Scene 시작~종료 시간
   - speech: Scene 내 모든 음성을 시간 순서대로 이어 붙인 통합 텍스트 **(1차 사실 소스)**
-  - on_screen_text: Scene 내 화면 텍스트를 Shot 구간별 ' | ' 구분자로 연결한 문자열 **(1차 사실 소스)**
+  - on_screen_text: Scene 내 화면 텍스트를 중복 제거하여 나열한 문자열 **(1차 사실 소스)**
   - vlm_mm_description: 시각·음성 종합 서술 **(보조 참고용 — 부정확할 수 있음)**
 
 [분석 및 대화 지시사항]
 1. **텍스트 우선 분석 (매우 중요)**
    - **speech(음성)와 on_screen_text(화면 텍스트)를 먼저 읽고** 대화 흐름, 등장인물, 주제를 파악하세요.
    - ASR과 OCR을 교차 검증하여 오탈자를 교정하세요.
-   - on_screen_text에서 ' | ' 구분자는 Shot 경계를 나타냅니다. 여러 구간에 걸쳐 반복되는 텍스트는 고정 배경이므로 대화 흐름과 구분하세요.
    - vlm_mm_description은 시각적 맥락 보조로만 참고하되, **speech/on_screen_text와 충돌할 경우 speech/on_screen_text를 우선**하세요.
 
 2. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**

@@ -72,11 +72,10 @@ _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
   - scene_idx: Scene 인덱스
   - duration: Scene 시작~종료 시간
   - speech: Scene 내 모든 음성을 시간 순서대로 이어 붙인 통합 텍스트
-  - on_screen_text: Scene 내 화면 텍스트를 Shot 구간별 ' | ' 구분자로 연결한 문자열
+  - on_screen_text: Scene 내 화면 텍스트를 중복 제거하여 나열한 문자열
 
 [분석 시 주의사항]
 - speech는 연속된 내러티브로 읽고, 문맥과 상식을 동원하여 ASR 오탈자를 자연스럽게 교정하세요.
-- on_screen_text에서 ' | ' 구분자는 Shot(시간 구간) 경계를 나타냅니다. 여러 구간에 걸쳐 반복되는 텍스트는 고정 배경(간판, 자막 등)일 가능성이 높으므로 맥락 판단에 활용하세요.
 - ASR과 OCR은 서로 보정 단서가 됩니다. 교차 검증하여 오탈자를 교정하세요.
 
 [사고 과정 (Chain-of-Thought) 가이드]
@@ -134,13 +133,12 @@ _VOICE_HINT_PROMPT_RAW_WITH_MMVLM = _VOICE_HINT_BASE + """
 
 각 Scene의 구조:
   - speech: Scene 내 모든 음성을 시간 순서대로 이어 붙인 통합 텍스트 **(1차 사실 소스)**
-  - on_screen_text: Scene 내 화면 텍스트를 Shot 구간별 ' | ' 구분자로 연결한 문자열 **(1차 사실 소스)**
+  - on_screen_text: Scene 내 화면 텍스트를 중복 제거하여 나열한 문자열 **(1차 사실 소스)**
   - vlm_mm_description: 시각·음성 종합 서술 **(보조 참고용 — 부정확할 수 있음)**
 
 [분석 시 주의사항]
 - **speech(음성)와 on_screen_text(화면 텍스트)를 먼저 읽고** 대화 흐름과 주제를 파악하세요.
 - ASR과 OCR을 교차 검증하여 오탈자를 자연스럽게 교정하세요.
-- on_screen_text에서 ' | ' 구분자는 Shot 경계를 나타냅니다. 여러 구간에 걸쳐 반복되는 텍스트는 고정 배경일 가능성이 높습니다.
 - vlm_mm_description은 시각적 맥락 보조로만 참고하되, **speech/on_screen_text와 충돌할 경우 speech/on_screen_text를 우선**하세요.
 
 [사고 과정 (Chain-of-Thought) 가이드]
