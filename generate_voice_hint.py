@@ -13,6 +13,7 @@ from utils import (
     sort_and_validate_jsonl,
     load_keypoints_by_content, check_input_file,
     load_summary_map,
+    load_video_metadata, format_video_context,
     print_pipeline_banner, print_pipeline_done,
 )
 
@@ -21,6 +22,8 @@ from utils import (
 # ───────────────────────────────────────────────
 
 _VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현재 장면)을 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
+
+당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 통해 콘텐츠의 장르(드라마/스포츠/게임/뉴스/다큐 등)와 도메인을 먼저 파악하고, 아래 장르별 전략에 정확히 매칭하세요.
 
 시청자에게는 오직 현재 정보만 주어지는 것이 아닙니다. 시청자는 지금까지 시청해 온 **[이전까지의 과거 시청 맥락]**을 인지한 상태로 방금 **[현재 시청 중인 장면]**을 보았습니다.
 이 두 정보를 바탕으로, TV 화면의 버튼을 눌러 답을 확인하고 싶게 만드는 매력적인 질문 2개를 생성하세요.
@@ -87,6 +90,8 @@ _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
 
 
 _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
+[주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
+
 [입력 형식 설명]
 당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
 각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
@@ -110,6 +115,8 @@ _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
 
 
 _VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE + """
+[주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
+
 [입력 형식 설명]
 당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 장면 지식 그래프(Scene Knowledge Graph)가 제공됩니다.
 - vlm_graph: 장면의 주요 요소와 그 관계를 (subject) -[relation]-> (object) 형태의 트리플로 표현한 데이터
@@ -176,13 +183,19 @@ def make_voice_hint_configs(thinking_level=0):
         "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level)
     }
 
-def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, end_time, target_modes=None, kss_text=None):
+def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, end_time, target_modes=None, kss_text=None, video_context=""):
     """하나의 Keypoint에 대해 Voice Hint를 지정된 모드에 대해서만 병렬 수행합니다."""
     if target_modes is None:
         target_modes = ["video", "raw_with_mmvlm", "imgvlm"]
         
     def generate_voice_hints(mode):
         contents = []
+
+        # Video Context: 채널명/제목으로 도메인 컨텍스트 제공
+        # (imgvlm 모드는 저작권 미계약 데이터이므로 메타데이터 주입 금지)
+        _COPYRIGHT_SAFE_MODES = {"imgvlm_chunk2", "imgvlm_graph"}
+        if video_context and mode not in _COPYRIGHT_SAFE_MODES:
+            contents += ["--- [Video Context (영상 기본 정보)] ---", video_context]
 
         # KSS 모드: Summary 텍스트를 직접 전달 (과거+현재 포함)
         if mode == "kss":
@@ -342,6 +355,12 @@ def main():
             # JSONL 메타데이터 프리로드 (캐시 워밍업)
             preload_content_metadata(args.gs_bucket_name, content_id)
 
+            # Video Metadata 로드 (채널명, 제목 등)
+            video_metadata = load_video_metadata(args.gs_bucket_name, content_id)
+            video_context = format_video_context(video_metadata)
+            if video_context:
+                print(f"[Video Context] {video_metadata.get('channel', '')} — {video_metadata.get('title', '')}")
+
             for kp, missing_modes in remaining:
                 real_idx = keypoints.index(kp)
                 scene_idx = kp.get("scene_idx", real_idx)
@@ -371,7 +390,7 @@ def main():
                     # KSS Summary 텍스트 조회
                     kss_text = kss_map.get((content_id, scene_idx), "") if "kss" in missing_modes else None
 
-                    return process_vh_modes(client, args.vh_gen_model, vh_configs, past_parts, current_parts, end_time, missing_modes, kss_text=kss_text)
+                    return process_vh_modes(client, args.vh_gen_model, vh_configs, past_parts, current_parts, end_time, missing_modes, kss_text=kss_text, video_context=video_context)
 
                 try:
                     vh_dict, vh_elapsed_dict = _retry_api_call(

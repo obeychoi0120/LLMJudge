@@ -407,7 +407,53 @@ def load_scenes(gs_bucket_name, content_id, mode="ref"):
     path_template, _ = _GCS_MODE_MAP[mode]
     blob_path = path_template.format(cid=content_id)
     text = download_gcs_text(gs_bucket_name, blob_path)
-    return [json.loads(l) for l in text.strip().split("\n") if l.strip()]
+    scenes = []
+    for l in text.strip().split("\n"):
+        if not l.strip():
+            continue
+        record = json.loads(l)
+        if record.get("_type") == "video_metadata":
+            continue
+        scenes.append(record)
+    return scenes
+
+
+def load_video_metadata(gs_bucket_name, content_id):
+    """*_final.jsonl의 첫 줄에서 video_metadata 헤더를 추출합니다.
+
+    Returns:
+        dict (title, channel, upload_date 등) 또는 빈 dict
+    """
+    path_template, _ = _GCS_MODE_MAP["final"]
+    blob_path = path_template.format(cid=content_id)
+    text = download_gcs_text(gs_bucket_name, blob_path)
+    for line in text.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+            if record.get("_type") == "video_metadata":
+                return record
+        except json.JSONDecodeError:
+            pass
+        break  # 첫 줄이 metadata가 아니면 없는 것
+    return {}
+
+
+def format_video_context(metadata):
+    """metadata dict를 LLM user prompt에 삽입할 텍스트 블록으로 변환합니다.
+
+    Returns:
+        str — 빈 metadata이면 빈 문자열
+    """
+    if not metadata:
+        return ""
+    parts = []
+    if metadata.get("channel"):
+        parts.append(f"채널: {metadata['channel']}")
+    if metadata.get("title"):
+        parts.append(f"제목: {metadata['title']}")
+    return "\n".join(parts) if parts else ""
 
 
 def process_gcs_file(gs_bucket_name, content_id, mode="video"):
