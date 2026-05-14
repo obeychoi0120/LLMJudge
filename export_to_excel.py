@@ -425,13 +425,13 @@ def export_vh_response_scores(input_dir, output_dir):
         print("[Skip] VH Response Aggregated Score 데이터가 비어 있습니다.")
 
 
-def export_voice_hints(input_dir, output_dir, mode="kss"):
+def export_voice_hints(input_dir, output_dir):
     """Voice Hint 질문을 content_id / scene_idx 기준으로 정리하여 Excel로 내보냅니다.
 
     컬럼 구조:
     - content_id : 동일 content_id를 가진 첫 번째 행에만 표시, 나머지 행은 빈 칸
     - scene_idx  : 각 scene마다 표시
-    - queries    : "1. ~~~\\n2. ~~~" 형태로 한 셀에 번호 붙여 기록
+    - queries_{mode} : 각 mode별 "1. ~~~\n2. ~~~" 형태로 한 셀에 번호 붙여 기록
     """
     vh_path = os.path.join(input_dir, "voice_hint.jsonl")
     if not os.path.exists(vh_path):
@@ -440,33 +440,46 @@ def export_voice_hints(input_dir, output_dir, mode="kss"):
 
     from collections import defaultdict
     from openpyxl.styles import Alignment
+    from openpyxl.utils import get_column_letter
 
-    scenes_by_content = defaultdict(dict)  # {content_id: {scene_idx: queries_text}}
+    _MODE_ORDER = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"]
+
+    # {content_id: {scene_idx: {mode: queries_text}}}
+    scenes_by_content = defaultdict(lambda: defaultdict(dict))
+    found_modes = set()
 
     for rec in load_jsonl(vh_path):
-        if rec.get("mode") != mode:
-            continue
         c_id  = rec.get("content_id")
         s_idx = rec.get("scene_idx")
+        mode  = rec.get("mode", "")
         qs    = rec.get("queries", [])
-        if not c_id or s_idx is None:
+        if not c_id or s_idx is None or not mode:
             continue
         numbered = "\n".join(f"{i+1}. {q}" for i, q in enumerate(qs))
-        scenes_by_content[c_id][s_idx] = numbered
+        scenes_by_content[c_id][s_idx][mode] = numbered
+        found_modes.add(mode)
 
     if not scenes_by_content:
         print("[Skip] Voice Hint 데이터가 비어 있습니다.")
         return
 
+    # MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순
+    ordered_modes = [m for m in _MODE_ORDER if m in found_modes]
+    ordered_modes += sorted(found_modes - set(_MODE_ORDER))
+
+    query_columns = [f"queries_{m}" for m in ordered_modes]
+
     flat_rows = []
     for c_id in sorted(scenes_by_content.keys()):
         first = True
         for s_idx in sorted(scenes_by_content[c_id].keys()):
-            flat_rows.append({
+            row = {
                 "content_id": c_id if first else "",
                 "scene_idx":  s_idx,
-                "queries":    scenes_by_content[c_id][s_idx],
-            })
+            }
+            for mode in ordered_modes:
+                row[f"queries_{mode}"] = scenes_by_content[c_id][s_idx].get(mode, "")
+            flat_rows.append(row)
             first = False
 
     df = pd.DataFrame(flat_rows)
@@ -476,14 +489,22 @@ def export_voice_hints(input_dir, output_dir, mode="kss"):
     df.to_excel(writer, index=False, sheet_name="Voice Hints")
     worksheet = writer.sheets["Voice Hints"]
 
-    col_widths = {"content_id": 28, "scene_idx": 10, "queries": 60}
-    for idx, col in enumerate(df.columns):
-        worksheet.column_dimensions[chr(65 + idx)].width = col_widths.get(col, 20)
+    col_widths = {"content_id": 28, "scene_idx": 10}
+    for qc in query_columns:
+        col_widths[qc] = 60
 
-    query_col_letter = chr(65 + list(df.columns).index("queries"))
+    for idx, col in enumerate(df.columns):
+        col_letter = get_column_letter(idx + 1)
+        worksheet.column_dimensions[col_letter].width = col_widths.get(col, 20)
+
+    query_col_letters = set()
+    for qc in query_columns:
+        if qc in df.columns:
+            query_col_letters.add(get_column_letter(list(df.columns).index(qc) + 1))
+
     for row_cells in worksheet.iter_rows(min_row=2):
         for cell in row_cells:
-            if cell.column_letter == query_col_letter:
+            if cell.column_letter in query_col_letters:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
             else:
                 cell.alignment = Alignment(vertical="top")
