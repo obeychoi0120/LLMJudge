@@ -442,7 +442,7 @@ def export_voice_hints(input_dir, output_dir):
     from openpyxl.styles import Alignment
     from openpyxl.utils import get_column_letter
 
-    _MODE_ORDER = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"]
+    _MODE_ORDER = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
 
     # {content_id: {scene_idx: {mode: queries_text}}}
     scenes_by_content = defaultdict(lambda: defaultdict(dict))

@@ -133,6 +133,46 @@ _VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE + """
 - 4단계 (Hook 및 질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, 장르 특성에 맞는 확장 지식(World Knowledge)을 활용한 질문을 기획.
 """
 
+# _meta 변형: Video Context가 제공되는 imgvlm 모드
+_VOICE_HINT_PROMPT_IMGVLM_CHUNK2_META = _VOICE_HINT_BASE + """
+[입력 형식 설명]
+당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
+각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
+  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체) — 2어절 단위 파편
+  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보 — 2어절 단위 파편
+  - 파편은 저작권 보호를 위해 원문을 2어절 단위로 분할하고 순서를 뒤섞은 것입니다.
+  - 파편 구분자는 ' | '이며, [MASKED]는 저작권 보호를 위한 마스킹이므로 무시하세요.
+
+이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
+
+[사고 과정 (Chain-of-Thought) 가이드]
+질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
+- 1단계 (Scene Abstraction - 핵심 상황 유추):
+  a) Subjects 파편에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
+  b) Contexts 파편에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
+  c) [Video Context]와 파편을 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요.
+- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
+- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
+- 4단계 (Hook 및 질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, 장르 특성에 맞는 확장 지식(World Knowledge)을 활용한 질문을 기획.
+"""
+
+_VOICE_HINT_PROMPT_IMGVLM_GRAPH_META = _VOICE_HINT_BASE + """
+[입력 형식 설명]
+당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 장면 지식 그래프(Scene Knowledge Graph)가 제공됩니다.
+- vlm_graph: 장면의 주요 요소와 그 관계를 (subject) -[relation]-> (object) 형태의 트리플로 표현한 데이터
+  예: (man) -[WEARING]-> (cap), (screen) -[ABOUT]-> (foreign policy)
+- 이 그래프는 장면에 등장하는 인물, 사물, 행동, 속성, 위치 등의 관계를 압축적으로 나타냅니다.
+
+이 데이터는 영상의 시각 프레임에서 추출된 관계형 메타데이터입니다.
+
+[사고 과정 (Chain-of-Thought) 가이드]
+질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
+- 1단계 (Scene Abstraction - 핵심 상황 유추): [Video Context]와 지식 그래프의 트리플들을 논리적으로 연결하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요.
+- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
+- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
+- 4단계 (Hook 및 질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, 장르 특성에 맞는 확장 지식(World Knowledge)을 활용한 질문을 기획.
+"""
+
 _VOICE_HINT_PROMPT_RAW_WITH_MMVLM = _VOICE_HINT_BASE + """
 [입력 형식 설명]
 당신에게는 음성 인식(ASR) 텍스트와 화면 글씨(OCR) 텍스트 데이터가 Scene 단위로 제공되며,
@@ -179,7 +219,9 @@ def make_voice_hint_configs(thinking_level=0):
         "raw": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW, thinking_level=thinking_level),
         "raw_with_mmvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
         "imgvlm_chunk2": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2, thinking_level=thinking_level),
+        "imgvlm_chunk2_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2_META, thinking_level=thinking_level),
         "imgvlm_graph": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH, thinking_level=thinking_level),
+        "imgvlm_graph_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH_META, thinking_level=thinking_level),
         "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level)
     }
 
@@ -279,7 +321,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
-    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"], choices=["kss", "video", "raw", "imgvlm_chunk2", "imgvlm_graph", "raw_with_mmvlm"], help="생성할 모드 직접 지정 (기본값: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)")
+    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"], choices=["kss", "video", "raw", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta", "raw_with_mmvlm"], help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -412,7 +454,7 @@ def main():
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
-                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"}
+                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"}
                     for mod in missing_modes:
                         if vh_dict.get(mod):
                             if mod in _LOG_MODES:

@@ -789,6 +789,8 @@ _TEXT_MODE_FETCHERS = {
     "imgvlm_chunk2":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
     "imgvlm_graph":     lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
     "raw_with_mmvlm":   lambda gs, cid, s, e: get_gcs_raw_with_mmvlm_by_scene_idx(gs, cid, s, e),
+    "imgvlm_chunk2_meta": lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
+    "imgvlm_graph_meta":  lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
 }
 
 
@@ -1060,7 +1062,7 @@ def print_pipeline_done(output_path):
     print("=" * 50)
 
 
-_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_graph": 4, "blank": 5, "kss": 6}
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk2_meta": 4, "imgvlm_graph": 5, "imgvlm_graph_meta": 6, "blank": 7, "kss": 8}
 
 def sort_jsonl_file(filepath):
     """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
