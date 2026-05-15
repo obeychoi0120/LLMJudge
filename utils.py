@@ -220,10 +220,13 @@ def append_jsonl(path, record, lock=None):
 def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_score=None):
     """scores JSONL에서 특정 content_id의 mode별 평균 점수를 집계하여 출력합니다.
 
+    query_type 필드가 있는 레코드는 Content-Anchored / Tangential로 분리하여 집계합니다.
+    query_type이 없는 레코드(VH Response 등)는 통합 집계합니다.
+
     Args:
         scores_file: 점수 JSONL 파일 경로
         content_id: 집계 대상 content_id
-        score_keys: 점수 키 목록 (예: ["curiosity_and_hook", "temporal_immersion"])
+        score_keys: 점수 키 목록 (예: ["temporal_immersion", "content_depth", "curiosity_and_hook"])
         mode_order: 모드 정렬 순서 리스트
         max_score: 총점 만점 (None이면 표시 안 함)
     """
@@ -231,43 +234,105 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
     if not records:
         return
 
-    # mode별 점수 수집
-    mode_scores = {}
-    for rec in records:
-        mode = rec.get("mode", "")
-        judge = rec.get("judge", {})
-        scores = {}
-        for k in score_keys:
-            val = judge.get(k, {})
-            scores[k] = val.get("score", 0) if isinstance(val, dict) else 0
-        mode_scores.setdefault(mode, []).append(scores)
+    # query_type별 score key 매핑
+    _SCORE_KEYS_BY_TYPE = {
+        "content_anchored": ["temporal_immersion", "content_depth"],
+        "tangential": ["temporal_immersion", "curiosity_and_hook"],
+    }
 
-    if not mode_scores:
-        return
+    # query_type 존재 여부 확인
+    has_query_type = any(r.get("query_type") for r in records)
 
-    # 정렬
-    sorted_modes = sorted(
-        mode_scores.keys(),
-        key=lambda m: mode_order.index(m) if m in mode_order else 999,
-    )
+    if has_query_type:
+        # query_type별 분리 집계
+        # type_mode_scores[query_type][mode] = [scores_dicts...]
+        type_mode_scores = {}
+        for rec in records:
+            q_type = rec.get("query_type", "tangential")
+            mode = rec.get("mode", "")
+            judge = rec.get("judge", {})
+            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys)
+            scores = {}
+            for k in keys:
+                val = judge.get(k, {})
+                scores[k] = val.get("score", 0) if isinstance(val, dict) else 0
+            type_mode_scores.setdefault(q_type, {}).setdefault(mode, []).append(scores)
 
-    # 출력
-    max_label = f"/{max_score}" if max_score else ""
-    print(f"\n{'─'*50}")
-    print(f"📊 [{content_id}] Mode별 평균 점수 집계")
-    print(f"{'─'*50}")
+        if not type_mode_scores:
+            return
 
-    for mode in sorted_modes:
-        entries = mode_scores[mode]
-        n = len(entries)
-        avgs = {}
-        for k in score_keys:
-            avgs[k] = sum(e[k] for e in entries) / n
-        total_avg = sum(avgs.values())
-        parts = " | ".join(f"{k}={avgs[k]:.2f}" for k in score_keys)
-        print(f"  {mode:20s}: {total_avg:.2f}{max_label} ({parts}) [n={n}]")
+        _TYPE_LABELS = {
+            "content_anchored": "🎯 Content-Anchored",
+            "tangential": "🌐 Tangential",
+        }
 
-    print(f"{'─'*50}")
+        max_label = f"/{max_score}" if max_score else ""
+        print(f"\n{'─'*55}")
+        print(f"📊 [{content_id}] Mode별 평균 점수 집계 (query_type별)")
+        print(f"{'─'*55}")
+
+        for q_type in ["content_anchored", "tangential"]:
+            mode_scores = type_mode_scores.get(q_type)
+            if not mode_scores:
+                continue
+
+            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys)
+            label = _TYPE_LABELS.get(q_type, q_type)
+            print(f"\n  {label}")
+
+            sorted_modes = sorted(
+                mode_scores.keys(),
+                key=lambda m: mode_order.index(m) if m in mode_order else 999,
+            )
+
+            for mode in sorted_modes:
+                entries = mode_scores[mode]
+                n = len(entries)
+                avgs = {}
+                for k in keys:
+                    avgs[k] = sum(e.get(k, 0) for e in entries) / n
+                total_avg = sum(avgs.values())
+                parts = " | ".join(f"{k}={avgs[k]:.2f}" for k in keys)
+                print(f"    {mode:20s}: {total_avg:.2f}{max_label} ({parts}) [n={n}]")
+
+        print(f"{'─'*55}")
+    else:
+        # query_type 없는 레코드: 기존 통합 집계
+        mode_scores = {}
+        for rec in records:
+            mode = rec.get("mode", "")
+            judge = rec.get("judge", {})
+            scores = {}
+            for k in score_keys:
+                val = judge.get(k, {})
+                scores[k] = val.get("score", 0) if isinstance(val, dict) else 0
+            mode_scores.setdefault(mode, []).append(scores)
+
+        if not mode_scores:
+            return
+
+        sorted_modes = sorted(
+            mode_scores.keys(),
+            key=lambda m: mode_order.index(m) if m in mode_order else 999,
+        )
+
+        max_label = f"/{max_score}" if max_score else ""
+        print(f"\n{'─'*50}")
+        print(f"📊 [{content_id}] Mode별 평균 점수 집계")
+        print(f"{'─'*50}")
+
+        for mode in sorted_modes:
+            entries = mode_scores[mode]
+            n = len(entries)
+            avgs = {}
+            for k in score_keys:
+                avgs[k] = sum(e[k] for e in entries) / n
+            total_avg = sum(avgs.values())
+            parts = " | ".join(f"{k}={avgs[k]:.2f}" for k in score_keys)
+            print(f"  {mode:20s}: {total_avg:.2f}{max_label} ({parts}) [n={n}]")
+
+        print(f"{'─'*50}")
+
 
 
 def init_pipeline(args):
