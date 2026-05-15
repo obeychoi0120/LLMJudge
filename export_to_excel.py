@@ -1,7 +1,16 @@
 import pandas as pd
 import json
 import os
+from openpyxl.utils import get_column_letter
 from utils import load_jsonl
+
+_MODE_ORDER = ["video", "kss", "blank", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
+
+def _sort_modes(modes):
+    """MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순."""
+    ordered = [m for m in _MODE_ORDER if m in modes]
+    ordered += sorted(set(modes) - set(_MODE_ORDER))
+    return ordered
 
 
 
@@ -149,11 +158,11 @@ def export_vh_details(input_dir, output_dir):
         return
 
     df = pd.DataFrame(flat_vh)
-    out_path = os.path.join(output_dir, "vh_details.xlsx")
+    out_path = os.path.join(output_dir, "vh_score_details.xlsx")
 
     writer = pd.ExcelWriter(out_path, engine='openpyxl')
-    df.to_excel(writer, index=False, sheet_name='VH Details')
-    worksheet = writer.sheets['VH Details']
+    df.to_excel(writer, index=False, sheet_name='VH Score Details')
+    worksheet = writer.sheets['VH Score Details']
     
     col_widths = {
         "content_id": 20, "scene_idx": 10, "mode": 10, "query": 40,
@@ -168,8 +177,103 @@ def export_vh_details(input_dir, output_dir):
 
     print(f"Created: {out_path}")
 
+def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_cids, by_video, overall_data):
+    """메트릭 × 모드 피벗 구조의 Excel을 openpyxl로 직접 작성합니다.
+
+    헤더 구조 (2행):
+      Row 1: content_id (merged) | metric1 (merged across modes) | metric2 (merged) | ...
+      Row 2:                     | mode1 | mode2 | ...           | mode1 | mode2 | ...  | ...
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+
+    n_modes = len(ordered_modes)
+
+    # ── 스타일 정의 ──
+    header_font = Font(bold=True)
+    center_align = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    metric_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    # ── Row 1: 상위 헤더 (content_id + 메트릭 이름, 각 메트릭은 n_modes 열 병합) ──
+    ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
+    cell = ws.cell(row=1, column=1, value="content_id")
+    cell.font = header_font
+    cell.alignment = center_align
+    cell.border = thin_border
+
+    col = 2  # 현재 열 위치 (1-indexed)
+    for met in metrics:
+        ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + n_modes - 1)
+        cell = ws.cell(row=1, column=col, value=met)
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.fill = metric_fill
+        cell.border = thin_border
+        col += n_modes
+
+    # ── Row 2: 하위 헤더 (모드 이름 반복) ──
+    col = 2
+    for _ in metrics:
+        for mode in ordered_modes:
+            cell = ws.cell(row=2, column=col, value=mode)
+            cell.font = header_font
+            cell.alignment = center_align
+            cell.border = thin_border
+            col += 1
+
+    # ── Data rows (Row 3~) ──
+    data_start_row = 3
+    for r_idx, cid in enumerate(sorted(all_cids)):
+        row_num = data_start_row + r_idx
+        ws.cell(row=row_num, column=1, value=cid).border = thin_border
+        col = 2
+        modes_data = by_video.get(cid, {})
+        for met in metrics:
+            for mode in ordered_modes:
+                val = modes_data.get(mode, {}).get(met, "")
+                c = ws.cell(row=row_num, column=col, value=val if val != "" else None)
+                c.border = thin_border
+                col += 1
+
+    # OVERALL 행
+    if overall_data:
+        row_num = data_start_row + len(all_cids)
+        c = ws.cell(row=row_num, column=1, value="OVERALL")
+        c.font = Font(bold=True)
+        c.border = thin_border
+        col = 2
+        for met in metrics:
+            for mode in ordered_modes:
+                val = overall_data.get(mode, {}).get(met, "")
+                c = ws.cell(row=row_num, column=col, value=val if val != "" else None)
+                c.border = thin_border
+                col += 1
+
+    # ── 열 너비 조정 ──
+    ws.column_dimensions[get_column_letter(1)].width = 28
+    total_cols = 1 + len(metrics) * n_modes
+    for ci in range(2, total_cols + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 14
+
+    wb.save(out_path)
+    print(f"Created: {out_path}")
+
+
 def export_vh_scores(input_dir, output_dir):
-    """Voice Hint Judge 집계 점수를 Excel로 내보냅니다."""
+    """Voice Hint Judge 집계 점수를 단일 Excel 파일로 내보냅니다.
+
+    열 구조 (2행 헤더):
+      content_id | curiosity_and_hook        | temporal_immersion        | total_score
+                 | mode1 | mode2 | ...       | mode1 | mode2 | ...       | mode1 | mode2 | ...
+    """
     agg_path = os.path.join(input_dir, "voice_hint_scores_aggregated.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 VH Scores 내보내기를 건너뜁니다.")
@@ -178,44 +282,24 @@ def export_vh_scores(input_dir, output_dir):
     with open(agg_path, "r", encoding="utf-8") as f:
         agg = json.load(f)
 
-    data_by_mode = {}
-    
-    for cid, modes_data in agg.get("by_video", {}).items():
-        for mode, metrics in modes_data.items():
-            if mode not in data_by_mode:
-                data_by_mode[mode] = []
-            row = {"content_id": cid}
-            row.update(metrics)
-            data_by_mode[mode].append(row)
+    metrics = ["curiosity_and_hook", "temporal_immersion", "total_score"]
 
-    for mode, metrics in agg.get("overall", {}).items():
-        if mode not in data_by_mode:
-            data_by_mode[mode] = []
-        row = {"content_id": "OVERALL"}
-        row.update(metrics)
-        data_by_mode[mode].append(row)
+    all_cids = list(agg.get("by_video", {}).keys())
+    all_modes = set()
+    for modes_data in agg.get("by_video", {}).values():
+        all_modes.update(modes_data.keys())
+    all_modes.update(agg.get("overall", {}).keys())
+    ordered_modes = _sort_modes(all_modes)
 
-    exported_count = 0
-    for mode, rows in data_by_mode.items():
-        if not rows:
-            continue
-
-        df_scores = pd.DataFrame(rows)
-        safe_mode = mode.replace("_", "") if "_" in mode else mode
-        out_path = os.path.join(output_dir, f"vh_scores_{safe_mode}.xlsx")
-
-        writer = pd.ExcelWriter(out_path, engine='openpyxl')
-        df_scores.to_excel(writer, index=False, sheet_name='VH Scores')
-        worksheet = writer.sheets['VH Scores']
-        for idx, col in enumerate(df_scores.columns):
-            worksheet.column_dimensions[chr(65 + idx)].width = 15
-        writer.close()
-
-        print(f"Created: {out_path}")
-        exported_count += 1
-
-    if exported_count == 0:
+    if not ordered_modes:
         print("[Skip] Voice Hint Aggregated Score 데이터가 비어 있습니다.")
+        return
+
+    out_path = os.path.join(output_dir, "vh_scores.xlsx")
+    _write_pivot_scores_xlsx(
+        out_path, "VH Scores", metrics, ordered_modes,
+        all_cids, agg.get("by_video", {}), agg.get("overall", {}),
+    )
 
 
 
@@ -358,11 +442,11 @@ def export_vh_response_details(input_dir, output_dir):
         return
 
     df = pd.DataFrame(flat_rows)
-    out_path = os.path.join(output_dir, "vh_response_details.xlsx")
+    out_path = os.path.join(output_dir, "vh_response_score_details.xlsx")
 
     writer = pd.ExcelWriter(out_path, engine="openpyxl")
-    df.to_excel(writer, index=False, sheet_name="VH Response Details")
-    worksheet = writer.sheets["VH Response Details"]
+    df.to_excel(writer, index=False, sheet_name="VH Resp Score Details")
+    worksheet = writer.sheets["VH Resp Score Details"]
     col_widths = {
         "content_id": 22, "scene_idx": 10, "query": 40, "mode": 12, "response": 60,
         "rationale_answer_relevance": 45,  "answer_relevance": 16,
@@ -378,7 +462,12 @@ def export_vh_response_details(input_dir, output_dir):
 
 
 def export_vh_response_scores(input_dir, output_dir):
-    """VH Response Judge 집계 점수를 모드별 Excel로 내보냅니다."""
+    """VH Response Judge 집계 점수를 단일 Excel 파일로 내보냅니다.
+
+    열 구조 (2행 헤더):
+      content_id | answer_relevance          | factual_precision         | response_quality          | total_score
+                 | mode1 | mode2 | ...       | mode1 | mode2 | ...       | mode1 | mode2 | ...       | mode1 | mode2 | ...
+    """
     agg_path = os.path.join(input_dir, "vh_response_scores_aggregated.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 VH Response Scores 내보내기를 건너뜁니다.")
@@ -387,42 +476,24 @@ def export_vh_response_scores(input_dir, output_dir):
     with open(agg_path, "r", encoding="utf-8") as f:
         agg = json.load(f)
 
-    data_by_mode = {}
+    metrics = ["answer_relevance", "factual_precision", "response_quality", "total_score"]
 
-    for c_id, modes_data in agg.get("by_video", {}).items():
-        for mode, metrics in modes_data.items():
-            if mode not in data_by_mode:
-                data_by_mode[mode] = []
-            row = {"content_id": c_id}
-            row.update(metrics)
-            data_by_mode[mode].append(row)
+    all_cids = list(agg.get("by_video", {}).keys())
+    all_modes = set()
+    for modes_data in agg.get("by_video", {}).values():
+        all_modes.update(modes_data.keys())
+    all_modes.update(agg.get("overall", {}).keys())
+    ordered_modes = _sort_modes(all_modes)
 
-    for mode, metrics in agg.get("overall", {}).items():
-        if mode not in data_by_mode:
-            data_by_mode[mode] = []
-        row = {"content_id": "OVERALL"}
-        row.update(metrics)
-        data_by_mode[mode].append(row)
-
-    exported_count = 0
-    for mode, rows in data_by_mode.items():
-        if not rows:
-            continue
-        df_scores = pd.DataFrame(rows)
-        safe_mode = mode.replace("_", "")
-        out_path  = os.path.join(output_dir, f"vh_response_scores_{safe_mode}.xlsx")
-
-        writer = pd.ExcelWriter(out_path, engine="openpyxl")
-        df_scores.to_excel(writer, index=False, sheet_name="VH Response Scores")
-        worksheet = writer.sheets["VH Response Scores"]
-        for idx, col in enumerate(df_scores.columns):
-            worksheet.column_dimensions[chr(65 + idx)].width = 15
-        writer.close()
-        print(f"Created: {out_path}")
-        exported_count += 1
-
-    if exported_count == 0:
+    if not ordered_modes:
         print("[Skip] VH Response Aggregated Score 데이터가 비어 있습니다.")
+        return
+
+    out_path = os.path.join(output_dir, "vh_response_scores.xlsx")
+    _write_pivot_scores_xlsx(
+        out_path, "VH Response Scores", metrics, ordered_modes,
+        all_cids, agg.get("by_video", {}), agg.get("overall", {}),
+    )
 
 
 def export_voice_hints(input_dir, output_dir):
@@ -440,9 +511,6 @@ def export_voice_hints(input_dir, output_dir):
 
     from collections import defaultdict
     from openpyxl.styles import Alignment
-    from openpyxl.utils import get_column_letter
-
-    _MODE_ORDER = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
 
     # {content_id: {scene_idx: {mode: queries_text}}}
     scenes_by_content = defaultdict(lambda: defaultdict(dict))
@@ -463,12 +531,10 @@ def export_voice_hints(input_dir, output_dir):
         print("[Skip] Voice Hint 데이터가 비어 있습니다.")
         return
 
-    # MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순
-    ordered_modes = [m for m in _MODE_ORDER if m in found_modes]
-    ordered_modes += sorted(found_modes - set(_MODE_ORDER))
+    ordered_modes = _sort_modes(found_modes)
 
     query_columns = [f"queries_{m}" for m in ordered_modes]
-
+    
     flat_rows = []
     for c_id in sorted(scenes_by_content.keys()):
         first = True
