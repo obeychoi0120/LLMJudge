@@ -202,6 +202,7 @@ _VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
 5. **대화 이어가기**
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+   
 _VH_RESPONSE_PROMPT_IMGVLM_CHUNK2_META = _VH_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
