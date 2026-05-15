@@ -585,19 +585,23 @@ def main():
         c_id = rec.get("content_id")
         s_idx = rec.get("scene_idx")
         queries = rec.get("queries", [])
+        # query_types 필드에서 유형 읽기 (없으면 index 기반 추론)
+        query_types = rec.get("query_types", ["content_anchored", "tangential"][:len(queries)])
 
         if not (c_id and s_idx is not None and queries):
             return 0
 
         # 각 target 모드 × 각 query 조합에서 미처리분만 추출
         pending_items = []
-        for q_text in queries:
+        for q_idx, q_text in enumerate(queries):
+            q_type = query_types[q_idx] if q_idx < len(query_types) else "tangential"
             for mode in target_modes:
                 if (c_id, s_idx, mode, q_text) not in completed_pairs:
                     pending_items.append({
                         "content_id": c_id,
                         "scene_idx":  s_idx,
                         "mode":       mode,
+                        "query_type": q_type,
                         "query":      q_text,
                     })
 
@@ -674,6 +678,7 @@ def main():
                         "content_id": c_id,
                         "scene_idx":  scene_idx,
                         "mode":       mode,
+                        "query_type": item.get("query_type", "tangential"),
                         "query":      query,
                         "answer":     answer,
                     }

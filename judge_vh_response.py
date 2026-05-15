@@ -139,6 +139,7 @@ def main():
         s_idx = data.get("scene_idx")
         mode = data.get("mode")
         query = data["query"]
+        query_type = data.get("query_type", "")
         generated_answer = data.get("answer")
         anchor = summary_map.get((c_id, s_idx), "")
 
@@ -171,6 +172,7 @@ def main():
             "content_id": c_id,
             "scene_idx":  s_idx,
             "mode":       mode,
+            "query_type": query_type,
             "query":      query,
             "judge":      score_dict,
             "total":      total,
