@@ -4,15 +4,13 @@ import os
 from openpyxl.utils import get_column_letter
 from utils import load_jsonl
 
-_MODE_ORDER = ["video", "kss", "blank", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
+_MODE_ORDER = ["blank", "video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
 
 def _sort_modes(modes):
     """MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순."""
     ordered = [m for m in _MODE_ORDER if m in modes]
     ordered += sorted(set(modes) - set(_MODE_ORDER))
     return ordered
-
-
 
 def aggregate_vh_scores(input_dir):
     """VH Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
@@ -313,7 +311,7 @@ def export_vh_scores(input_dir, output_dir):
 
 
 def aggregate_vh_response_scores(input_dir):
-    """VH Response Score(vh_response_scores.jsonl)를 집계하여 JSON으로 저장합니다."""
+    """VH Response Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
     scores_file = os.path.join(input_dir, "vh_response_scores.jsonl")
     output_file = os.path.join(input_dir, "vh_response_scores_aggregated.json")
 
@@ -330,13 +328,13 @@ def aggregate_vh_response_scores(input_dir):
 
     metrics = ["answer_relevance", "factual_precision", "response_quality", "total_score"]
 
-    # by_video_raw[content_id][mode][metric] = [values...]
-    by_video_raw = {}
-    overall_raw  = {}
+    # query_type별 독립 집계
+    agg = {}
 
     for record in data:
         c_id = record.get("content_id")
         mode = record.get("mode")
+        q_type = record.get("query_type", "unknown")
         judge = record.get("judge", {})
         if not c_id or not mode or not judge:
             continue
@@ -347,6 +345,12 @@ def aggregate_vh_response_scores(input_dir):
             for k in metrics[:-1]
             if isinstance(judge.get(k), dict)
         )
+
+        if q_type not in agg:
+            agg[q_type] = {"by_video_raw": {}, "overall_raw": {}}
+
+        by_video_raw = agg[q_type]["by_video_raw"]
+        overall_raw = agg[q_type]["overall_raw"]
 
         if c_id not in by_video_raw:
             by_video_raw[c_id] = {}
@@ -364,37 +368,38 @@ def aggregate_vh_response_scores(input_dir):
         by_video_raw[c_id][mode]["total_score"].append(ts)
         overall_raw[mode]["total_score"].append(ts)
 
-    # content_id별 평균 계산
-    results_by_video = {}
-    for c_id, modes_data in by_video_raw.items():
-        avg_video = {}
-        for mode, raw in modes_data.items():
+    # 평균 계산
+    final_output = {}
+    for q_type, raw_data in agg.items():
+        results_by_video = {}
+        for c_id, modes_data in raw_data["by_video_raw"].items():
+            avg_video = {}
+            for mode, raw in modes_data.items():
+                avg_mode = {}
+                for met in metrics:
+                    s_list = raw.get(met, [])
+                    if s_list:
+                        avg_mode[met] = round(sum(s_list) / len(s_list), 2)
+                if avg_mode:
+                    avg_video[mode] = avg_mode
+            if avg_video:
+                results_by_video[c_id] = avg_video
+
+        results_overall = {}
+        for mode, raw in raw_data["overall_raw"].items():
             avg_mode = {}
             for met in metrics:
-                s_list = raw[met]
+                s_list = raw.get(met, [])
                 if s_list:
                     avg_mode[met] = round(sum(s_list) / len(s_list), 2)
             if avg_mode:
-                avg_video[mode] = avg_mode
-        if avg_video:
-            results_by_video[c_id] = avg_video
+                results_overall[mode] = avg_mode
 
-    # 전체 평균 계산
-    results_overall = {}
-    for mode, raw in overall_raw.items():
-        avg_mode = {}
-        for met in metrics:
-            s_list = raw[met]
-            if s_list:
-                avg_mode[met] = round(sum(s_list) / len(s_list), 2)
-        if avg_mode:
-            results_overall[mode] = avg_mode
-
-    final_output = {"by_video": results_by_video, "overall": results_overall}
+        final_output[q_type] = {"by_video": results_by_video, "overall": results_overall}
 
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(final_output, f, indent=4, ensure_ascii=False)
-    print(f"[Done] VH Response Score Aggregation: {output_file}")
+    print(f"[Done] VH Response Score Aggregation (by query_type): {output_file}")
 
 
 def export_vh_response_details(input_dir, output_dir):
@@ -437,7 +442,8 @@ def export_vh_response_details(input_dir, output_dir):
             if isinstance(judge.get(k), dict)
         )
         response_text = answer_map.get((c_id, s_idx, mode, query), "")
-        row = {"content_id": c_id, "scene_idx": s_idx, "mode": mode, "query": query, "response": response_text}
+        q_type = item.get("query_type", "")
+        row = {"content_id": c_id, "scene_idx": s_idx, "mode": mode, "query_type": q_type, "query": query, "response": response_text}
         
         for k in score_keys:
             met_data = judge.get(k, {})
@@ -457,7 +463,7 @@ def export_vh_response_details(input_dir, output_dir):
     df.to_excel(writer, index=False, sheet_name="VH Resp Score Details")
     worksheet = writer.sheets["VH Resp Score Details"]
     col_widths = {
-        "content_id": 22, "scene_idx": 10, "query": 40, "mode": 12, "response": 60,
+        "content_id": 22, "scene_idx": 10, "mode": 12, "query_type": 16, "query": 40, "response": 60,
         "rationale_answer_relevance": 45,  "answer_relevance": 16,
         "rationale_factual_precision": 45, "factual_precision": 16,
         "rationale_response_quality": 45,  "response_quality": 16,
@@ -465,18 +471,14 @@ def export_vh_response_details(input_dir, output_dir):
     }
     for idx, col in enumerate(df.columns):
         width = col_widths.get(col, 15)
-        worksheet.column_dimensions[chr(65 + idx)].width = width
+        col_letter = get_column_letter(idx + 1)
+        worksheet.column_dimensions[col_letter].width = width
     writer.close()
     print(f"Created: {out_path}")
 
 
 def export_vh_response_scores(input_dir, output_dir):
-    """VH Response Judge 집계 점수를 단일 Excel 파일로 내보냅니다.
-
-    열 구조 (2행 헤더):
-      content_id | answer_relevance          | factual_precision         | response_quality          | total_score
-                 | mode1 | mode2 | ...       | mode1 | mode2 | ...       | mode1 | mode2 | ...       | mode1 | mode2 | ...
-    """
+    """VH Response Judge 집계 점수를 query_type별 별도 Excel 파일로 내보냅니다."""
     agg_path = os.path.join(input_dir, "vh_response_scores_aggregated.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 VH Response Scores 내보내기를 건너뜁니다.")
@@ -487,22 +489,26 @@ def export_vh_response_scores(input_dir, output_dir):
 
     metrics = ["answer_relevance", "factual_precision", "response_quality", "total_score"]
 
-    all_cids = list(agg.get("by_video", {}).keys())
-    all_modes = set()
-    for modes_data in agg.get("by_video", {}).values():
-        all_modes.update(modes_data.keys())
-    all_modes.update(agg.get("overall", {}).keys())
-    ordered_modes = _sort_modes(all_modes)
+    for q_type, q_type_data in agg.items():
+        by_video = q_type_data.get("by_video", {})
+        overall = q_type_data.get("overall", {})
 
-    if not ordered_modes:
-        print("[Skip] VH Response Aggregated Score 데이터가 비어 있습니다.")
-        return
+        all_cids = list(by_video.keys())
+        all_modes = set()
+        for modes_data in by_video.values():
+            all_modes.update(modes_data.keys())
+        all_modes.update(overall.keys())
+        ordered_modes = _sort_modes(all_modes)
 
-    out_path = os.path.join(output_dir, "vh_response_scores.xlsx")
-    _write_pivot_scores_xlsx(
-        out_path, "VH Response Scores", metrics, ordered_modes,
-        all_cids, agg.get("by_video", {}), agg.get("overall", {}),
-    )
+        if not ordered_modes:
+            continue
+
+        out_path = os.path.join(output_dir, f"vh_response_scores_{q_type}.xlsx")
+        sheet_name = f"VH Resp {q_type}"
+        _write_pivot_scores_xlsx(
+            out_path, sheet_name, metrics, ordered_modes,
+            all_cids, by_video, overall,
+        )
 
 
 def export_voice_hints(input_dir, output_dir):

@@ -130,6 +130,29 @@ _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
 """
 
 
+_VOICE_HINT_PROMPT_IMGVLM_SENTENCE = _VOICE_HINT_BASE + """
+[주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
+
+[입력 형식 설명]
+당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
+각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
+  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체)
+  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보
+
+이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
+
+[사고 과정 (Chain-of-Thought) 가이드]
+질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
+- 1단계 (Scene Abstraction - 핵심 상황 유추):
+  a) Subjects에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
+  b) Contexts에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
+  c) 텍스트를 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요. (예: [이탈리아, 피자, 빠니보틀] -> 유추: 이탈리아 정통 음식 문화 체험)
+- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
+- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
+- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
+"""
+
+
 _VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
@@ -167,6 +190,26 @@ _VOICE_HINT_PROMPT_IMGVLM_CHUNK2_META = _VOICE_HINT_BASE + """
   a) Subjects 파편에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
   b) Contexts 파편에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
   c) [Video Context]와 파편을 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요.
+- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
+- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
+- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
+"""
+
+_VOICE_HINT_PROMPT_IMGVLM_SENTENCE_META = _VOICE_HINT_BASE + """
+[입력 형식 설명]
+당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
+각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
+  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체)
+  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보
+
+이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
+
+[사고 과정 (Chain-of-Thought) 가이드]
+질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
+- 1단계 (Scene Abstraction - 핵심 상황 유추):
+  a) Subjects에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
+  b) Contexts에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
+  c) [Video Context]와 텍스트를 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요.
 - 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
 - 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
@@ -236,6 +279,8 @@ def make_voice_hint_configs(thinking_level=0):
         "raw_with_mmvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
         "imgvlm_chunk2": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2, thinking_level=thinking_level),
         "imgvlm_chunk2_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2_META, thinking_level=thinking_level),
+        "imgvlm_sentence": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_SENTENCE, thinking_level=thinking_level),
+        "imgvlm_sentence_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_SENTENCE_META, thinking_level=thinking_level),
         "imgvlm_graph": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH, thinking_level=thinking_level),
         "imgvlm_graph_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH_META, thinking_level=thinking_level),
         "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level)
@@ -251,7 +296,7 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
 
         # Video Context: 채널명/제목으로 도메인 컨텍스트 제공
         # (imgvlm 모드는 저작권 미계약 데이터이므로 메타데이터 주입 금지)
-        _COPYRIGHT_SAFE_MODES = {"imgvlm_chunk2", "imgvlm_graph"}
+        _COPYRIGHT_SAFE_MODES = {"imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"}
         if video_context and mode not in _COPYRIGHT_SAFE_MODES:
             contents += ["--- [Video Context (영상 기본 정보)] ---", video_context]
 
@@ -337,7 +382,8 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
-    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"], choices=["kss", "video", "raw", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta", "raw_with_mmvlm"], help="생성할 모드 직접 지정")
+    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], 
+    choices=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"], help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -474,7 +520,7 @@ def main():
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
-                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"}
+                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"}
                     for mod in missing_modes:
                         if vh_dict.get(mod):
                             if mod in _LOG_MODES:

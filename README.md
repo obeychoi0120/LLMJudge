@@ -8,7 +8,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ### 2-Track 평가체계
 
-- **A-Track (Voice Hint)**: 6개 모드(kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)의 Source를 기반으로 시청자의 호기심을 유발하는 질문을, KSS Anchor 기준으로 품질 평가
+- **A-Track (Voice Hint)**: 8개 모드(kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk2_meta, imgvlm_sentence, imgvlm_sentence_meta, imgvlm_graph, imgvlm_graph_meta)의 Source를 기반으로 시청자의 호기심을 유발하는 질문을, KSS Anchor 기준으로 품질 평가
 - **B-Track (VH Response)**: A-Track의 **kss 모드로 생성된 공통 Query**를 기준, 각 모드별 Source로 답변 생성 → KSS + World Knowledge 기반 품질 비교. 동일한 질문으로 데이터소스 간 **통제 실험**을 수행. `blank` 모드는 컨텍스트 없이 World Knowledge만으로 답변하는 베이스라인
 
 #### A-Track 모드 (Voice Hint 생성)
@@ -20,6 +20,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 | `raw` | ASR + OCR (원본 텍스트) | Scene별 음성 인식(speech) + 화면 텍스트(on_screen_text)만 사용. **저작권 계약 필요** |
 | `raw_with_mmvlm` | ASR + OCR + VLM 멀티모달 서술 | `raw`에 소형 VLM의 시각·음성 종합 서술(vlm_mm_description)을 보조 참고로 추가. **저작권 계약 필요** |
 | `imgvlm_chunk2` | VLM 시각 구조화 데이터 (2어절 단편) | 시각 프레임에서 추출한 Subjects/Contexts를 2어절 단위로 단편화·셔플·마스킹한 저작권 안전 형태 |
+| `imgvlm_sentence` | VLM 시각 구조화 데이터 (문장형) | 시각 프레임에서 추출한 Subjects/Contexts를 문장 형태로 구성한 데이터 |
 | `imgvlm_graph` | VLM 장면 지식 그래프 | 시각 프레임에서 추출한 (subject)-[relation]->(object) 트리플로 장면 관계를 압축 표현 |
 
 #### B-Track 모드 (VH Response 생성)
@@ -30,6 +31,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 | `raw` | ASR + OCR | A-Track과 동일. 음성·텍스트 교차 검증 후 답변. **저작권 계약 필요** |
 | `raw_with_mmvlm` | ASR + OCR + VLM 서술 | A-Track과 동일. ASR/OCR 우선, VLM 서술 보조. **저작권 계약 필요** |
 | `imgvlm_chunk2` | VLM 구조화 데이터 (2어절 단편) | A-Track과 동일. 단편화된 파편을 재조합하여 답변 |
+| `imgvlm_sentence` | VLM 구조화 데이터 (문장형) | A-Track과 동일. 문장형 데이터를 활용하여 답변 |
 | `imgvlm_graph` | VLM 지식 그래프 | A-Track과 동일. 트리플 관계를 논리적으로 연결하여 답변 |
 | `blank` | 없음 (World Knowledge only) | **컨텍스트를 일절 제공하지 않고** 질문만 전달. 모델의 사전 지식만으로 답변하는 베이스라인 |
 
@@ -81,7 +83,7 @@ flowchart TD
             VHRS["vh_response_scores.jsonl"]
         end
         subgraph ATRACK["A-Track: Voice Hint"]
-            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / imgvlm_graph"]
+            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / imgvlm_sentence / imgvlm_graph"]
             VH["voice_hint.jsonl"]
             A4["A-4. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
             VHS["voice_hint_scores.jsonl"]
@@ -347,8 +349,8 @@ python generate_keyscene_summary.py               # O-2: KeyScene Summary 생성
 
 ### A-Track (Voice Hint)
 ```bash
-python generate_voice_hint.py                     # A-1: Voice Hint 생성 (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
-python judge_voice_hint.py                        # A-2: Voice Hint Judge (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph)
+python generate_voice_hint.py                     # A-1: Voice Hint 생성 (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_sentence, imgvlm_graph 등)
+python judge_voice_hint.py                        # A-2: Voice Hint Judge (모드: kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_sentence, imgvlm_graph 등)
 
 # 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
 python generate_voice_hint.py --modes imgvlm_chunk2 video
@@ -357,7 +359,7 @@ python judge_voice_hint.py --modes imgvlm_chunk2 video
 
 ### B-Track (VH Response)
 ```bash
-python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_graph, blank)
+python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_sentence, imgvlm_graph, blank 등)
 python judge_vh_response.py                       # B-2: Response Judge
 
 # 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):

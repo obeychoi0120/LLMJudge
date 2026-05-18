@@ -171,6 +171,39 @@ _VH_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
+_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE = _VH_RESPONSE_PROMPT_BASE + """
+[주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
+
+[시청 기억의 구조]
+제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 시각 정보**만으로 이루어져 있습니다.
+각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
+  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체)
+  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보
+
+이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
+
+[분석 및 대화 지시사항]
+1. **시각 정보의 역할 제한 (Ice-breaking 전용)**
+   - 제공된 구조화 시각 데이터는 절대 정답의 논리적 출처나 본문의 논거로 억지로 끼워 넣지 마세요.
+   - 오직 답변의 첫 문장에서 시청자가 방금 본 상황에 가볍게 공감하는 인사말(Ice-breaking 브릿지)을 만드는 용도로만 사용하세요.
+   - 예: "아, 방금 이탈리아 골목에서 화덕 피자가 나오는 모습을 보셨군요!"
+
+2. **방대한 외부 지식의 전면적 활용 (답변 본문)**
+   - 답변의 본문은 전적으로 당신의 방대한 외부 지식(World Knowledge)을 최우선으로 활용하여 작성하세요.
+   - 빈약한 텍스트 데이터에 억지로 논리를 맞추려다 문맥이 꼬이지 않도록 주의하세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
+   - 과거 Scene은 질문의 맥락을 이해하는 데 참고하되, 답변의 생동감은 현재 장면에서 끌어오세요.
+
+4. **완벽한 TV 파트너 톤앤매너**
+   - "메타데이터", "구조화 데이터", "Subjects 필드", "vlm_img_structure" 등 시스템 용어는 절대 금지입니다.
+   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
+
+5. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가볍게 공감하거나 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
+
 _VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
@@ -231,6 +264,35 @@ _VH_RESPONSE_PROMPT_IMGVLM_CHUNK2_META = _VH_RESPONSE_PROMPT_BASE + """
 5. **대화 이어가기**
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑팡을 유도하세요."""
+
+_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE_META = _VH_RESPONSE_PROMPT_BASE + """
+
+[시청 기억의 구조]
+제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 시각 정보**만으로 이루어져 있습니다.
+각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
+  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체)
+  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보
+
+이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
+
+[분석 및 대화 지시사항]
+1. **시각 정보의 역할 제한 (Ice-breaking 전용)**
+   - 제공된 구조화 시각 데이터는 절대 정답의 논리적 출처나 본문의 논거로 억지로 끼워 넣지 마세요.
+   - 오직 답변의 첫 문장에서 시청자가 방금 본 상황에 가볍게 공감하는 인사말(Ice-breaking 브릿지)을 만드는 용도로만 사용하세요.
+
+2. **방대한 외부 지식의 전면적 활용 (답변 본문)**
+   - 답변의 본문은 전적으로 당신의 방대한 외부 지식(World Knowledge)을 최우선으로 활용하여 작성하세요.
+
+3. **현재 장면 우선 (답변을 이끌어내는 시점)**
+   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
+
+4. **완벽한 TV 파트너 톤앤매너**
+   - "메타데이터", "구조화 데이터", "Subjects 필드", "vlm_img_structure" 등 시스템 용어는 절대 금지입니다.
+   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
+
+5. **대화 이어가기**
+   - 정보만 전달하고 끝내지 마세요.
+   - 답변 마지막에 가볍게 공감하거나 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
 _VH_RESPONSE_PROMPT_IMGVLM_GRAPH_META = _VH_RESPONSE_PROMPT_BASE + """
 
@@ -298,6 +360,14 @@ def make_vh_gen_config(thinking_level=None):
             system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2_META,
             thinking_level=thinking_level,
         ),
+        "imgvlm_sentence": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE,
+            thinking_level=thinking_level,
+        ),
+        "imgvlm_sentence_meta": make_generate_config(
+            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE_META,
+            thinking_level=thinking_level,
+        ),
         "imgvlm_graph": make_generate_config(
             system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_GRAPH,
             thinking_level=thinking_level,
@@ -333,7 +403,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         content_id: 콘텐츠 ID
         scene_idx: 현재 KeyScene의 scene_idx
         keypoints: 해당 content_id의 전체 keypoint 목록 (list of dict)
-        mode: 'video' | 'raw' | 'raw_with_mmvlm' | 'imgvlm_chunk2' | 'imgvlm_graph' | 'blank'
+        mode: 'video' | 'raw' | 'raw_with_mmvlm' | 'imgvlm_chunk2' | 'imgvlm_sentence' | 'imgvlm_graph' | 'blank'
         max_past_scenes: None이면 Scene 0부터 전체, 정수이면 현재 KeyScene 기준 최근 N개 Scene만 사용
 
     Returns:
@@ -385,6 +455,10 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
             return get_processed_vlm_descriptions_by_scene_idx(
                 gs_bucket_name, content_id, "vlm_img_structure_chunk2", start_idx, scene_idx
             )
+        elif mode in ("imgvlm_sentence", "imgvlm_sentence_meta"):
+            return get_processed_vlm_descriptions_by_scene_idx(
+                gs_bucket_name, content_id, "vlm_img_structure_sentence", start_idx, scene_idx
+            )
         elif mode in ("imgvlm_graph", "imgvlm_graph_meta"):
             return get_processed_vlm_descriptions_by_scene_idx(
                 gs_bucket_name, content_id, "vlm_graph", start_idx, scene_idx
@@ -398,14 +472,18 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
 
 
 def _generate_for_mode(client, model_name, gen_configs, source, mode, query, scene_idx, video_context=""):
-    """단일 모드에 대해 Response를 생성합니다."""
-    start_time = time.time()
+    """단일 모드에 대해 Response를 스트리밍 생성하고 TTFT를 측정합니다.
+
+    Returns:
+        (mode, answer, elapsed, ttft) — ttft는 Time To First Token (초)
+    """
+    start_time = time.perf_counter()
     try:
         time.sleep(1)
 
         # Video Context: 채널명/제목으로 도메인 컨텍스트 제공
         # (imgvlm 모드는 저작권 미계약 데이터이므로 메타데이터 주입 금지)
-        _COPYRIGHT_SAFE_MODES = {"imgvlm_chunk2", "imgvlm_graph"}
+        _COPYRIGHT_SAFE_MODES = {"imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"}
         ctx_prefix = []
         if video_context and mode not in _COPYRIGHT_SAFE_MODES:
             ctx_prefix = ["--- [Video Context (영상 기본 정보)] ---", video_context]
@@ -427,6 +505,8 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
                 "raw": "Raw Metadata (speech & text, 처음부터 현재 장면까지)",
                 "imgvlm_chunk2": "VLM Image Structure — 2-word Chunks (처음부터 현재 장면까지)",
                 "imgvlm_chunk2_meta": "VLM Image Structure — 2-word Chunks + Meta (처음부터 현재 장면까지)",
+                "imgvlm_sentence": "VLM Image Structure — Sentences (처음부터 현재 장면까지)",
+                "imgvlm_sentence_meta": "VLM Image Structure — Sentences + Meta (처음부터 현재 장면까지)",
                 "imgvlm_graph": "VLM Scene Knowledge Graph (처음부터 현재 장면까지)",
                 "imgvlm_graph_meta": "VLM Scene Knowledge Graph + Meta (처음부터 현재 장면까지)",
                 "raw_with_mmvlm": "Raw ASR/OCR + VLM Multimodal Description (처음부터 현재 장면까지)",
@@ -440,21 +520,34 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
             
         config = gen_configs[mode]
 
-        answer = _retry_api_call(
-            lambda: client.models.generate_content(
+        def _stream_generate():
+            """스트리밍 호출 + TTFT 측정"""
+            req_time = time.perf_counter()
+            stream = client.models.generate_content_stream(
                 model=model_name,
                 contents=contents,
                 config=config,
-            ).text,
+            )
+            chunks = []
+            ttft = None
+            for chunk in stream:
+                if ttft is None:
+                    ttft = time.perf_counter() - req_time
+                if chunk.text:
+                    chunks.append(chunk.text)
+            return "".join(chunks), ttft
+
+        answer, ttft = _retry_api_call(
+            _stream_generate,
             label=f"VH Response [{mode}] (Scene {scene_idx})",
         )
-        elapsed = time.time() - start_time
-        return mode, answer, elapsed
+        elapsed = time.perf_counter() - start_time
+        return mode, answer, elapsed, ttft
 
     except Exception as e:
         print(f"  [ERROR] [{mode}] 생성 실패 (Scene {scene_idx}): {e}")
-        elapsed = time.time() - start_time
-        return mode, f"Error: {str(e)}", elapsed
+        elapsed = time.perf_counter() - start_time
+        return mode, f"Error: {str(e)}", elapsed, None
 
 
 # ============================================================
@@ -549,8 +642,8 @@ def main():
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--modes", nargs="+",
-                        default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta", "blank"],
-                        choices=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta", "blank"],
+                        default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
+                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"],
                         help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변). blank=컨텍스트 없이 World Knowledge만 사용")
 
     args, client = init_pipeline(parser.parse_args())
@@ -651,18 +744,18 @@ def main():
                                     max_past_scenes=args.vh_response_past_scenes_size,
                                 )
                             source = source_cache[_m]
-                            _, answer, elapsed = _generate_for_mode(
+                            _, answer, elapsed, ttft = _generate_for_mode(
                                 client, args.vh_response_model, gen_configs,
                                 source, _m, _q, _s_idx, video_context=video_context
                             )
-                            return item_data, answer, elapsed, None
+                            return item_data, answer, elapsed, ttft, None
                         except Exception as e:
-                            return item_data, None, 0.0, str(e)
+                            return item_data, None, 0.0, None, str(e)
 
                     futures[executor.submit(process_item, item)] = item
 
                 for future in concurrent.futures.as_completed(futures):
-                    item, answer, elapsed, error = future.result()
+                    item, answer, elapsed, ttft, error = future.result()
                     scene_idx = item["scene_idx"]
                     mode      = item["mode"]
                     query     = item["query"]
@@ -672,7 +765,8 @@ def main():
                         answer = f"Error: {error}"
                     else:
                         length_info = len(answer) if not answer.startswith("Error") else 0
-                        print(f"  -> [{mode}] OK ({elapsed:.1f}s, {length_info}자)")
+                        ttft_str = f"TTFT={ttft:.2f}s, " if ttft is not None else ""
+                        print(f"  -> [{mode}] OK ({ttft_str}total={elapsed:.1f}s, {length_info}자)")
 
                     record = {
                         "content_id": c_id,

@@ -234,14 +234,16 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
     if not records:
         return
 
-    # query_type별 score key 매핑
+    # query_type별 score key 매핑 (VH Judge 전용)
+    _VH_SCORE_KEYS = {"temporal_immersion", "content_depth", "curiosity_and_hook"}
     _SCORE_KEYS_BY_TYPE = {
         "content_anchored": ["temporal_immersion", "content_depth"],
         "tangential": ["temporal_immersion", "curiosity_and_hook"],
     }
 
-    # query_type 존재 여부 확인
-    has_query_type = any(r.get("query_type") for r in records)
+    # query_type 분리 집계: score_keys가 VH 메트릭이고 레코드에 query_type이 있을 때만
+    is_vh_metrics = bool(set(score_keys) & _VH_SCORE_KEYS)
+    has_query_type = is_vh_metrics and any(r.get("query_type") for r in records)
 
     if has_query_type:
         # query_type별 분리 집계
@@ -674,7 +676,7 @@ def format_vlm_structure_as_text(vlm_struct):
     """vlm_img_structure 또는 vlm_mm_structure 딕셔너리를 읽기 좋은 텍스트로 변환합니다.
 
     신규 포맷 (subjects, actions, contexts) 및 구 포맷 (subject, environment, actions, context) 모두 지원합니다.
-    신규 포맷의 파편은 노이즈 구두점 정제 후 ' | ' 구분자로 연결됩니다.
+    신규 포맷의 파편은 노이즈 구두점 정제 후 ' | ' 구분자로 연결됩니다. (문자열일 경우 그대로 출력)
 
     예시 출력 (신규):
       Subjects: him The | with various | background features | A man | ...
@@ -691,20 +693,33 @@ def format_vlm_structure_as_text(vlm_struct):
     lines = []
     # 신규 포맷: subjects, actions, contexts (파편 정제 + ' | ' 구분자)
     if vlm_struct.get("subjects"):
-        cleaned = [_clean_fragment(f) for f in vlm_struct["subjects"] if _clean_fragment(f)]
-        lines.append(f"Subjects: {' | '.join(cleaned)}")
+        if isinstance(vlm_struct["subjects"], str):
+            lines.append(f"Subjects: {vlm_struct['subjects']}")
+        else:
+            cleaned = [_clean_fragment(f) for f in vlm_struct["subjects"] if _clean_fragment(f)]
+            lines.append(f"Subjects: {' | '.join(cleaned)}")
     elif vlm_struct.get("subject"):
         lines.append(f"Subject: {vlm_struct['subject']}")
+        
     if vlm_struct.get("environment"):
         lines.append(f"Environment: {vlm_struct['environment']}")
+        
     if vlm_struct.get("actions"):
-        cleaned = [_clean_fragment(f) for f in vlm_struct["actions"] if _clean_fragment(f)]
-        lines.append(f"Actions: {' | '.join(cleaned)}")
+        if isinstance(vlm_struct["actions"], str):
+            lines.append(f"Actions: {vlm_struct['actions']}")
+        else:
+            cleaned = [_clean_fragment(f) for f in vlm_struct["actions"] if _clean_fragment(f)]
+            lines.append(f"Actions: {' | '.join(cleaned)}")
+            
     if vlm_struct.get("contexts"):
-        cleaned = [_clean_fragment(f) for f in vlm_struct["contexts"] if _clean_fragment(f)]
-        lines.append(f"Contexts: {' | '.join(cleaned)}")
+        if isinstance(vlm_struct["contexts"], str):
+            lines.append(f"Contexts: {vlm_struct['contexts']}")
+        else:
+            cleaned = [_clean_fragment(f) for f in vlm_struct["contexts"] if _clean_fragment(f)]
+            lines.append(f"Contexts: {' | '.join(cleaned)}")
     elif vlm_struct.get("context"):
-        lines.append(f"Context: {', '.join(vlm_struct['context'])}")
+        ctx = vlm_struct["context"]
+        lines.append(f"Context: {', '.join(ctx) if isinstance(ctx, list) else ctx}")
     return "\n".join(lines)
 
 
@@ -732,14 +747,14 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
     """*_final.jsonl에서 지정된 VLM 구조 데이터를 추출하여
     [Scene N] 태그와 함께 텍스트 형태로 반환합니다.
 
-    vlm_img_structure_chunk2 키의 경우:
+    vlm_img_structure_chunk2 및 vlm_img_structure_sentence 키의 경우:
       - Scene 헤더에 duration 시간 정보를 포함합니다.
       - <vlm_img_structure> XML 태그로 감싸서 데이터 경계를 명확히 합니다.
 
     Args:
-        vlm_key: 'vlm_img_structure_chunk2', 'vlm_graph' 등 추출할 VLM 필드 키
+        vlm_key: 'vlm_img_structure_chunk2', 'vlm_img_structure_sentence', 'vlm_graph' 등 추출할 VLM 필드 키
     """
-    is_chunk2 = vlm_key == "vlm_img_structure_chunk2"
+    is_structure = vlm_key in ("vlm_img_structure_chunk2", "vlm_img_structure_sentence")
     path_template, _ = _GCS_MODE_MAP["final"]
     blob_path = path_template.format(cid=content_id)
     jsonl_text = download_gcs_text(gs_bucket_name, blob_path)
@@ -760,8 +775,8 @@ def get_processed_vlm_descriptions_by_scene_idx(gs_bucket_name, content_id, vlm_
                     desc = format_vlm_structure_as_text(vlm_data)
                 
                 if desc:
-                    # chunk2: Scene 헤더에 시간 정보 + XML 태그
-                    if is_chunk2:
+                    # chunk2 및 sentence: Scene 헤더에 시간 정보 + XML 태그
+                    if is_structure:
                         duration = scene.get("duration")
                         if duration:
                             start_t, end_t = parse_duration_to_times(duration)
@@ -851,10 +866,12 @@ def get_gcs_raw_with_mmvlm_by_scene_idx(gs_bucket_name, content_id, start_idx, e
 # 텍스트 모드별 fetch 함수 매핑
 _TEXT_MODE_FETCHERS = {
     "raw":              lambda gs, cid, s, e: get_gcs_raw_fields_by_scene_idx(gs, cid, s, e),
-    "imgvlm_chunk2":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
-    "imgvlm_graph":     lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
     "raw_with_mmvlm":   lambda gs, cid, s, e: get_gcs_raw_with_mmvlm_by_scene_idx(gs, cid, s, e),
+    "imgvlm_chunk2":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
     "imgvlm_chunk2_meta": lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
+    "imgvlm_sentence":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_sentence", s, e),
+    "imgvlm_sentence_meta": lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_sentence", s, e),
+    "imgvlm_graph":     lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
     "imgvlm_graph_meta":  lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
 }
 
@@ -1127,7 +1144,7 @@ def print_pipeline_done(output_path):
     print("=" * 50)
 
 
-_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_chunk2": 3, "imgvlm_chunk2_meta": 4, "imgvlm_graph": 5, "imgvlm_graph_meta": 6, "blank": 7, "kss": 8}
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_sentence": 3, "imgvlm_sentence_meta": 4, "imgvlm_chunk2": 5, "imgvlm_chunk2_meta": 6, "imgvlm_graph": 7, "imgvlm_graph_meta": 8, "blank": 9, "kss": 10}
 
 def sort_jsonl_file(filepath):
     """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
