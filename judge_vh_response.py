@@ -108,7 +108,8 @@ def main():
     parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="VH Response JSONL 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta", "blank"], choices=["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta", "blank"], help="평가할 모드 직접 지정")
+    parser.add_argument("--modes", nargs="+", default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"], 
+    choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_graph", "imgvlm_graph_meta"], help="평가할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_judge_config(thinking_level=args.vh_response_judge_thinking_level)
@@ -131,7 +132,7 @@ def main():
     file_write_lock = threading.Lock()
     target_modes_set = set(args.modes)
     _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
-    _MODE_ORDER = ["video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta", "blank"]
+    _MODE_ORDER = ["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
 
     def judge_query_item(data):
         """단일 {content_id, scene_idx, mode, query, answer} 레코드를 평가합니다. (로깅 없이 결과만 반환)"""
@@ -139,6 +140,7 @@ def main():
         s_idx = data.get("scene_idx")
         mode = data.get("mode")
         query = data["query"]
+        query_type = data.get("query_type", "")
         generated_answer = data.get("answer")
         anchor = summary_map.get((c_id, s_idx), "")
 
@@ -171,6 +173,7 @@ def main():
             "content_id": c_id,
             "scene_idx":  s_idx,
             "mode":       mode,
+            "query_type": query_type,
             "query":      query,
             "judge":      score_dict,
             "total":      total,
