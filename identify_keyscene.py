@@ -50,7 +50,7 @@ _KEYPOINT_SYSTEM_PROMPT = f"""\
 [주의사항]
 - 제공된 **Scene List** 중에서 가장 적합한 Scene을 선택하세요.
 - 각 Keypoint는 반드시 특정 Scene의 종료 시점(end_time)을 기준으로 합니다.
-- **최대 8개 선택**
+- **최대 10개 선택**
 - 각 항목에 대해 아래 필드를 차례대로 포함하세요: rationale, category("전환점", "새로운행동", "시각적임팩트", "호기심발언" 중 택 1), impact(1~5), scene_idx
 - 반드시 아래 JSON 배열 형식으로만 출력하세요 (다른 설명 추가 금지)
 
@@ -104,7 +104,7 @@ _SELECTOR_SYSTEM_PROMPT = """\
 
 [주의사항]
 - 반드시 제공된 Candidate 목록에 있는 scene_idx만 선택하세요.
-- **최대 8개** 선택
+- **최대 10개** 선택
 - Candidate의 `category`와 `impact` 정보를 버리지 말고 출력에 그대로 포함하세요.
 - 반드시 아래 JSON 배열 형식으로만 출력하세요 (다른 설명 추가 금지)
 
@@ -120,7 +120,7 @@ _SELECTOR_SYSTEM_PROMPT = """\
 # ============================================================
 
 # Scene 수가 이 값 이상이면 3등분 분할을 적용
-_SPLIT_THRESHOLD = 18
+_SPLIT_THRESHOLD = 24
 
 
 def split_scenes_into_segments(ref_scenes, num_segments=3):
@@ -191,7 +191,7 @@ def identify_keypoints_single(client, model_name, keypoint_config, video_part, r
     prompt = (
         "제공된 Reference 메타데이터와 비디오, 그리고 아래 Scene List를 분석하여, "
         "시청자가 영상을 보는 도중 자연스럽게 궁금해할 만한 핵심 전환점/사건 Scene을 "
-        "최대 8개 골라내세요.\n\n"
+        "최대 10개 골라내세요.\n\n"
         f"[Scene List]\n{scene_list_text}\n\n"
         "반드시 지정된 JSON 배열 형식으로만 출력하세요 (rationale과 scene_idx 필수)."
     )
@@ -234,7 +234,7 @@ def select_keypoints_from_candidates(client, model_name, selector_config, all_ca
         "아래는 영상의 여러 구간에서 독립적으로 추출된 Keypoint 후보(Candidate) 목록입니다.\n\n"
         f"[Candidate 목록 (총 {len(all_candidates)}개)]\n{candidates_json}\n\n"
         "위 Candidate 중에서 영상 전체의 흐름과 시간적 균형을 고려하여 "
-        "최종 Keypoint를 **최대 8개** 선별하세요.\n"
+        "최종 Keypoint를 **최대 10개** 선별하세요.\n"
         "반드시 지정된 JSON 배열 형식으로만 출력하세요 (rationale과 scene_idx 필수)."
     )
     return _retry_api_call(
@@ -343,8 +343,8 @@ def main():
             # ======================================================
             # 경로 A: Scene ≤ 8 → LLM 건너뛰고 전체 사용
             # ======================================================
-            if total_scenes <= 8:
-                print(f"  -> Scene 수가 8개 이하이므로 전체 Scene을 Keypoint로 자동 사용합니다.")
+            if total_scenes <= 10:
+                print(f"  -> Scene 수가 10개 이하이므로 전체 Scene을 Keypoint로 자동 사용합니다.")
                 keypoints = []
                 for s in ref_scenes:
                     if s.get("scene_idx") is None:
@@ -365,10 +365,10 @@ def main():
             else:
                 if total_scenes < _SPLIT_THRESHOLD:
                     num_segments = 2
-                    print(f"  -> Scene 수가 9~17개이므로 {num_segments}등분하여 각각 4개의 후보를 추출, 총 8개의 Keypoint를 결합합니다.")
+                    print(f"  -> Scene 수가 11~{_SPLIT_THRESHOLD-1}개이므로 {num_segments}등분하여 각각 5개의 후보를 추출, 총 10개의 Keypoint를 결합합니다.")
                 else:
                     num_segments = 3
-                    print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 이상이므로 {num_segments}등분하여 후보 추출 후 2차 분석으로 8개 Keypoint를 선별합니다.")
+                    print(f"  -> Scene 수가 {_SPLIT_THRESHOLD}개 이상이므로 {num_segments}등분하여 후보 추출 후 2차 분석으로 10개 Keypoint를 선별합니다.")
 
                 segments = split_scenes_into_segments(ref_scenes, num_segments)
                 for si, seg in enumerate(segments):
@@ -409,7 +409,7 @@ def main():
                         seg_start_idx, seg_end_idx
                     )
 
-                    target_pick = 4 if total_scenes < _SPLIT_THRESHOLD else None
+                    target_pick = 5 if total_scenes < _SPLIT_THRESHOLD else None
 
                     cand_text = generate_candidates_for_segment(
                         client, args.keypoint_model, seg_cand_config,
@@ -452,8 +452,8 @@ def main():
                 # 경로 B: 2분할 시 Stage 2 생략하고 단순 결합
                 # ======================================================
                 if total_scenes < _SPLIT_THRESHOLD:
-                    print(f"\n[Stage 2] Scene 수가 18 미만이므로 2차 선별을 건너뛰고 단순 결합하여 최종 Keypoint로 사용합니다.")
-                    raw_keypoints = all_candidates[:8]
+                    print(f"\n[Stage 2] Scene 수가 {_SPLIT_THRESHOLD} 미만이므로 2차 선별을 건너뛰고 단순 결합하여 최종 Keypoint로 사용합니다.")
+                    raw_keypoints = all_candidates[:10]
                     keypoints = resolve_keypoints(raw_keypoints, ref_scenes)
 
                 # ======================================================
@@ -467,7 +467,7 @@ def main():
                             client, args.keypoint_model, selector_config,
                             all_candidates
                         )
-                        raw_keypoints = parse_json_response(selection_text)[:8]
+                        raw_keypoints = parse_json_response(selection_text)[:10]
                         keypoints = resolve_keypoints(raw_keypoints, ref_scenes)
                     except Exception as e:
                         print(f"  [ERROR] 최종 선별 실패: {e}")
