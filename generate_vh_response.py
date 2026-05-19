@@ -404,7 +404,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
         scene_idx: 현재 KeyScene의 scene_idx
         keypoints: 해당 content_id의 전체 keypoint 목록 (list of dict)
         mode: 'video' | 'raw' | 'raw_with_mmvlm' | 'imgvlm_chunk2' | 'imgvlm_sentence' | 'imgvlm_graph' | 'blank'
-        max_past_scenes: None이면 Scene 0부터 전체, 정수이면 현재 KeyScene 기준 최근 N개 Scene만 사용
+        max_past_scenes: None이면 Scene 0부터 전체, 정수이면 현재 Scene 기준 직전 N개 Scene만 사용
 
     Returns:
         (source, label) — source는 API contents 리스트에 넣을 수 있는 Part 또는 str
@@ -418,13 +418,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
     if mode == "video":
         # video: start_offset ~ end_offset 클리핑
         if max_past_scenes is not None:
-            # 현재 KeyScene이 keypoints의 몇 번째인지 찾기
-            kp_idx = next((i for i, kp in enumerate(keypoints) if kp.get("scene_idx") == scene_idx), None)
-            if kp_idx is not None:
-                past_start_kp_idx = max(0, kp_idx - max_past_scenes)
-                past_start_scene_idx = keypoints[past_start_kp_idx].get("scene_idx", 0)
-            else:
-                past_start_scene_idx = 0
+            past_start_scene_idx = max(0, scene_idx - max_past_scenes)
             start_scene = next((s for s in ref_scenes if s.get("scene_idx") == past_start_scene_idx), None)
             video_start = parse_duration_to_times(start_scene["duration"])[0] if start_scene and start_scene.get("duration") else 0.0
         else:
@@ -438,12 +432,7 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
     else:
         # 텍스트 모드: start_idx 결정
         if max_past_scenes is not None:
-            kp_idx = next((i for i, kp in enumerate(keypoints) if kp.get("scene_idx") == scene_idx), None)
-            if kp_idx is not None:
-                past_start_kp_idx = max(0, kp_idx - max_past_scenes)
-                start_idx = keypoints[past_start_kp_idx].get("scene_idx", 0)
-            else:
-                start_idx = 0
+            start_idx = max(0, scene_idx - max_past_scenes)
         else:
             start_idx = 0
 
@@ -668,7 +657,7 @@ def main():
     print_pipeline_banner("VH Response 생성 파이프라인을 시작합니다.")
     print(f"[Mode] KSS Query → Target Response Modes: {target_modes}")
     if args.vh_response_past_scenes_size:
-        print(f"[Window] vh_response_past_scenes_size={args.vh_response_past_scenes_size} 설정: 현재 KeyScene 기준 최근 {args.vh_response_past_scenes_size}개 KeyPoint 내 Scene만 Source로 사용합니다.")
+        print(f"[Window] vh_response_past_scenes_size={args.vh_response_past_scenes_size} 설정: 현재 Scene 기준 직전 {args.vh_response_past_scenes_size}개 Scene만 Source로 사용합니다.")
 
     file_write_lock = threading.Lock()
     _checked_contents = set()

@@ -326,7 +326,7 @@ def aggregate_vh_response_scores(input_dir):
         print(f"Error: Failed to parse {scores_file}: {e}")
         return
 
-    metrics = ["answer_relevance", "factual_precision", "response_quality", "total_score"]
+    metrics = ["answer_relevance", "factual_precision", "informativeness", "total_score"]
 
     # query_type별 독립 집계
     agg = {}
@@ -423,7 +423,7 @@ def export_vh_response_details(input_dir, output_dir):
                 answer_map[(c, s, m, q)] = ans
 
     data = load_jsonl(scores_path)
-    score_keys = ["answer_relevance", "factual_precision", "response_quality"]
+    score_keys = ["answer_relevance", "factual_precision", "informativeness"]
 
     flat_rows = []
     for item in data:
@@ -466,7 +466,7 @@ def export_vh_response_details(input_dir, output_dir):
         "content_id": 22, "scene_idx": 10, "mode": 12, "query_type": 16, "query": 40, "response": 60,
         "rationale_answer_relevance": 45,  "answer_relevance": 16,
         "rationale_factual_precision": 45, "factual_precision": 16,
-        "rationale_response_quality": 45,  "response_quality": 16,
+        "rationale_informativeness": 45,  "informativeness": 16,
         "total_score": 12,
     }
     for idx, col in enumerate(df.columns):
@@ -487,7 +487,7 @@ def export_vh_response_scores(input_dir, output_dir):
     with open(agg_path, "r", encoding="utf-8") as f:
         agg = json.load(f)
 
-    metrics = ["answer_relevance", "factual_precision", "response_quality", "total_score"]
+    metrics = ["answer_relevance", "factual_precision", "informativeness", "total_score"]
 
     for q_type, q_type_data in agg.items():
         by_video = q_type_data.get("by_video", {})
