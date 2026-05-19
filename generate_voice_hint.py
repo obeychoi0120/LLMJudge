@@ -265,10 +265,15 @@ Summary는 다음 두 부분으로 구성됩니다:
 이 Summary는 영상의 시각·청각 정보를 종합한 가장 정확한 참조 자료입니다.
 
 [사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 3단계를 순서대로 작성하세요.
+질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
 - 1단계 (과거 정보 차단): [1. 과거 장면 요약]에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 2단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 3단계 (질문 기획): [2. 현재 장면 묘사]에서 새롭게 등장한 단서에 집중하여 queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 장면 속 단서에서 파생된 Tangential 질문으로 기획.
+- 3단계 (핵심 vs 주변 분리): [2. 현재 장면 묘사]를 분석하여 다음을 명확히 구분하세요:
+  a) **핵심 사건 (지금 이 순간 일어나고 있는 일)**: 현재 장면에서 시청자가 방금 목격한 중심 행동·발언·결정은 무엇인가? (예: "인물 A가 B에게 ~라고 말했다", "범고래가 협동 사냥을 시작했다")
+  b) **주변 요소**: 핵심 사건의 배경으로 스쳐 지나간 소품, 장소, 글자, 환경, 부차적 인물 등은 무엇인가?
+- 4단계 (질문 기획):
+  a) queries[0] (Content-Anchored): **3단계 a)에서 식별된, 지금 이 순간 벌어지고 있는 핵심 사건 자체**를 한 단계 깊이 파고드는 질문. 반드시 시청자가 "방금 눈앞에서 목격한 행동·발언·상황"의 원인·메커니즘·배경·의미를 묻는 형태여야 합니다.
+  b) queries[1] (Tangential): **3단계 b)에서 식별된 주변 요소** 중 하나를 골라, 영상의 주된 서사와 직접 관련되지 않는 확장 배경지식 질문으로 변환. 핵심 사건과는 다른 주제여야 합니다.
 """
 
 def make_voice_hint_configs(thinking_level=0):
@@ -308,9 +313,10 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
                 "--- [KeyScene Summary] ---",
                 kss_text,
                 "--- 요청 사항 ---",
-                "제공된 [KeyScene Summary]를 바탕으로 시스템 프롬프트의 [사고 과정 가이드] 단계를 철저히 준수하여 질문 **2개**를 [JSON 형식 예시]와 같이 생성하세요. "
-                "[1. 과거 장면 요약]에서 이미 밝혀진 사실을 묻는 뒷북 질문과, 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문을 피하고, "
-                "오직 [2. 현재 장면 묘사]에 새롭게 등장한 단서에 집중하세요."
+                "제공된 [KeyScene Summary]를 바탕으로 시스템 프롬프트의 [사고 과정 가이드] 4단계를 철저히 준수하여 질문 **2개**를 [JSON 형식 예시]와 같이 생성하세요. "
+                "특히 3단계에서 [2. 현재 장면 묘사]의 '핵심 사건'과 '주변 요소'를 반드시 분리하고, "
+                "queries[0]은 지금 이 순간 벌어지고 있는 핵심 사건에 직결된 질문, queries[1]은 주변 요소에서 파생된 별개 주제의 질문으로 작성하세요. "
+                "[1. 과거 장면 요약]에서 이미 밝혀진 사실을 묻는 뒷북 질문과 미래 지향적 질문은 금지입니다."
             ]
         else:
             current_part = current_parts.get(mode)
@@ -473,9 +479,8 @@ def main():
                 print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
 
                 def _run_keypoint():
-                    # 과거 N개 구역(Scene)을 위한 scene_idx 계산 (Sliding Window)
-                    past_start_kp_idx = max(0, real_idx - args.vh_gen_past_scenes_size)
-                    past_start_scene_idx = keypoints[past_start_kp_idx].get("scene_idx", 0)
+                    # 과거 N개 Scene을 위한 scene_idx 계산 (현재 Scene 직전 N개)
+                    past_start_scene_idx = max(0, scene_idx - args.vh_gen_past_scenes_size)
                     past_end_scene_idx = scene_idx - 1  # 현재 Scene 직전까지
 
                     has_past = past_end_scene_idx >= past_start_scene_idx

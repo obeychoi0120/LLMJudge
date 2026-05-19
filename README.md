@@ -134,9 +134,9 @@ flowchart TD
 
 | Scene 수 | 구분 | Stage 1 | Stage 2 |
 |----------|------|---------|---------|
-| ≤ 8개 | A | 전체를 KeyScene으로 그대로 사용 | - |
-| 9 ~ 17개 | B | 2배수 → 각 그룹에서 4개씩 축소 | 최종 통합 |
-| ≥ 18개 | C | 3배수 → Candidate 리스트 생성 | Selector가 8개 최종 선별 |
+| ≤ 12개 | A | 전체를 KeyScene으로 그대로 사용 | - |
+| 13 ~ 35개 | B | 2분할 → 각 세그먼트에서 6개씩 추출 | 단순 결합하여 최대 12개 채택 |
+| ≥ 36개 | C | 3분할 → Candidate 리스트 생성 | Selector가 최대 12개 최종 선별 |
 
 ### 2. KeyScene Summary: 2-Phase 순차 생성전략
 
@@ -181,7 +181,7 @@ KSS(KeyScene Summary)와 대조해 평가하되, 시청자의 몰입감 유지�
 |------|----------|
 | **Answer Relevance** | 시청자의 질문에 직접적으로 응답하는지 |
 | **Factual Precision** | 사실 정확성 + 원본 정보 활용의 적절한지 |
-| **Response Quality** | 가독성과 구조, 자연스러운 흐름과 완결성 |
+| **Informativeness** | 화면만으로는 알 수 없는 구체적이고 유의미한 정보를 제공하는지 |
 
 #### ~~C-Track: Description Judge~~ (Deprecated)
 
@@ -324,12 +324,12 @@ LLMJudge/
     "kss_current_scene_thinking_level": "high",
     "use_ref_for_keyscene_summary": true,
     "vh_gen_model": "gemini-3.1-flash-lite-preview",
-    "vh_gen_past_scenes_size": 5,
+    "vh_gen_past_scenes_size": 4,
     "vh_thinking_level": "medium",
     "vh_judge_model": "gemini-3.1-pro-preview",
     "vh_judge_thinking_level": "high",
     "vh_response_model": "gemini-3.1-flash-lite-preview",
-    "vh_response_past_scenes_size": 5,
+    "vh_response_past_scenes_size": 8,
     "vh_response_thinking_level": "medium",
     "vh_response_judge_model": "gemini-3.1-pro-preview",
     "vh_response_judge_thinking_level": "high"
@@ -418,7 +418,7 @@ python clean_assets.py --modes imgvlm_chunk2 imgvlm_graph
     "video": {
       "answer_relevance": { "rationale": "Directly addresses...", "score": 5 },
       "factual_precision": { "rationale": "Accurate facts...", "score": 4 },
-      "response_quality": { "rationale": "Well-structured...", "score": 5 }
+      "informativeness": { "rationale": "Provides specific...", "score": 4 }
     },
     "raw_with_mmvlm": { "...": "..." },
     "imgvlm_chunk2": { "...": "..." },

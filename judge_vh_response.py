@@ -43,20 +43,20 @@ Does the Candidate directly and substantively answer the User Question?
 
 **2. Factual Precision**
 How factually accurate is the Candidate's response, considering both the Anchor and general World Knowledge?
-- 5: All stated facts are accurate — both video-derived facts (matching the Anchor) and any supplementary World Knowledge are correct and well-integrated.
+- 5: All stated facts are accurate — both video-derived facts (matching the Anchor) and any supplementary World Knowledge are correct. Accurate external knowledge that supplements the Anchor should be rewarded, not penalized.
 - 4: Most facts are correct with minor omissions; any external knowledge used is accurate and relevant.
 - 3: Gets core facts right but contains 1–2 minor inaccuracies, or external knowledge is partially incorrect.
-- 2: Contains multiple factual errors — either misrepresents video content or provides incorrect external information.
-- 1: Severely misidentifies key entities from the video, or provides dangerously incorrect external knowledge.
-IMPORTANT: Information that CONTRADICTS the Anchor (i.e., conflicts with what the video shows) must be penalized MORE harshly than inaccurate external knowledge. Accurate external knowledge that supplements the Anchor should be rewarded, not penalized.
+- 2: Contains multiple factual errors, OR directly contradicts what the Anchor describes (e.g., misidentifying visible entities, misquoting dialogue). Anchor contradictions are weighted more heavily than inaccurate external knowledge.
+- 1: Severely misidentifies key entities from the video, or provides fundamentally incorrect external knowledge.
 
-**3. Response Quality**
-Is the response well-structured, natural, and appropriate for a viewer?
-- 5: Reads naturally, is well-organized with logical flow, and uses no system terminology.
-- 4: Mostly natural with minor awkwardness in phrasing or structure.
-- 3: Understandable but noticeably awkward, verbose, or poorly organized.
-- 2: Difficult to follow, excessively verbose, or contains system terminology leakage (e.g., 'metadata', 'current scene', 'field name').
-- 1: Incoherent, unreadable, or dominated by system/internal terminology.
+**3. Informativeness**
+Does the response provide specific, non-obvious information that genuinely extends the viewer's understanding?
+NOTE: This criterion does NOT assess accuracy (covered by Factual Precision) or topicality (covered by Answer Relevance). Focus SOLELY on the depth and novelty of information provided.
+- 5: Provides concrete, specific details the viewer could not easily infer from watching alone — e.g., behind-the-scenes context, historical background, expert-level insight, or quantitative data. Genuinely enriches the viewing experience.
+- 4: Offers mostly specific information with good depth, but one or two points remain at surface level.
+- 3: Mix of specific and generic information. Some useful details but also includes commonly known facts or vague statements that add little value.
+- 2: Mostly generic or surface-level. Restates what is already obvious from the video or provides only broad generalizations.
+- 1: Entirely generic, trivially obvious, or empty filler content with no informational value.
 
 Output ONLY the following JSON. No other text.
 {
@@ -68,7 +68,7 @@ Output ONLY the following JSON. No other text.
         "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
         "score": <integer 1-5>
     },
-    "response_quality": {
+    "informativeness": {
         "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
         "score": <integer 1-5>
     }
@@ -95,7 +95,7 @@ def evaluate_answer(client, model_name, judge_config, user_prompt, generated_ans
                 f"Evaluate the Candidate Answer to the following User Question against the Anchor "
                 f"using the 3 criteria defined in the system prompt.\n"
                 f"[User Question]: {user_prompt}\n\n"
-                f"Output ONLY the JSON with answer_relevance, factual_precision, and response_quality scores.",
+                f"Output ONLY the JSON with answer_relevance, factual_precision, and informativeness scores.",
             ],
             config=judge_config
         ).text,
@@ -131,7 +131,7 @@ def main():
 
     file_write_lock = threading.Lock()
     target_modes_set = set(args.modes)
-    _SCORE_KEYS = ["answer_relevance", "factual_precision", "response_quality"]
+    _SCORE_KEYS = ["answer_relevance", "factual_precision", "informativeness"]
     _MODE_ORDER = ["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
 
     def judge_query_item(data):
