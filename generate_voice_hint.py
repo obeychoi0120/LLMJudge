@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import concurrent.futures
 from utils import (
     get_common_argparser,
@@ -407,15 +408,25 @@ def main():
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
-    # 기처리분 로드: 모드별로 개별 추적
-    # 각 줄이 (content_id, scene_idx, mode) 단위로 저장되므로 최상위 'mode' 필드로 판별
+    # 기존 파일 정리: 빈 질문이나 중복 제거 후 다시 쓰기
     done_modes_by_scene = set()
-    for rec in load_jsonl(args.output_file):
-        c_id = rec.get("content_id")
-        s_idx = rec.get("scene_idx")
-        mode = rec.get("mode")
-        if c_id and s_idx is not None and mode:
-            done_modes_by_scene.add((c_id, s_idx, mode))
+    if os.path.exists(args.output_file):
+        existing_records = load_jsonl(args.output_file)
+        cleaned_records = {}
+        for r in existing_records:
+            c_id = r.get("content_id")
+            s_idx = r.get("scene_idx")
+            mode = r.get("mode")
+            queries = r.get("queries", [])
+            if c_id and s_idx is not None and mode and queries:
+                # 중복이 있을 경우 가장 마지막(최신) 레코드로 덮어씀
+                cleaned_records[(c_id, s_idx, mode)] = r
+        
+        with open(args.output_file, "w", encoding="utf-8") as f:
+            for r in cleaned_records.values():
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        
+        done_modes_by_scene = set(cleaned_records.keys())
 
     # 생성할 목표 모드 설정
     target_modes = args.modes
@@ -430,6 +441,7 @@ def main():
             print(f"[Warning] KSS Summary 파일을 찾을 수 없습니다: {args.kss_file}")
 
     print_pipeline_banner("Voice Hint 생성 파이프라인을 시작합니다.")
+    print(f"Modes={target_modes}")
 
     try:
         for content_id, keypoints in keypoints_by_content.items():
@@ -476,7 +488,10 @@ def main():
                 scene_idx = kp.get("scene_idx", real_idx)
                 start_time = float(kp.get("start_time", 0.0))
                 end_time = float(kp.get("end_time", 0.0))
-                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Modes={missing_modes}")
+                current_dur = end_time - start_time
+                past_n = min(args.vh_gen_past_scenes_size, scene_idx)
+                past_approx_sec = past_n * (start_time / scene_idx) if scene_idx > 0 else 0
+                print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Current: {current_dur:.1f}s, Past: {past_approx_sec:.0f}s ({past_n} scenes)")
 
                 def _run_keypoint():
                     # 과거 N개 Scene을 위한 scene_idx 계산 (현재 Scene 직전 N개)

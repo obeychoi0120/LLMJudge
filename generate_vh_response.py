@@ -702,7 +702,10 @@ def main():
         video_context = format_video_context(video_metadata)
         start_time = float(rec.get("start_time", 0.0))
         end_time = float(rec.get("end_time", 0.0))
-        print(f"\n[VH Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | KSS Queries → {len(pending_items)}개 (mode×query) 조합 처리")
+        current_dur = end_time - start_time
+        past_n = min(args.vh_response_past_scenes_size, s_idx) if args.vh_response_past_scenes_size else s_idx
+        past_approx_sec = past_n * (start_time / s_idx) if s_idx > 0 else 0
+        print(f"\n[VH Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Current: {current_dur:.1f}s, Past: {past_approx_sec:.0f}s ({past_n} scenes) | KSS Queries → {len(pending_items)}개 (mode×query) 조합 처리")
 
         # Source 캐시: 같은 Scene의 같은 mode는 Source를 1번만 빌드
         source_cache = {}
@@ -715,7 +718,7 @@ def main():
             query_groups.setdefault(item["query"], []).append(item)
 
         for q_text, items in query_groups.items():
-            print(f"\n[{c_id} | Scene {s_idx}] \nQuery: {q_text}")
+            print(f"\nQuery: {q_text}")
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(target_modes)) as executor:
                 futures = {}

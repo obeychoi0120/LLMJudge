@@ -241,9 +241,9 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
         "tangential": ["temporal_immersion", "curiosity_and_hook"],
     }
 
-    # query_type 분리 집계: score_keys가 VH 메트릭이고 레코드에 query_type이 있을 때만
+    # query_type 분리 집계: 레코드에 query_type이 있을 때
     is_vh_metrics = bool(set(score_keys) & _VH_SCORE_KEYS)
-    has_query_type = is_vh_metrics and any(r.get("query_type") for r in records)
+    has_query_type = any(r.get("query_type") for r in records)
 
     if has_query_type:
         # query_type별 분리 집계
@@ -253,7 +253,7 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
             q_type = rec.get("query_type", "tangential")
             mode = rec.get("mode", "")
             judge = rec.get("judge", {})
-            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys)
+            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys) if is_vh_metrics else score_keys
             scores = {}
             for k in keys:
                 val = judge.get(k, {})
@@ -278,7 +278,7 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
             if not mode_scores:
                 continue
 
-            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys)
+            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys) if is_vh_metrics else score_keys
             label = _TYPE_LABELS.get(q_type, q_type)
             print(f"\n  {label}")
 

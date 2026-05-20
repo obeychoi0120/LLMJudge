@@ -170,16 +170,26 @@ def main():
     # 출력 디렉토리 확인
     ensure_output_dir(args.keyscene_summary_file)
 
-    summary_pairs = load_processed_pairs(args.keyscene_summary_file, key_fields=("content_id", "scene_idx"))
-
-    # 생성된 Summary 텍스트를 캐싱하여 다음 Scene의 과거 요약 정보로 활용
+    # 기존 파일 정리: 빈 요약이나 중복 제거 후 다시 쓰기
+    summary_pairs = set()
     summary_texts_by_scene = {}
     if os.path.exists(args.keyscene_summary_file):
-        for data in load_jsonl(args.keyscene_summary_file):
-            c_id = data.get("content_id")
-            s_idx = data.get("scene_idx")
-            if c_id and s_idx is not None:
-                summary_texts_by_scene[(c_id, s_idx)] = data
+        existing_records = load_jsonl(args.keyscene_summary_file)
+        cleaned_records = {}
+        for r in existing_records:
+            c_id = r.get("content_id")
+            s_idx = r.get("scene_idx")
+            summary = r.get("summary", "")
+            if c_id and s_idx is not None and summary.strip():
+                # 중복이 있을 경우 가장 마지막(최신) 레코드로 덮어씀
+                cleaned_records[(c_id, s_idx)] = r
+        
+        with open(args.keyscene_summary_file, "w", encoding="utf-8") as f:
+            for r in cleaned_records.values():
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        
+        summary_pairs = set(cleaned_records.keys())
+        summary_texts_by_scene = cleaned_records
 
     print_pipeline_banner("KeyScene Summary 생성 파이프라인을 시작합니다.")
 
