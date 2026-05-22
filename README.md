@@ -8,32 +8,34 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ### 2-Track 평가체계
 
-- **A-Track (Voice Hint)**: 8개 모드(kss, video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_chunk2_meta, imgvlm_sentence, imgvlm_sentence_meta, imgvlm_graph, imgvlm_graph_meta)의 Source를 기반으로 시청자의 호기심을 유발하는 질문을, KSS Anchor 기준으로 품질 평가
-- **B-Track (VH Response)**: A-Track의 **kss 모드로 생성된 공통 Query**를 기준, 각 모드별 Source로 답변 생성 → KSS + World Knowledge 기반 품질 비교. 동일한 질문으로 데이터소스 간 **통제 실험**을 수행. `blank` 모드는 컨텍스트 없이 World Knowledge만으로 답변하는 베이스라인
+- **A-Track (Voice Hint)**: 시청자 유도용 질문을 생성하고 평가하는 트랙으로, 소스 데이터의 수준에 따라 두 개의 트랙으로 명확히 구분 및 정렬됩니다.
+  - **High-Context 트랙** (`kss`, `video`, `raw`, `raw_with_mmvlm` 모드): 현재 및 과거의 풍부한 맥락을 바탕으로 화면 속 주요 인물·사건·주제에 직접 연결된 깊이 있는 **콘텐츠 특화 질문 (Content-Anchored)** 2개를 생성하고 평가합니다.
+  - **Low-Context 트랙** (`imgvlm_sentence`, `imgvlm_chunk2`, `imgvlm_graph` 모드): 비식별화 처리된 시각 메타데이터만을 바탕으로 화면 속 지형·사물·소품 등에서 파생된 외부 상식과 호기심을 자극하는 **곁다리 지식 질문 (Tangential Knowledge)** 2개를 생성하고 평가합니다. 과거 장면 정보(비식별 VLM 형태)도 함께 인지하여 시청 흐름을 이해하되, 이전 장면에 이미 밝혀진 사실을 중복 질문하는 것을 방지하는 **"과거 뒷북 금지"** 제약이 적용됩니다.
+- **B-Track (VH Response)**: A-Track의 `kss` 모드로 생성된 고품질의 질문(Query)들을 **공통 Query**로 일치시켜 던지고, 각 데이터소스별로 답변을 생성하여 비교하는 **통제 변인 실험** 트랙입니다. 답변을 KSS 및 World Knowledge 기준으로 채점하며, `blank` 모드는 어떠한 메타데이터(예: 채널/작품명 등의 Video Context)나 비디오/텍스트 정보도 제공받지 않고 오로지 사전에 학습된 세계 지식(World Knowledge)만으로 답변하는 제로-메타데이터(Zero Metadata) 베이스라인 역할을 합니다.
 
 #### A-Track 모드 (Voice Hint 생성)
 
-| Mode | 데이터 소스 | 설명 |
-|------|------------|------|
-| `kss` | KeyScene Summary (Ground Truth) | Pro 모델이 비디오+메타데이터를 종합 분석하여 생성한 고품질 요약. 다른 모드의 **평가 기준(Anchor)** 역할 |
-| `video` | 원본 비디오 클립 | 540p 비디오를 직접 Gemini에 전달하여 시각·청각 정보를 종합 분석 |
-| `raw` | ASR + OCR (원본 텍스트) | Scene별 음성 인식(speech) + 화면 텍스트(on_screen_text)만 사용. **저작권 계약 필요** |
-| `raw_with_mmvlm` | ASR + OCR + VLM 멀티모달 서술 | `raw`에 소형 VLM의 시각·음성 종합 서술(vlm_mm_description)을 보조 참고로 추가. **저작권 계약 필요** |
-| `imgvlm_chunk2` | VLM 시각 구조화 데이터 (2어절 단편) | 시각 프레임에서 추출한 Subjects/Contexts를 2어절 단위로 단편화·셔플·마스킹한 저작권 안전 형태 |
-| `imgvlm_sentence` | VLM 시각 구조화 데이터 (문장형) | 시각 프레임에서 추출한 Subjects/Contexts를 문장 형태로 구성한 데이터 |
-| `imgvlm_graph` | VLM 장면 지식 그래프 | 시각 프레임에서 추출한 (subject)-[relation]->(object) 트리플로 장면 관계를 압축 표현 |
+| 트랙 구분 | Mode | 데이터 소스 | 설명 |
+| :--- | :--- | :--- | :--- |
+| **High-Context**<br>(콘텐츠 특화 질문) | `kss` | KeyScene Summary (Ground Truth) | 비디오+메타데이터를 종합 분석하여 생성한 고품질 요약. 다른 모드의 **평가 기준(Anchor)** 역할 |
+| | `video` | 원본 비디오 클립 | 540p 비디오를 직접 Gemini에 전달하여 시각·청각 정보를 종합 분석 |
+| | `raw` | ASR + OCR (원본 텍스트) | Scene별 음성 인식(speech) + 화면 텍스트(on_screen_text)만 사용. **저작권 계약 필요** |
+| | `raw_with_mmvlm` | ASR + OCR + VLM 멀티모달 서술 | `raw`에 소형 VLM의 시각·음성 종합 서술(vlm_mm_description)을 보조 참고로 추가. **저작권 계약 필요** |
+| **Low-Context**<br>(곁다리 지식 질문) | `imgvlm_chunk2` | VLM 시각 구조화 데이터 (2어절 단편) | 시각 프레임에서 추출한 Subjects/Contexts를 2어절 단위로 단편화·셔플·마스킹한 저작권 안전 형태. 과거 맥락 정보(과거 chunk2)도 제공되어 시청 흐름 유추에 활용 |
+| | `imgvlm_sentence` | VLM 시각 구조화 데이터 (문장형) | 시각 프레임에서 추출한 Subjects/Contexts를 비식별화된 문장 형태로 구성한 데이터. 과거 맥락 정보(과거 sentence)도 함께 제공됨 |
+| | `imgvlm_graph` | VLM 장면 지식 그래프 | 시각 프레임에서 추출한 (subject)-[relation]->(object) 트리플로 장면 관계를 압축 표현. 과거 맥락 정보(과거 graph 트리플)도 제공됨 |
 
 #### B-Track 모드 (VH Response 생성)
 
-| Mode | 데이터 소스 | 설명 |
-|------|------------|------|
-| `video` | 원본 비디오 클립 | A-Track과 동일. 비디오를 직접 시청·분석하여 답변 |
-| `raw` | ASR + OCR | A-Track과 동일. 음성·텍스트 교차 검증 후 답변. **저작권 계약 필요** |
-| `raw_with_mmvlm` | ASR + OCR + VLM 서술 | A-Track과 동일. ASR/OCR 우선, VLM 서술 보조. **저작권 계약 필요** |
-| `imgvlm_chunk2` | VLM 구조화 데이터 (2어절 단편) | A-Track과 동일. 단편화된 파편을 재조합하여 답변 |
-| `imgvlm_sentence` | VLM 구조화 데이터 (문장형) | A-Track과 동일. 문장형 데이터를 활용하여 답변 |
-| `imgvlm_graph` | VLM 지식 그래프 | A-Track과 동일. 트리플 관계를 논리적으로 연결하여 답변 |
-| `blank` | 없음 (World Knowledge only) | **컨텍스트를 일절 제공하지 않고** 질문만 전달. 모델의 사전 지식만으로 답변하는 베이스라인 |
+| 트랙 구분 | Mode | 데이터 소스 | 설명 |
+| :--- | :--- | :--- | :--- |
+| **High-Context** | `video` | 원본 비디오 클립 | 비디오를 직접 시청·분석하여 답변 |
+| | `raw` | ASR + OCR | 음성·텍스트 교차 검증 후 답변. **저작권 계약 필요** |
+| | `raw_with_mmvlm` | ASR + OCR + VLM 서술 | ASR/OCR 우선, VLM 서술 보조. **저작권 계약 필요** |
+| **Low-Context** | `imgvlm_chunk2` | VLM 구조화 데이터 (2어절 단편) | 단편화된 파편을 재조합하여 답변 (시각/상황 정보를 첫 1문장 내에서 아이스브레이킹 용도로 제한적 사용) |
+| | `imgvlm_sentence` | VLM 구조화 데이터 (문장형) | 문장형 데이터를 활용하여 답변 (제한적 시각 정보 참고) |
+| | `imgvlm_graph` | VLM 지식 그래프 | 트리플 관계를 논리적으로 연결하여 답변 (제한적 시각 정보 참고) |
+| **Baseline** | `blank` | 없음 (World Knowledge Only) | **동영상 컨텍스트 및 어떠한 메타데이터(예: 작품명, 채널명)도 일절 전달하지 않는 제로-메타데이터 상태**로 질문만 제공. 모델의 순수 사전 지식(세계 지식)만으로 답변을 수행하는 베이스라인 |
 
 ---
 
@@ -116,14 +118,14 @@ flowchart TD
 
 ### 파이프라인 요약
 
-| Step | 스크립트 | Output | 모델 |
+| Step | 스크립트 | Output | 모델 (기본값) |
 |------|----------|--------|------|
-| A-1 | `identify_keyscene.py` | `keypoint_scenes.jsonl` | Flash Lite |
-| A-2 | `generate_keyscene_summary.py` | `keyscene_summary.jsonl` | Pro |
-| A-3 | `generate_voice_hint.py` | `voice_hint.jsonl` | Flash Lite |
-| A-4 | `judge_voice_hint.py` | `voice_hint_scores.jsonl` | Pro |
-| B-1 | `generate_vh_response.py` | `vh_responses.jsonl` | Flash Lite |
-| B-2 | `judge_vh_response.py` | `vh_response_scores.jsonl` | Pro |
+| A-1 | `identify_keyscene.py` | `keypoint_scenes.jsonl` | `gemini-3.1-flash-lite` |
+| A-2 | `generate_keyscene_summary.py` | `keyscene_summary.jsonl` | `gemini-3.5-flash` |
+| A-3 | `generate_voice_hint.py` | `voice_hint.jsonl` | `gemini-3.5-flash` |
+| A-4 | `judge_voice_hint.py` | `voice_hint_scores.jsonl` | `gemini-3.1-pro-preview` |
+| B-1 | `generate_vh_response.py` | `vh_responses.jsonl` | `gemini-3.1-flash-lite` |
+| B-2 | `judge_vh_response.py` | `vh_response_scores.jsonl` | `gemini-3.1-pro-preview` |
 | - | `export_to_excel.py` | Excel 리포트 | - |
 
 ---
@@ -150,16 +152,21 @@ flowchart TD
 
 생성된 KSS는 이후 모든 Judge 스크립트에서 **Ground Truth Anchor**로 참조됩니다.
 
-### 3. Voice Hint 생성 및 평가 철학: Tangential World Knowledge (곁다리 지식)
+### 3. Voice Hint 생성 및 평가 철학: 이원화 트랙 전략 (Content-Anchored & Tangential Knowledge)
 
-Voice Hint 파이프라인(A-Track)은 시청자가 스마트 TV 리모컨을 눌러 능동적으로 상호작용하도록 유도하기 위해 **'곁다리 지식(Tangential World Knowledge)'**을 핵심 전략으로 사용합니다. 
+Voice Hint 파이프라인(A-Track)은 시청자가 스마트 TV 리모컨을 눌러 능동적으로 상호작용하도록 유도하기 위해 소스 데이터의 수준(풍부함)에 따라 질문 전략을 이원화하여 사용합니다.
 
-단순히 영상의 '줄거리(Narrative)'나 '팩트'를 묻는 것을 넘어, 장르별 특성에 맞춰 화면에 등장한 시각/청각적 요소를 트리거로 삼아 다음과 같은 확장 지식을 질문합니다. 평가지표(Judge) 역시 KSS 원문에 해당 내용이 없더라도 이러한 확장된 지식 기반 질문을 훌륭한 '호기심(Curiosity & Hook) 자극 요소'로 간주하여 고평가(5점)하도록 설계되었습니다:
+#### 1) High-Context 트랙: 콘텐츠 특화 질문 (Content-Anchored)
+풍부한 정보(동영상, GT 요약, 자막)에 접근 가능한 모드(`kss`, `video`, `raw`, `raw_with_mmvlm`)는 현재 장면의 **핵심 사건·인물·주제에 직접 연결된** 질문을 생성합니다. 
+단순한 1차원적 상황 묘사를 넘어 갈등 맥락, 인물의 심리적 배경, 전술 포인트, 이해관계 구도 등을 한 단계 깊이 파고들어 콘텐츠에 대한 몰입을 유도합니다.
 
-*   **드라마/예능:** 허구적 플롯 대신 화면 속 소품의 기원이나 촬영 장소의 문화적/역사적 배경
-*   **스포츠:** 결과 예측 대신 방금 활약한 선수의 폼, 이적 비하인드, 뉴비(초보자)를 위한 팀 역사 및 라이벌 구도
-*   **게임:** 단순 상황 묘사 대신 플레이어의 전략, 캐릭터 특성, 아이템 메타 변화, 최신 패치 소식
-*   **뉴스/시사/다큐:** 단순 멘트 요약 대신 보도 이면의 역사적 맥락, 경제적 파급 효과, 정책의 비하인드, 과거 유사 사례
+#### 2) Low-Context 트랙: 곁다리 지식 질문 (Tangential Knowledge)
+보호 조치(단편화, 그래프)로 인해 핵심 맥락 유추에 제약이 있는 모드(`imgvlm_sentence`, `imgvlm_chunk2`, `imgvlm_graph`)는 현재 장면 속 시각적 단서(소품, 배경, 의상 등)로부터 파생되는 **외부 확장 상식 및 곁다리 지식**을 질문합니다. 
+과거 맥락 데이터를 비식별화 형태로 제공받아 스토리의 진행 흐름을 이해하되, 이전 장면에 이미 밝혀진 사실을 다시 질문하여 흥미를 반감시키는 행위를 방지하기 위해 **"과거 뒷북 금지"** 제약이 추가로 적용되었습니다. 평가지표(Judge) 역시 KSS 원문에 해당 내용이 없더라도 이러한 확장된 지식 기반 질문을 훌륭한 '호기심(Curiosity & Hook) 자극 요소'로 간주하여 고평가(5점)하도록 설계되었습니다.
+- **드라마/예능:** 촬영 장소의 역사적 배경이나 작중 소품의 인문학적 기원
+- **스포츠:** 유니폼/팀 엠블럼의 유래, 역사적 라이벌 구도, 경기장 건축 디자인
+- **게임:** 아이템/세계관의 신화적 모티프, 최신 밸런스 패치 이력 및 비하인드
+- **뉴스/시사/다큐:** 뉴스 속 등장 사물·생물의 생태학적 특징, 배경 지도의 지정학적 정보
 
 ### 4. 평가 기준(Judge): 채점 프레임워크
 
@@ -191,37 +198,38 @@ KSS(KeyScene Summary)와 대조해 평가하되, 시청자의 몰입감 유지�
 
 ## 디렉토리 구조
 
-```text
-LLMJudge/
-├── main.py                          # E2E 파이프라인 오케스트레이터
-├── identify_keyscene.py             # KeyScene Scene 식별 (A-1)
-├── generate_keyscene_summary.py     # KeyScene Summary 생성 (A-2)
-├── generate_voice_hint.py           # Voice Hint 생성 (A-3)
-├── judge_voice_hint.py              # Voice Hint 품질 Judge (A-4)
-├── generate_vh_response.py          # VH Response 다모드 답변 생성 (B-1)
-├── judge_vh_response.py             # VH Response Judge (B-2)
-├── utils.py                         # Gemini SDK, GCS 연동, 공통 유틸
-├── export_to_excel.py               # Excel 리포트 생성
-├── jsonl_to_json.py                 # JSONL → Pretty JSON 변환 유틸
-├── clean_assets.py                  # JSONL 내 특정 모드 제거 유틸
-├── config.json                      # 실행 설정 (GCP, 모델명 등)
-├── content_list.json                # 평가 대상 Content ID 목록
-├── sample_config.json               # config.json 템플릿
-├── sample_content_list.json         # content_list.json 템플릿
-├── sample_data/                     # 예시 JSONL (파이프라인 참고용)
-├── archived/                        # Deprecated 스크립트
-│   ├── generate_keyscene_description.py  # (Deprecated) KeyScene Description 생성
-│   ├── judge_descriptions.py             # (Deprecated) Description Judge
-│   ├── generate_user_query.py            # (Deprecated) User Query 생성
-│   └── generate_uq_response.py           # (Deprecated) UQ Response 생성
-└── assets/                          # 파이프라인 중간 산출 및 최종 결과 저장소
-    ├── keypoint_scenes.jsonl
-    ├── keyscene_summary.jsonl
-    ├── voice_hint.jsonl
-    ├── voice_hint_scores.jsonl
-    ├── vh_responses.jsonl
-    └── vh_response_scores.jsonl
-```
+- `LLMJudge/`
+  - `main.py`: E2E 파이프라인 오케스트레이터
+  - `identify_keyscene.py`: KeyScene Scene 식별 (A-1)
+  - `generate_keyscene_summary.py`: KeyScene Summary 생성 (A-2)
+  - `generate_voice_hint.py`: Voice Hint 생성 (A-3)
+  - `judge_voice_hint.py`: Voice Hint 품질 Judge (A-4)
+  - `generate_vh_response.py`: VH Response 다모드 답변 생성 (B-1)
+  - `judge_vh_response.py`: VH Response Judge (B-2)
+  - `utils.py`: Gemini SDK, GCS 연동, 공통 유틸리티
+  - `export_to_excel.py`: Excel 리포트 생성
+  - `jsonl_to_json.py`: JSONL → Pretty JSON 변환 유틸리티
+  - `clean_assets.py`: JSONL 내 특정 모드 제거 유틸리티
+  - `config.json`: 실행 설정 (GCP 프로젝트 ID, 모델명 등)
+  - `content_list.json`: 평가 대상 Content ID 목록
+  - `sample_config.json`: config.json 템플릿
+  - `sample_content_list.json`: content_list.json 템플릿
+  - `sample_data/`: 예시 JSONL (파이프라인 참고용)
+  - `archived/`: Deprecated 스크립트 보관소
+  - `assets/`: 파이프라인 중간 산출 및 수동 원천 JSONL 데이터
+    - `keypoint_scenes.jsonl`
+    - `keyscene_summary.jsonl`
+    - `voice_hint.jsonl`
+    - `voice_hint_scores.jsonl`
+    - `vh_responses.jsonl`
+    - `vh_response_scores.jsonl`
+  - `results/`: 최종 Excel 시각화 리포트 (export_to_excel.py 출력)
+    - `vh_scores_high_context.xlsx`: A-Track High-Context 점수 집계 (Soft Green 테마)
+    - `vh_scores_low_context.xlsx`: A-Track Low-Context 점수 집계 (Soft Yellow 테마)
+    - `vh_score_details.xlsx`: A-Track Rationale 포함 세부 점수
+    - `vh_response_scores.xlsx`: B-Track High/Low 통합 점수 (3행 Pivot 구조 헤더 적용)
+    - `vh_response_score_details.xlsx`: B-Track Rationale 포함 세부 점수
+    - `voice_hints.xlsx`: 생성된 Voice Hint 질문 모음 리포트
 
 ## 사전 준비 및 환경 설정
 
@@ -326,12 +334,12 @@ LLMJudge/
     "vh_gen_model": "gemini-3.5-flash",
     "vh_gen_past_scenes_size": 3,
     "vh_thinking_level": "minimal",
-    "vh_judge_model": "gemini-3.5-flash",
+    "vh_judge_model": "gemini-3.1-pro-preview",
     "vh_judge_thinking_level": "high",
     "vh_response_model": "gemini-3.1-flash-lite",
     "vh_response_past_scenes_size": 5,
     "vh_response_thinking_level": "medium",
-    "vh_response_judge_model": "gemini-3.5-flash",
+    "vh_response_judge_model": "gemini-3.1-pro-preview",
     "vh_response_judge_thinking_level": "high"
 }
 ```
@@ -393,6 +401,14 @@ python judge_vh_response.py
 
 > **참고**: `generate_voice_hint.py`가 선행으로 최소 1개의 KSS 레코드를 생성한 뒤 나머지를 시작하세요. 입력 파일이 아예 존재하지 않으면 오류를 출력하고 종료됩니다.
 
+### 진행 상황 추적 (ProgressTracker)
+
+모든 대량 생성 및 평가 작업은 10회(Iteration)마다 또는 작업이 최종 완료되는 시점에 콘솔을 통해 실시간 진행 상태와 예측 완료 시간(ETA)을 출력합니다.
+
+**콘솔 출력 형식 예시:**
+```text
+[Progress] 20/54 responses evaluated (37.0%) | Elapsed: 45s | Est. Remaining: 1m 16s
+```
 ### 통합 실행 (순차, A+B Track)
 ```bash
 python main.py --input_file content_list.json

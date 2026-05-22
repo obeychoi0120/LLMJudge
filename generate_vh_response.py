@@ -20,7 +20,7 @@ from utils import (
     load_keypoints_by_content, check_input_file,
     load_scenes,
     load_video_metadata, format_video_context,
-    print_pipeline_banner, print_pipeline_done,
+    print_pipeline_banner, print_pipeline_done, ProgressTracker,
 )
 
 # ============================================================
@@ -236,99 +236,12 @@ _VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
    
-_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2_META = _VH_RESPONSE_PROMPT_BASE + """
 
-[시청 기억의 구조]
-제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 시각 정보**만으로 이루어져 있습니다.
-각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
-  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체) — 2어절 단위 파편
-  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보 — 2어절 단위 파편
-  - 파편은 저작권 보호를 위해 원문을 2어절 단위로 분할하고 순서를 뒤섞은 것입니다.
-  - 파편 구분자는 ' | '이며, [MASKED]는 저작권 보호 마스킹이므로 무시하세요.
-
-[분석 및 대화 지시사항]
-1. **시각 정보의 역할 제한 (Ice-breaking 전용)**
-   - 제공된 구조화 시각 데이터는 절대 정답의 논리적 출처나 본문의 논거로 억지로 끼워 넣지 마세요.
-   - 오직 답변의 첫 문장에서 시청자가 방금 본 상황에 가벽게 공감하는 인사말(Ice-breaking 브릿지)을 만드는 용도로만 사용하세요.
-
-2. **방대한 외부 지식의 전면적 활용 (답변 본문)**
-   - 답변의 본문은 전적으로 당신의 방대한 외부 지식(World Knowledge)을 최우선으로 활용하여 작성하세요.
-
-3. **현재 장면 우선 (답변을 이끌어내는 시점)**
-   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
-
-4. **완벽한 TV 파트너 톤앤매너**
-   - "메타데이터", "구조화 데이터", "Subjects 필드", "파편", "vlm_img_structure" 등 시스템 용어는 절대 금지입니다.
-   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
-
-5. **대화 이어가기**
-   - 정보만 전달하고 끝내지 마세요.
-   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑팡을 유도하세요."""
-
-_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE_META = _VH_RESPONSE_PROMPT_BASE + """
-
-[시청 기억의 구조]
-제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **구조화된 시각 정보**만으로 이루어져 있습니다.
-각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
-  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체)
-  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보
-
-이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
-
-[분석 및 대화 지시사항]
-1. **시각 정보의 역할 제한 (Ice-breaking 전용)**
-   - 제공된 구조화 시각 데이터는 절대 정답의 논리적 출처나 본문의 논거로 억지로 끼워 넣지 마세요.
-   - 오직 답변의 첫 문장에서 시청자가 방금 본 상황에 가볍게 공감하는 인사말(Ice-breaking 브릿지)을 만드는 용도로만 사용하세요.
-
-2. **방대한 외부 지식의 전면적 활용 (답변 본문)**
-   - 답변의 본문은 전적으로 당신의 방대한 외부 지식(World Knowledge)을 최우선으로 활용하여 작성하세요.
-
-3. **현재 장면 우선 (답변을 이끌어내는 시점)**
-   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
-
-4. **완벽한 TV 파트너 톤앤매너**
-   - "메타데이터", "구조화 데이터", "Subjects 필드", "vlm_img_structure" 등 시스템 용어는 절대 금지입니다.
-   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
-
-5. **대화 이어가기**
-   - 정보만 전달하고 끝내지 마세요.
-   - 답변 마지막에 가볍게 공감하거나 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
-
-_VH_RESPONSE_PROMPT_IMGVLM_GRAPH_META = _VH_RESPONSE_PROMPT_BASE + """
-
-[시청 기억의 구조]
-제공되는 시청 기억은 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 **장면 지식 그래프(Scene Knowledge Graph)**만으로 이루어져 있습니다.
-각 Scene별로 다음의 관계형 정보가 제공됩니다:
-  - vlm_graph: 장면의 주요 요소와 그 관계를 (subject) -[relation]-> (object) 형태의 트리플로 표현
-  예: (man) -[WEARING]-> (cap), (screen) -[ABOUT]-> (foreign policy)
-
-이 그래프는 장면에 등장하는 인물, 사물, 행동, 속성, 위치 등의 관계를 압축적으로 나타냅니다.
-
-[분석 및 대화 지시사항]
-1. **시각 정보의 역할 제한 (Ice-breaking 전용)**
-   - 제공된 지식 그래프(vlm_graph) 데이터는 절대 정답의 논리적 출처나 본문의 논거로 억지로 끼워 넣지 마세요.
-   - 오직 답변의 첫 문장에서 시청자가 방금 본 상황에 가벽게 공감하는 인사말(Ice-breaking 브릿지)을 만드는 용도로만 사용하세요.
-
-2. **방대한 외부 지식의 전면적 활용 (답변 본문)**
-   - 답변의 본문은 전적으로 당신의 방대한 외부 지식(World Knowledge)을 최우선으로 활용하여 작성하세요.
-
-3. **현재 장면 우선 (답변을 이끌어내는 시점)**
-   - 누적 기억 중 **마지막 Scene(= 현재 장면)**에 가장 높은 우선순위를 두세요.
-
-4. **완벽한 TV 파트너 톤앤매너**
-   - "그래프", "트리플", "관계 데이터", "메타데이터" 등 시스템 용어는 절대 금지입니다.
-   - "지금 화면을 보면~", "방금 나온 장면에서~"처럼 실제 시청자와 대화하듯 친숙한 구어체를 사용하세요.
-
-5. **대화 이어가기**
-   - 정보만 전달하고 끝내지 마세요.
-   - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑팡을 유도하세요."""
 
 _VH_RESPONSE_PROMPT_BLANK = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
 
-당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 참고하여 콘텐츠의 장르와 도메인을 파악하세요.
-
-당신에게는 현재 영상에 대한 시청 정보는 제공되지 않습니다.
-[Video Context]와 당신이 가진 사전 지식(World Knowledge)을 활용하여 시청자의 질문에 답변해 주세요.
+당신에게는 현재 영상에 대한 시청 정보나 영상 메타데이터(채널명, 제목 등)는 제공되지 않습니다.
+오직 질문 내용과 당신이 가진 사전 지식(World Knowledge)만을 활용하여 시청자의 질문에 답변해 주세요.
 
 [대화 지시사항]
 1. **적극적 지식 활용과 만족스러운 답변 (최우선 원칙)**
@@ -356,24 +269,12 @@ def make_vh_gen_config(thinking_level=None):
             system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2,
             thinking_level=thinking_level,
         ),
-        "imgvlm_chunk2_meta": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2_META,
-            thinking_level=thinking_level,
-        ),
         "imgvlm_sentence": make_generate_config(
             system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE,
             thinking_level=thinking_level,
         ),
-        "imgvlm_sentence_meta": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE_META,
-            thinking_level=thinking_level,
-        ),
         "imgvlm_graph": make_generate_config(
             system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_GRAPH,
-            thinking_level=thinking_level,
-        ),
-        "imgvlm_graph_meta": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_GRAPH_META,
             thinking_level=thinking_level,
         ),
         "raw_with_mmvlm": make_generate_config(
@@ -440,15 +341,15 @@ def _build_source(gs_bucket_name, content_id, scene_idx, keypoints, mode, max_pa
             return get_gcs_raw_fields_by_scene_idx(
                 gs_bucket_name, content_id, start_idx, scene_idx
             )
-        elif mode in ("imgvlm_chunk2", "imgvlm_chunk2_meta"):
+        elif mode == "imgvlm_chunk2":
             return get_processed_vlm_descriptions_by_scene_idx(
                 gs_bucket_name, content_id, "vlm_img_structure_chunk2", start_idx, scene_idx
             )
-        elif mode in ("imgvlm_sentence", "imgvlm_sentence_meta"):
+        elif mode == "imgvlm_sentence":
             return get_processed_vlm_descriptions_by_scene_idx(
                 gs_bucket_name, content_id, "vlm_img_structure_sentence", start_idx, scene_idx
             )
-        elif mode in ("imgvlm_graph", "imgvlm_graph_meta"):
+        elif mode == "imgvlm_graph":
             return get_processed_vlm_descriptions_by_scene_idx(
                 gs_bucket_name, content_id, "vlm_graph", start_idx, scene_idx
             )
@@ -471,14 +372,14 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
         time.sleep(1)
 
         # Video Context: 채널명/제목으로 도메인 컨텍스트 제공
-        # (imgvlm 모드는 저작권 미계약 데이터이므로 메타데이터 주입 금지)
-        _COPYRIGHT_SAFE_MODES = {"imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"}
+        # (imgvlm 모드 및 blank 모드는 메타데이터 주입 금지)
+        _NO_METADATA_MODES = {"imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph", "blank"}
         ctx_prefix = []
-        if video_context and mode not in _COPYRIGHT_SAFE_MODES:
+        if video_context and mode not in _NO_METADATA_MODES:
             ctx_prefix = ["--- [Video Context (영상 기본 정보)] ---", video_context]
 
         if mode == "blank":
-            contents = ctx_prefix + [
+            contents = [
                 "--- 질문 ---",
                 query,
             ]
@@ -493,11 +394,8 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
             label_map = {
                 "raw": "Raw Metadata (speech & text, 처음부터 현재 장면까지)",
                 "imgvlm_chunk2": "VLM Image Structure — 2-word Chunks (처음부터 현재 장면까지)",
-                "imgvlm_chunk2_meta": "VLM Image Structure — 2-word Chunks + Meta (처음부터 현재 장면까지)",
                 "imgvlm_sentence": "VLM Image Structure — Sentences (처음부터 현재 장면까지)",
-                "imgvlm_sentence_meta": "VLM Image Structure — Sentences + Meta (처음부터 현재 장면까지)",
                 "imgvlm_graph": "VLM Scene Knowledge Graph (처음부터 현재 장면까지)",
-                "imgvlm_graph_meta": "VLM Scene Knowledge Graph + Meta (처음부터 현재 장면까지)",
                 "raw_with_mmvlm": "Raw ASR/OCR + VLM Multimodal Description (처음부터 현재 장면까지)",
             }
             contents = ctx_prefix + [
@@ -632,7 +530,7 @@ def main():
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--modes", nargs="+",
                         default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
-                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"],
+                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "imgvlm_chunk2"],
                         help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변). blank=컨텍스트 없이 World Knowledge만 사용")
 
     args, client = init_pipeline(parser.parse_args())
@@ -814,8 +712,13 @@ def main():
             print(f"[Discovery {discovery_pass}] KSS 레코드 {len(all_kss_records)}개, 미처리 {pending_count}개 조합 발견")
             print(f"{'='*50}")
 
+            processed_count = 0
+            tracker = ProgressTracker(pending_count, unit="items", action="processed")
             for rec in all_kss_records:
-                _process_kss_record(rec)
+                processed_in_rec = _process_kss_record(rec)
+                if processed_in_rec > 0:
+                    processed_count += processed_in_rec
+                    tracker.update(processed_count)
 
             print(f"\n▶ [Discovery {discovery_pass}] 완료")
 

@@ -3,6 +3,7 @@ __pycache__/
 # Output Directories
 assets/
 results/
+scratch/
 
 # JSON Files (Data Privacy)
 *.json

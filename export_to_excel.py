@@ -4,7 +4,7 @@ import os
 from openpyxl.utils import get_column_letter
 from utils import load_jsonl
 
-_MODE_ORDER = ["blank", "video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
+_MODE_ORDER = ["blank", "video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
 
 def _sort_modes(modes):
     """MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순."""
@@ -264,13 +264,132 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
     print(f"Created: {out_path}")
 
 
-def export_vh_scores(input_dir, output_dir):
-    """Voice Hint Judge 집계 점수를 단일 Excel 파일로 내보냅니다.
+def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_config, all_cids, agg):
+    """B-Track (VH Response)용 3행 헤더 피벗 Excel을 openpyxl로 작성합니다.
 
-    열 구조 (2행 헤더):
-      content_id | curiosity_and_hook        | temporal_immersion        | total_score
-                 | mode1 | mode2 | ...       | mode1 | mode2 | ...       | mode1 | mode2 | ...
+    헤더 구조 (3행):
+      Row 1: content_id (merged v) | metric1 (merged h across 8 cols) | ...
+      Row 2:                       | high-context (merged h 4 cols) | low-context (merged h 4 cols) | ...
+      Row 3:                       | blank | video | ...            | blank | imgvlm_sentence | ... | ...
     """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+
+    # ── 스타일 정의 ──
+    header_font = Font(bold=True)
+    center_align = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    metric_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    track_fills = {
+        "high-context": PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"),
+        "low-context": PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+    }
+
+    # ── Row 1-3: content_id (세로 병합) ──
+    ws.merge_cells(start_row=1, start_column=1, end_row=3, end_column=1)
+    cell = ws.cell(row=1, column=1, value="content_id")
+    cell.font = header_font
+    cell.alignment = center_align
+    cell.border = thin_border
+
+    # 격자 테두리 초기화
+    for r in range(1, 4):
+        ws.cell(row=r, column=1).border = thin_border
+
+    col = 2  # 현재 열 위치 (1-indexed)
+    for met in metrics:
+        total_modes_for_metric = sum(len(modes) for modes in track_config.values())
+        ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + total_modes_for_metric - 1)
+        cell = ws.cell(row=1, column=col, value=met)
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.fill = metric_fill
+        
+        for c in range(col, col + total_modes_for_metric):
+            ws.cell(row=1, column=c).border = thin_border
+
+        sub_col = col
+        for track_name, modes in track_config.items():
+            n_track_modes = len(modes)
+            ws.merge_cells(start_row=2, start_column=sub_col, end_row=2, end_column=sub_col + n_track_modes - 1)
+            track_cell = ws.cell(row=2, column=sub_col, value=track_name)
+            track_cell.font = header_font
+            track_cell.alignment = center_align
+            track_cell.fill = track_fills.get(track_name, metric_fill)
+            
+            for c in range(sub_col, sub_col + n_track_modes):
+                ws.cell(row=2, column=c).border = thin_border
+
+            for mode in modes:
+                mode_cell = ws.cell(row=3, column=sub_col, value=mode)
+                mode_cell.font = header_font
+                mode_cell.alignment = center_align
+                mode_cell.border = thin_border
+                sub_col += 1
+
+        col += total_modes_for_metric
+
+    # ── Data rows (Row 4~) ──
+    data_start_row = 4
+    for r_idx, cid in enumerate(sorted(all_cids)):
+        row_num = data_start_row + r_idx
+        ws.cell(row=row_num, column=1, value=cid).border = thin_border
+        
+        col = 2
+        for met in metrics:
+            for track_name, modes in track_config.items():
+                for mode in modes:
+                    val = ""
+                    for q_type, q_type_data in agg.items():
+                        by_video = q_type_data.get("by_video", {})
+                        modes_data = by_video.get(cid, {})
+                        if mode in modes_data and met in modes_data[mode]:
+                            val = modes_data[mode][met]
+                            break
+                    c = ws.cell(row=row_num, column=col, value=val if val != "" else None)
+                    c.border = thin_border
+                    col += 1
+
+    # OVERALL 행
+    if all_cids:
+        row_num = data_start_row + len(all_cids)
+        c = ws.cell(row=row_num, column=1, value="OVERALL")
+        c.font = Font(bold=True)
+        c.border = thin_border
+        
+        col = 2
+        for met in metrics:
+            for track_name, modes in track_config.items():
+                for mode in modes:
+                    val = ""
+                    for q_type, q_type_data in agg.items():
+                        overall_data = q_type_data.get("overall", {})
+                        if mode in overall_data and met in overall_data[mode]:
+                            val = overall_data[mode][met]
+                            break
+                    c = ws.cell(row=row_num, column=col, value=val if val != "" else None)
+                    c.border = thin_border
+                    col += 1
+
+    # ── 열 너비 조정 ──
+    ws.column_dimensions[get_column_letter(1)].width = 28
+    total_cols = 1 + len(metrics) * sum(len(modes) for modes in track_config.values())
+    for ci in range(2, total_cols + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 14
+
+    wb.save(out_path)
+    print(f"Created: {out_path}")
+
+
+def export_vh_scores(input_dir, output_dir):
+    """Voice Hint Judge 집계 점수를 고맥락/저맥락별 엑셀 파일로 내보냅니다."""
     agg_path = os.path.join(input_dir, "voice_hint_scores_aggregated.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 VH Scores 내보내기를 건너뜁니다.")
@@ -298,11 +417,16 @@ def export_vh_scores(input_dir, output_dir):
         all_modes.update(overall.keys())
         ordered_modes = _sort_modes(all_modes)
 
+        # 트랙에 해당하는 모드만 필터링
+        target_modes = ["video", "kss", "raw", "raw_with_mmvlm"] if q_type == "content_anchored" else ["imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+        ordered_modes = [m for m in ordered_modes if m in target_modes]
+
         if not ordered_modes:
             continue
 
-        out_path = os.path.join(output_dir, f"vh_scores_{q_type}.xlsx")
-        sheet_name = f"VH {q_type}"
+        suffix = "high_context" if q_type == "content_anchored" else "low_context"
+        out_path = os.path.join(output_dir, f"vh_scores_{suffix}.xlsx")
+        sheet_name = "VH High-Context" if q_type == "content_anchored" else "VH Low-Context"
         _write_pivot_scores_xlsx(
             out_path, sheet_name, metrics, ordered_modes,
             all_cids, by_video, overall,
@@ -478,7 +602,9 @@ def export_vh_response_details(input_dir, output_dir):
 
 
 def export_vh_response_scores(input_dir, output_dir):
-    """VH Response Judge 집계 점수를 query_type별 별도 Excel 파일로 내보냅니다."""
+    """VH Response Judge 집계 점수를 단일 Excel 파일(vh_response_scores.xlsx)로 내보냅니다.
+    'high-context'와 'low-context' subcolumn을 포함합니다.
+    """
     agg_path = os.path.join(input_dir, "vh_response_scores_aggregated.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 VH Response Scores 내보내기를 건너뜁니다.")
@@ -489,26 +615,24 @@ def export_vh_response_scores(input_dir, output_dir):
 
     metrics = ["answer_relevance", "factual_precision", "informativeness", "total_score"]
 
-    for q_type, q_type_data in agg.items():
-        by_video = q_type_data.get("by_video", {})
-        overall = q_type_data.get("overall", {})
+    # content_id 전체 합집합 구하기
+    all_cids = set()
+    for q_type in ["content_anchored", "tangential"]:
+        if q_type in agg:
+            all_cids.update(agg[q_type].get("by_video", {}).keys())
 
-        all_cids = list(by_video.keys())
-        all_modes = set()
-        for modes_data in by_video.values():
-            all_modes.update(modes_data.keys())
-        all_modes.update(overall.keys())
-        ordered_modes = _sort_modes(all_modes)
+    track_config = {
+        "high-context": ["blank", "video", "raw", "raw_with_mmvlm"],
+        "low-context": ["blank", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+    }
 
-        if not ordered_modes:
-            continue
-
-        out_path = os.path.join(output_dir, f"vh_response_scores_{q_type}.xlsx")
-        sheet_name = f"VH Resp {q_type}"
-        _write_pivot_scores_xlsx(
-            out_path, sheet_name, metrics, ordered_modes,
-            all_cids, by_video, overall,
-        )
+    out_path = os.path.join(output_dir, "vh_response_scores.xlsx")
+    sheet_name = "VH Response Scores"
+    
+    _write_response_pivot_scores_xlsx(
+        out_path, sheet_name, metrics, track_config,
+        list(all_cids), agg
+    )
 
 
 def export_voice_hints(input_dir, output_dir):

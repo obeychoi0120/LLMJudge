@@ -15,7 +15,7 @@ from utils import (
     load_keypoints_by_content, check_input_file,
     load_summary_map,
     load_video_metadata, format_video_context,
-    print_pipeline_banner, print_pipeline_done,
+    print_pipeline_banner, print_pipeline_done, ProgressTracker,
 )
 
 # ───────────────────────────────────────────────
@@ -27,11 +27,12 @@ _VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현
 당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 통해 콘텐츠의 장르(드라마/스포츠/게임/뉴스/다큐 등)와 도메인을 먼저 파악하고, 아래 장르별 전략에 정확히 매칭하세요.
 
 시청자에게는 오직 현재 정보만 주어지는 것이 아닙니다. 시청자는 지금까지 시청해 온 **[이전까지의 과거 시청 맥락]**을 인지한 상태로 방금 **[현재 시청 중인 장면]**을 보았습니다.
-이 두 정보를 바탕으로, 아래 역할 분담에 따라 TV 화면의 버튼을 눌러 답을 확인하고 싶게 만드는 매력적인 질문 **2개**를 생성하세요.
+이 두 정보를 바탕으로, 아래 역할 분담에 따라 TV 화면의 버튼을 눌러 답을 확인하고 싶게 만드는 매력적인 **콘텐츠 특화 질문(Content-Anchored) 2개**를 생성하세요.
 
-[질문 역할 분담 — 반드시 queries 배열의 순서대로 지켜야 합니다]
+[질문 유형 — 콘텐츠 특화 질문 2개 생성]
+생성하는 질문 2개(queries[0], queries[1])는 모두 아래 지침을 따르는 '콘텐츠 특화 질문'이어야 합니다.
 
-■ queries[0] — Content-Anchored (콘텐츠 핵심 질문)
+■ Content-Anchored (콘텐츠 특화 질문)
   현재 장면의 **핵심 사건·인물·주제에 직접 연결된** 깊이 있는 질문입니다.
   단순 사실 확인("이 사람은 누구?")이 아닌, 핵심 주제를 한 단계 깊이 파고들어 시청자가 "더 알고 싶다"고 느낄 만한 해설·분석·맥락 질문을 지향하세요.
   - 드라마/예능: 방금 인물이 보인 행동·대사의 심리적 배경, 작중 갈등 구도의 맥락, 연출 의도
@@ -39,15 +40,6 @@ _VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현
   - 게임: 지금 사용 중인 전략/빌드의 메타 배경, 플레이어의 의사결정 분석, 패치 영향
   - 뉴스/시사/팟캐스트: 다루고 있는 이슈의 핵심 쟁점, 이해관계 구도, 정책적 파급 효과
   - 다큐/교양: 영상이 집중 조명하는 현상·원리에 대한 전문적 깊이의 후속 질문
-
-■ queries[1] — Tangential Expansion (곁다리 확장 질문)
-  현재 장면에서 포착된 시각·청각 단서에서 **파생되는 확장 배경지식** 질문입니다.
-  영상의 주된 서사와 직접 관련되지 않더라도, 화면 속 소품·장소·문화·기술 등에서 호기심을 자극하는 '깊이 있는 외부 지식'을 질문하세요.
-  - 드라마/예능: 화면 속 소품의 기원, 촬영 장소의 역사, 의상·음식 등의 문화적 배경
-  - 스포츠: 경기장 건축 양식, 유니폼·로고 디자인의 유래, 해당 도시의 스포츠 문화
-  - 게임: 게임 세계관의 신화적·문학적 모티프, UI/사운드 디자인 철학, 개발사 비하인드
-  - 뉴스/시사/팟캐스트: 배경 화면의 건물·지도·기호의 의미, 관련 역사적 사건, 과거 유사 사례
-  - 다큐/교양: 화면에 스쳐 지나간 생물·지형·도구 등에 대한 흥미로운 부가 지식
 
 [질문 생성 핵심 전략]
 1. 시스템 제약 준수 (Hard Constraints): 생성되는 질문은 반드시 플랫폼 시스템이 '현재 시점'에서 즉시 답변할 수 있어야 합니다.
@@ -63,14 +55,58 @@ _VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현
 [출력 형식]
 - 언어: 한국어 (단, 영어 콘텐츠의 고유명사는 원어 병기 허용. 예: 일각고래(Narwhal))
 - 형식: 반드시 아래 JSON 형식으로 출력하세요. 다른 설명은 덧붙이지 마십시오.
-- **queries 배열의 첫 번째 요소는 반드시 Content-Anchored, 두 번째 요소는 반드시 Tangential 질문이어야 합니다.**
+- **queries 배열의 2개 요소 모두 반드시 서로 다른 주제의 매력적인 Content-Anchored 질문이어야 합니다.**
 
 [JSON 형식 예시]
 {
-    "rationale": "1) 과거 정보 차단: 혹등고래가 굶주리고 있다는 사실은 이전 장면에서 파악됨. 2) 미래 추측 차단: '사냥 결과' 같은 미래 서사는 묻지 않음. 3) Content-Anchored 기획: 현재 장면의 핵심인 범고래 떼의 협동 사냥 전략에 대한 깊이 있는 질문. 4) Tangential 기획: 화면 속 범고래의 소리에서 파생된 동물 커뮤니케이션 배경지식.",
+    "rationale": "1) 과거 정보 차단: 혹등고래가 굶주리고 있다는 사실은 이전 장면에서 파악됨. 2) 미래 추측 차단: '사냥 결과' 같은 미래 서사는 묻지 않음. 3) Content-Anchored 1 기획: 현재 장면의 핵심인 범고래 떼의 협동 사냥 전략에 대한 깊이 있는 질문. 4) Content-Anchored 2 기획: 범고래의 사냥 부위나 이동 행동 패턴의 과학적 배경지식을 묻는 질문.",
     "queries": [
         "방금 화면에서 범고래 떼가 보여준 협동 사냥은 어떤 전략적 메커니즘으로 이루어지나요?",
-        "지금 범고래들이 내는 저 독특한 소리는 무리 안에서 어떤 의미를 가질까요?"
+        "범고래들이 사냥할 때 먹이의 특정 부위(예: 간 등)만 골라 먹는 생태학적 이유는 무엇인가요?"
+    ]
+}"""
+
+_VOICE_HINT_BASE_LOW_CONTEXT = """당신은 제공되는 시청 기억(과거 맥락 및 현재 장면)을 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
+
+당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 통해 콘텐츠의 장르(드라마/스포츠/게임/뉴스/다큐 등)와 도메인을 참고하고, 아래 전략에 맞추세요. (단, 저작권 제약으로 인해 과거 맥락과 현재 장면 모두 비식별화된 VLM 추출 데이터 형식으로 제공됩니다.)
+
+시청자에게는 오직 현재 정보만 주어지는 것이 아닙니다. 시청자는 지금까지 시청해 온 **[이전까지의 과거 시청 맥락]**을 인지한 상태로 방금 **[현재 시청 중인 장면]**을 보았습니다.
+이 두 정보를 바탕으로, TV 화면의 버튼을 눌러 답을 확인하고 싶게 만드는 매력적인 **곁다리 지식 질문(Tangential Knowledge) 2개**를 생성하세요.
+
+[질문 유형 — 곁다리 지식 질문 2개 생성]
+생성하는 질문 2개(queries[0], queries[1])는 모두 아래 지침을 따르는 '곁다리 지식 질문'이어야 합니다.
+
+■ Tangential Knowledge (곁다리 지식 질문)
+  현재 장면에서 포착된 시각적 단서(인물, 사물, 배경 등)에서 파생되는 곁다리 지식 질문입니다.
+  영상의 주된 서사와 직접 관련되지 않더라도, 화면 속 소품·장소·문화·기술 등에서 호기심을 자극하는 '깊이 있는 외부 지식'을 질문하세요.
+  - 화면 속 소품의 기원, 촬영 장소의 역사, 의상·음식 등의 문화적 배경
+  - 경기장 건축 양식, 유니폼·로고 디자인의 유래, 해당 도시의 스포츠 문화
+  - 게임 세계관의 신화적·문학적 모티프, UI/사운드 디자인 철학, 개발사 비하인드
+  - 배경 화면의 건물·지도·기호의 의미, 관련 역사적 사건, 과거 유사 사례
+  - 화면에 스쳐 지나간 생물·지형·도구 등에 대한 흥미로운 부가 지식
+
+[질문 생성 핵심 전략]
+1. 시스템 제약 준수 (Hard Constraints): 생성되는 질문은 반드시 플랫폼 시스템이 '현재 시점'에서 즉시 답변할 수 있어야 합니다.
+   - 미래 예측 금지: 앞으로 전개될 스토리나 결과(예: "과연 어떻게 될까요?", "누가 이길까요?")를 묻는 미래 지향적 질문은 철저히 0점 처리됩니다.
+   - 과거 뒷북 금지: [이전까지의 과거 시청 맥락]에서 이미 밝혀진 사실이나 상식을 또다시 묻는 뒷북 질문 역시 무조건 0점 처리됩니다. 질문의 단서는 오직 [현재 시청 중인 장면] 속 사물, 인물, 배경지식으로 한정하세요.
+
+2. 두 질문 모두에 대한 공통 원칙:
+   - 뻔한 상식 배제: 영상을 보지 않아도 누구나 아는 일반 상식 수준의 지루한 질문은 피하세요.
+   - 정보의 공백 포착: 방금 발생한 새로운 장면 속에서 시청자가 무의식적으로 궁금해할 만한 '정보의 공백(미지수)'을 날카롭게 찌르세요.
+   - 세련된 어조: '해당 장르/콘텐츠의 전문 평론가'가 말을 건네듯 정중하고 세련된 존댓말로 작성하여 몰입감을 유지하세요.
+   - 백과사전적 지식 적극 활용: 당신의 방대한 외부 지식을 동원하여 시청자의 리모컨 조작을 강력하게 유도하세요.
+
+[출력 형식]
+- 언어: 한국어 (단, 영어 콘텐츠의 고유명사는 원어 병기 허용. 예: 일각고래(Narwhal))
+- 형식: 반드시 아래 JSON 형식으로 출력하세요. 다른 설명은 덧붙이지 마십시오.
+- **queries 배열의 2개 요소 모두 반드시 서로 다른 주제의 매력적인 Tangential 질문이어야 합니다.**
+
+[JSON 형식 예시]
+{
+    "rationale": "1) 과거 정보 차단: 일각고래가 물속에서 울음소리를 낸다는 사실은 이전 장면에서 파악됨. 2) 미래 추측 차단: 앞으로 어떻게 사냥을 시작할지 등 미래 서사는 묻지 않음. 3) Tangential 1 기획: 일각고래의 독특한 엄니(Tusk) 생물학적 기원에 대한 질문. 4) Tangential 2 기획: 북극 바다 얼음(빙하)의 물리적 특징이나 극지 지형과 관련된 질문.",
+    "queries": [
+        "일각고래의 머리 앞에 길게 뻗은 엄니는 실제 이빨이 발달한 것일까요, 아니면 뿔일까요?",
+        "북극해의 얼어붙은 빙하 한가운데에 얼지 않고 동그랗게 뚫려 있는 구멍인 '폴리냐'는 어떤 원리로 형성되나요?"
     ]
 }"""
 
@@ -82,7 +118,7 @@ _VOICE_HINT_PROMPT_VIDEO = _VOICE_HINT_BASE + """
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 3단계를 순서대로 작성하세요.
 - 1단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 2단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 3단계 (질문 기획): 비디오의 현재 장면에 포착된 단서에 집중하여 queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 화면 단서에서 파생된 Tangential 질문으로 기획.
+- 3단계 (질문 기획): 비디오의 현재 장면에 포착된 단서에 집중하여 queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
 _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
@@ -102,11 +138,11 @@ _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 3단계를 순서대로 작성하세요.
 - 1단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 2단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 3단계 (질문 기획): 현재 장면 텍스트의 새 단서에 집중하여 queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 화면/음성 단서에서 파생된 Tangential 질문으로 기획.
+- 3단계 (질문 기획): 현재 장면 텍스트의 새 단서에 집중하여 queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
 
-_VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
+_VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE_LOW_CONTEXT + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [입력 형식 설명]
@@ -124,14 +160,14 @@ _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE + """
 - 1단계 (Scene Abstraction - 핵심 상황 유추):
   a) Subjects 파편에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
   b) Contexts 파편에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
-  c) 파편과 메타데이터를 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요. (예: [이탈리아, 피자, 빠니보틀] -> 유추: 이탈리아 정통 음식 문화 체험)
+  c) 과거 맥락과 현재 파편들을 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요. (예: [이전 장면: 이탈리아 입국 -> 현재 장면: 피자, 빠니보틀] -> 유추: 이탈리아 정통 음식 문화 체험)
 - 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
+- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]과 queries[1] 모두 시각 단서에서 파생된 서로 다른 주제의 Tangential 질문으로 기획.
 """
 
 
-_VOICE_HINT_PROMPT_IMGVLM_SENTENCE = _VOICE_HINT_BASE + """
+_VOICE_HINT_PROMPT_IMGVLM_SENTENCE = _VOICE_HINT_BASE_LOW_CONTEXT + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [입력 형식 설명]
@@ -147,14 +183,14 @@ _VOICE_HINT_PROMPT_IMGVLM_SENTENCE = _VOICE_HINT_BASE + """
 - 1단계 (Scene Abstraction - 핵심 상황 유추):
   a) Subjects에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
   b) Contexts에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
-  c) 텍스트를 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요. (예: [이탈리아, 피자, 빠니보틀] -> 유추: 이탈리아 정통 음식 문화 체험)
+  c) 과거 맥락과 현재 텍스트들을 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요. (예: [이전 장면: 이탈리아 입국 -> 현재 장면: 피자, 빠니보틀] -> 유추: 이탈리아 정통 음식 문화 체험)
 - 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
+- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]과 queries[1] 모두 시각 단서에서 파생된 서로 다른 주제의 Tangential 질문으로 기획.
 """
 
 
-_VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE + """
+_VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE_LOW_CONTEXT + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [입력 형식 설명]
@@ -167,72 +203,11 @@ _VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE + """
 
 [사고 과정 (Chain-of-Thought) 가이드]
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (Scene Abstraction - 핵심 상황 유추): 지식 그래프의 트리플들을 논리적으로 연결하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요. (예: [이탈리아, 피자, 빠니보틀] -> 유추: 이탈리아 정통 음식 문화 체험)
+- 1단계 (Scene Abstraction - 핵심 상황 유추): 과거 맥락과 현재 지식 그래프의 트리플들을 논리적으로 연결하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요. (예: [이전 장면: 이탈리아 입국 -> 현재 장면: 피자, 빠니보틀] -> 유추: 이탈리아 정통 음식 문화 체험)
 - 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
+- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]과 queries[1] 모두 시각 단서에서 파생된 서로 다른 주제의 Tangential 질문으로 기획.
 """
-
-# _meta 변형: Video Context가 제공되는 imgvlm 모드
-_VOICE_HINT_PROMPT_IMGVLM_CHUNK2_META = _VOICE_HINT_BASE + """
-[입력 형식 설명]
-당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
-각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
-  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체) — 2어절 단위 파편
-  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보 — 2어절 단위 파편
-  - 파편은 저작권 보호를 위해 원문을 2어절 단위로 분할하고 순서를 뒤섞은 것입니다.
-  - 파편 구분자는 ' | '이며, [MASKED]는 저작권 보호를 위한 마스킹이므로 무시하세요.
-
-이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
-
-[사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (Scene Abstraction - 핵심 상황 유추):
-  a) Subjects 파편에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
-  b) Contexts 파편에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
-  c) [Video Context]와 파편을 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요.
-- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
-- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
-"""
-
-_VOICE_HINT_PROMPT_IMGVLM_SENTENCE_META = _VOICE_HINT_BASE + """
-[입력 형식 설명]
-당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 구조화된 데이터가 제공됩니다.
-각 Scene은 시간 범위와 함께 <vlm_img_structure> 태그로 감싸진 형태입니다:
-  - Subjects: 장면의 핵심 주체 (등장인물, 주요 피사체)
-  - Contexts: 장면의 행동, 배경, 환경 및 맥락 정보
-
-이 데이터는 영상의 시각 프레임에서 추출된 구조화된 시각 정보입니다.
-
-[사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (Scene Abstraction - 핵심 상황 유추):
-  a) Subjects에서 핵심 주체(인물, 동물, 사물 등)를 먼저 식별하세요.
-  b) Contexts에서 해당 주체의 행동, 위치, 상태를 교차 매칭하여 장면을 구체적으로 재구성하세요.
-  c) [Video Context]와 텍스트를 종합하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요.
-- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
-- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
-"""
-
-_VOICE_HINT_PROMPT_IMGVLM_GRAPH_META = _VOICE_HINT_BASE + """
-[입력 형식 설명]
-당신에게는 소형 VLM이 영상의 시각 프레임만을 분석하여 추출한 장면 지식 그래프(Scene Knowledge Graph)가 제공됩니다.
-- vlm_graph: 장면의 주요 요소와 그 관계를 (subject) -[relation]-> (object) 형태의 트리플로 표현한 데이터
-  예: (man) -[WEARING]-> (cap), (screen) -[ABOUT]-> (foreign policy)
-- 이 그래프는 장면에 등장하는 인물, 사물, 행동, 속성, 위치 등의 관계를 압축적으로 나타냅니다.
-
-이 데이터는 영상의 시각 프레임에서 추출된 관계형 메타데이터입니다.
-
-[사고 과정 (Chain-of-Thought) 가이드]
-질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
-- 1단계 (Scene Abstraction - 핵심 상황 유추): [Video Context]와 지식 그래프의 트리플들을 논리적으로 연결하여 현재 씬의 '핵심 상황/주제'를 1문장으로 유추하세요.
-- 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
-- 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 시각 단서에서 파생된 Tangential 질문으로 기획.
-"""
-
 _VOICE_HINT_PROMPT_RAW_WITH_MMVLM = _VOICE_HINT_BASE + """
 [입력 형식 설명]
 당신에게는 음성 인식(ASR) 텍스트와 화면 글씨(OCR) 텍스트 데이터가 Scene 단위로 제공되며,
@@ -253,7 +228,7 @@ _VOICE_HINT_PROMPT_RAW_WITH_MMVLM = _VOICE_HINT_BASE + """
 - 1단계 (장면 맥락 종합): speech와 on_screen_text를 먼저 분석하여 사실 관계를 파악한 뒤, vlm_mm_description으로 시각적 맥락을 보조적으로 보충. 충돌 시 speech/on_screen_text 우선.
 - 2단계 (과거 정보 차단): 이전 과거 맥락에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 4단계 (질문 기획): 종합하여 유추한 현재 장면의 새 단서에 집중하여 queries[0]은 핵심 주제에 직결된 Content-Anchored 질문, queries[1]은 화면/음성 단서에서 파생된 Tangential 질문으로 기획.
+- 4단계 (질문 기획): 종합하여 유추한 현재 장면의 새 단서에 집중하여 queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
 _VOICE_HINT_PROMPT_KSS = _VOICE_HINT_BASE + """
@@ -269,12 +244,8 @@ Summary는 다음 두 부분으로 구성됩니다:
 질문을 생성하기 전에 `rationale` 필드에 반드시 다음 4단계를 순서대로 작성하세요.
 - 1단계 (과거 정보 차단): [1. 과거 장면 요약]에서 이미 밝혀진 사실이나 상식을 요약한 뒤 차단 선언.
 - 2단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
-- 3단계 (핵심 vs 주변 분리): [2. 현재 장면 묘사]를 분석하여 다음을 명확히 구분하세요:
-  a) **핵심 사건 (지금 이 순간 일어나고 있는 일)**: 현재 장면에서 시청자가 방금 목격한 중심 행동·발언·결정은 무엇인가? (예: "인물 A가 B에게 ~라고 말했다", "범고래가 협동 사냥을 시작했다")
-  b) **주변 요소**: 핵심 사건의 배경으로 스쳐 지나간 소품, 장소, 글자, 환경, 부차적 인물 등은 무엇인가?
-- 4단계 (질문 기획):
-  a) queries[0] (Content-Anchored): **3단계 a)에서 식별된, 지금 이 순간 벌어지고 있는 핵심 사건 자체**를 한 단계 깊이 파고드는 질문. 반드시 시청자가 "방금 눈앞에서 목격한 행동·발언·상황"의 원인·메커니즘·배경·의미를 묻는 형태여야 합니다.
-  b) queries[1] (Tangential): **3단계 b)에서 식별된 주변 요소** 중 하나를 골라, 영상의 주된 서사와 직접 관련되지 않는 확장 배경지식 질문으로 변환. 핵심 사건과는 다른 주제여야 합니다.
+- 3단계 (핵심 사건 유추): [2. 현재 장면 묘사]를 분석하여 지금 이 순간 일어나고 있는 핵심 사건(인물들의 중심 행동, 발언, 상황 등) 2가지를 명확히 식별하세요.
+- 4단계 (질문 기획): 3단계에서 식별된 핵심 사건 2가지에 각각 매칭하여, queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
 def make_voice_hint_configs(thinking_level=0):
@@ -284,11 +255,8 @@ def make_voice_hint_configs(thinking_level=0):
         "raw": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW, thinking_level=thinking_level),
         "raw_with_mmvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
         "imgvlm_chunk2": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2, thinking_level=thinking_level),
-        "imgvlm_chunk2_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2_META, thinking_level=thinking_level),
         "imgvlm_sentence": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_SENTENCE, thinking_level=thinking_level),
-        "imgvlm_sentence_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_SENTENCE_META, thinking_level=thinking_level),
         "imgvlm_graph": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH, thinking_level=thinking_level),
-        "imgvlm_graph_meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH_META, thinking_level=thinking_level),
         "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level)
     }
 
@@ -315,8 +283,8 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
                 kss_text,
                 "--- 요청 사항 ---",
                 "제공된 [KeyScene Summary]를 바탕으로 시스템 프롬프트의 [사고 과정 가이드] 4단계를 철저히 준수하여 질문 **2개**를 [JSON 형식 예시]와 같이 생성하세요. "
-                "특히 3단계에서 [2. 현재 장면 묘사]의 '핵심 사건'과 '주변 요소'를 반드시 분리하고, "
-                "queries[0]은 지금 이 순간 벌어지고 있는 핵심 사건에 직결된 질문, queries[1]은 주변 요소에서 파생된 별개 주제의 질문으로 작성하세요. "
+                "특히 3단계에서 [2. 현재 장면 묘사]의 핵심 사건들(인물들의 행동, 대화, 상황 등)에 집중하여, "
+                "queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 콘텐츠 특화 질문(Content-Anchored)으로 작성하세요. "
                 "[1. 과거 장면 요약]에서 이미 밝혀진 사실을 묻는 뒷북 질문과 미래 지향적 질문은 금지입니다."
             ]
         else:
@@ -325,6 +293,7 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
                 return {"queries": [], "rationale": f"해당 모드({mode})의 현재 장면 데이터가 비어있어 생성을 생략합니다."}, 0.0
 
             past_part = past_parts.get(mode)
+            is_low_context = mode.startswith("imgvlm")
             has_past = past_part is not None and not (isinstance(past_part, str) and not past_part.strip())
 
             if has_past:
@@ -332,11 +301,19 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
             
             contents += ["--- [현재 시청 중인 장면 (분석 대상)] ---", current_part]
             
-            contents += [
-                "--- 요청 사항 ---",
-                "위의 [이전까지의 과거 시청 맥락]과 [현재 시청 중인 장면]을 인지한 상태에서, 시스템 프롬프트의 [사고 과정 가이드] 단계를 철저히 준수하여 질문 **2개**를 [JSON 형식 예시]와 같이 생성하세요. 과거 맥락에서 이미 아는 내용으로 질문하는 것과 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문을 피하고, 오직 방금 본 [현재 시청 중인 장면]에 새롭게 등장한 단서에 집중하세요." 
-                if has_past else "제공된 [현재 시청 중인 장면]을 바탕으로 시스템 프롬프트의 [사고 과정 가이드] 지침에 따라 매력적인 질문 **2개**를 [JSON 형식 예시]와 같이 생성하세요. 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문은 피하세요."
-            ]
+            if is_low_context:
+                req_text = (
+                    "위의 [이전까지의 과거 시청 맥락]과 [현재 시청 중인 장면]을 인지한 상태에서, 시스템 프롬프트의 [사고 과정 가이드] 지침에 따라 곁다리 지식 질문(Tangential Knowledge) **2개**를 [JSON 형식 예시]와 같이 생성하세요. 과거 맥락에서 이미 아는 내용으로 질문하는 것과 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문을 피하고, 오직 방금 본 [현재 시청 중인 장면]에서 포착된 새로운 단서에 집중하세요."
+                    if has_past else
+                    "제공된 [현재 시청 중인 장면]을 바탕으로 시스템 프롬프트의 [사고 과정 가이드] 지침에 따라 곁다리 지식 질문(Tangential Knowledge) **2개**를 [JSON 형식 예시]와 같이 생성하세요. 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문은 피하세요."
+                )
+            else:
+                req_text = (
+                    "위의 [이전까지의 과거 시청 맥락]과 [현재 시청 중인 장면]을 인지한 상태에서, 시스템 프롬프트의 [사고 과정 가이드] 단계를 철저히 준수하여 콘텐츠 특화 질문(Content-Anchored) **2개**를 [JSON 형식 예시]와 같이 생성하세요. 과거 맥락에서 이미 아는 내용으로 질문하는 것과 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문을 피하고, 오직 방금 본 [현재 시청 중인 장면]에 새롭게 등장한 단서에 집중하세요."
+                    if has_past else
+                    "제공된 [현재 시청 중인 장면]을 바탕으로 시스템 프롬프트의 [사고 과정 가이드] 지침에 따라 콘텐츠 특화 질문(Content-Anchored) **2개**를 [JSON 형식 예시]와 같이 생성하세요. 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문은 피하세요."
+                )
+            contents += ["--- 요청 사항 ---", req_text]
         vh_config = vh_configs[mode]
         
         t0 = time.time()
@@ -390,7 +367,7 @@ def main():
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
     parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], 
-    choices=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"], help="생성할 모드 직접 지정")
+    choices=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -440,30 +417,36 @@ def main():
         else:
             print(f"[Warning] KSS Summary 파일을 찾을 수 없습니다: {args.kss_file}")
 
+    # 1. 미처리 Keypoint 총 개수 및 작업 목록 집계
+    total_keypoints_to_process = 0
+    all_content_remaining_jobs = {}
+    for content_id, keypoints in keypoints_by_content.items():
+        remaining = []
+        for kp in keypoints:
+            real_idx = keypoints.index(kp)
+            s_idx = kp.get("scene_idx", real_idx)
+            missing_modes = [m for m in target_modes if (content_id, s_idx, m) not in done_modes_by_scene]
+            if missing_modes:
+                remaining.append((kp, missing_modes))
+        if remaining:
+            all_content_remaining_jobs[content_id] = remaining
+            total_keypoints_to_process += len(remaining)
+
     print_pipeline_banner("Voice Hint 생성 파이프라인을 시작합니다.")
     print(f"Modes={target_modes}")
+    print(f"[Info] 총 {len(all_content_remaining_jobs)}개 콘텐츠, {total_keypoints_to_process}개 Keypoint 생성 작업 대기 중")
+
+    processed_keypoints = 0
+    tracker = ProgressTracker(total_keypoints_to_process, unit="Keypoints", action="processed")
 
     try:
         for content_id, keypoints in keypoints_by_content.items():
-            
-            # 각 Keypoint별로 생성되지 않은 (누락된) 모드 추적
-            remaining = []
-            fully_done_count = 0
-            
-            for kp in keypoints:
-                real_idx = keypoints.index(kp)
-                s_idx = kp.get("scene_idx", real_idx)
-                
-                missing_modes = [m for m in target_modes if (content_id, s_idx, m) not in done_modes_by_scene]
-                if missing_modes:
-                    remaining.append((kp, missing_modes))
-                else:
-                    fully_done_count += 1
-
+            remaining = all_content_remaining_jobs.get(content_id, [])
             if not remaining:
                 print(f"\n[Skip] '{content_id}': 모든 Scene 완벽 (누락 모드 없음)")
                 continue
 
+            fully_done_count = len(keypoints) - len(remaining)
             if fully_done_count > 0:
                 print(f"\n[Resume] '{content_id}': {fully_done_count}/{len(keypoints)}개 Scene 완벽 처리됨, {len(remaining)}개 Scene(부분 누락 포함) 재개")
 
@@ -525,8 +508,11 @@ def main():
                     # 각 mode별로 별도의 줄로 저장 (content_id + scene_idx + mode = 1 line)
                     for mod in missing_modes:
                         queries = vh_dict.get(mod, [])
-                        # 역할 분담: queries[0]=content_anchored, queries[1]=tangential
-                        query_types = ["content_anchored", "tangential"][:len(queries)]
+                        # High-context 모드는 2개 모두 content_anchored, Low-context 모드는 2개 모두 tangential
+                        if mod.startswith("imgvlm"):
+                            query_types = ["tangential", "tangential"][:len(queries)]
+                        else:
+                            query_types = ["content_anchored", "content_anchored"][:len(queries)]
                         mode_record = {
                             "content_id": content_id,
                             "scene_idx": scene_idx,
@@ -540,7 +526,7 @@ def main():
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
-                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"}
+                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"}
                     for mod in missing_modes:
                         if vh_dict.get(mod):
                             if mod in _LOG_MODES:
@@ -554,6 +540,9 @@ def main():
                 except Exception as e:
                     print(f"    [ERROR] 치명적 오류로 Scene {scene_idx} 건너뜁니다: {e}")
                     continue
+                finally:
+                    processed_keypoints += 1
+                    tracker.update(processed_keypoints)
 
             done_count_now = len({s_idx for (c_id, s_idx, _) in done_modes_by_scene if c_id == content_id})
             print(f"\n[OK] '{content_id}' - {done_count_now}개 Scene 처리 누적 확인됨")

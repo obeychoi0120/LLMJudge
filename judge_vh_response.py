@@ -12,7 +12,7 @@ from utils import (
     load_summary_map,
     sort_jsonl_file,
     print_pipeline_banner, print_pipeline_done,
-    print_scores_summary,
+    print_scores_summary, ProgressTracker,
 )
 
 # ============================================================
@@ -103,13 +103,67 @@ def evaluate_answer(client, model_name, judge_config, user_prompt, generated_ans
     )
 
 
+def is_content_id_fully_evaluated_vh_response(content_id, answers_file, target_modes_set, summary_map, processed_pairs):
+    """content_id에 해당하는 모든 target_mode의 응답들이 processed_pairs에 존재하여 평가가 완료되었는지 확인합니다."""
+    expected_scenes = {s_idx for (c_id, s_idx) in summary_map.keys() if c_id == content_id}
+    if not expected_scenes:
+        return False
+
+    # 해당 content_id에 대해 입력 파일에 존재하는 실제 모드들을 추출
+    existing_modes = set()
+    for obj in load_jsonl(answers_file):
+        if obj.get("content_id") == content_id:
+            m = obj.get("mode")
+            if m:
+                existing_modes.add(m)
+                
+    active_modes = target_modes_set & existing_modes
+    if not active_modes:
+        return False
+
+    actual_answers = {}
+    for obj in load_jsonl(answers_file):
+        if obj.get("pipeline_done"):
+            continue
+        c_id = obj.get("content_id")
+        if c_id != content_id:
+            continue
+        s_idx = obj.get("scene_idx")
+        mode = obj.get("mode")
+        if mode not in active_modes:
+            continue
+        if s_idx not in expected_scenes:
+            continue
+            
+        generated_answer = obj.get("answer")
+        if not generated_answer or str(generated_answer).startswith("Error"):
+            continue
+            
+        query = obj.get("query")
+        if query:
+            actual_answers.setdefault((s_idx, mode), []).append(query)
+
+    for s_idx in expected_scenes:
+        for mode in active_modes:
+            key = (s_idx, mode)
+            if key not in actual_answers:
+                return False
+            queries = actual_answers[key]
+            for query in queries:
+                if (content_id, s_idx, mode, query) not in processed_pairs:
+                    return False
+                    
+    return True
+
+
+
 def main():
     parser = get_common_argparser(description="Evaluate VH Responses using Judge model")
     parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="VH Response JSONL 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
     parser.add_argument("--modes", nargs="+", default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"], 
-    choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_graph", "imgvlm_graph_meta"], help="평가할 모드 직접 지정")
+    choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"], help="평가할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
     judge_config = make_judge_config(thinking_level=args.vh_response_judge_thinking_level)
@@ -132,7 +186,7 @@ def main():
     file_write_lock = threading.Lock()
     target_modes_set = set(args.modes)
     _SCORE_KEYS = ["answer_relevance", "factual_precision", "informativeness"]
-    _MODE_ORDER = ["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
+    _MODE_ORDER = ["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
 
     def judge_query_item(data):
         """단일 {content_id, scene_idx, mode, query, answer} 레코드를 평가합니다. (로깅 없이 결과만 반환)"""
@@ -211,6 +265,20 @@ def main():
 
         return len(results)
 
+    printed_content_ids = set()
+
+    def check_and_print_summaries(pairs_set):
+        all_content_ids = set()
+        for obj in load_jsonl(args.answers_file):
+            c_id = obj.get("content_id")
+            if c_id:
+                all_content_ids.add(c_id)
+        for c_id in sorted(all_content_ids):
+            if c_id not in printed_content_ids:
+                if is_content_id_fully_evaluated_vh_response(c_id, args.answers_file, target_modes_set, summary_map, pairs_set):
+                    printed_content_ids.add(c_id)
+                    print_scores_summary(args.output_file, c_id, _SCORE_KEYS, _MODE_ORDER, max_score=15)
+
     try:
         discovery_pass = 0
         while True:
@@ -226,6 +294,9 @@ def main():
                     query = rec.get("query")
                     if c_id and s_idx is not None and mode and query:
                         processed_pairs.add((c_id, s_idx, mode, query))
+            
+            check_and_print_summaries(processed_pairs)
+
             if discovery_pass == 1 and processed_pairs:
                 print(f"[기처리] {len(processed_pairs)}개 항목이 이미 평가 완료됨.")
 
@@ -277,19 +348,11 @@ def main():
             print(f"{'='*50}")
 
             pass_evaluated = 0
-            completed_content_ids = set()
-            prev_c_id = None
+            tracker = ProgressTracker(total_pending, unit="responses", action="evaluated")
             for (c_id, s_idx, q_text), items in unprocessed_groups.items():
-                if prev_c_id and prev_c_id != c_id and prev_c_id not in completed_content_ids:
-                    completed_content_ids.add(prev_c_id)
-                    print_scores_summary(args.output_file, prev_c_id, _SCORE_KEYS, _MODE_ORDER, max_score=15)
-                prev_c_id = c_id
                 pass_evaluated += _process_query_group(q_text, items)
-
-            # 마지막 content_id 집계
-            if prev_c_id and prev_c_id not in completed_content_ids:
-                print_scores_summary(args.output_file, prev_c_id, _SCORE_KEYS, _MODE_ORDER, max_score=15)
-
+                check_and_print_summaries(processed_pairs)
+                tracker.update(pass_evaluated)
             print(f"\n▶ [Discovery {discovery_pass}] {pass_evaluated}개 평가 완료")
 
     except KeyboardInterrupt:

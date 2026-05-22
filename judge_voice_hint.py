@@ -14,7 +14,7 @@ from utils import (
     load_summary_map, check_input_file,
     sort_jsonl_file,
     print_pipeline_banner, print_pipeline_done,
-    print_scores_summary,
+    print_scores_summary, ProgressTracker,
 )
 
 # ───────────────────────────────────────────────
@@ -59,7 +59,7 @@ How deeply and precisely does the question engage with the CORE topic, event, or
 _QUERY_JUDGE_PROMPT_TANGENTIAL = _QUERY_JUDGE_COMMON_INTRO + """
 
 [IMPORTANT EVALUATION PHILOSOPHY: Tangential World Knowledge over Narrative]
-This question is a "Tangential Expansion" question — it is EXPECTED to go BEYOND the main narrative to explore interesting background knowledge triggered by visual/audio cues. The Reference Scene Summary (KSS) is primarily focused on the 'narrative/story progression'. However, an excellent tangential question does NOT need to be tied to the main story. We highly value "Tangential World Knowledge" triggered by visual/audio cues.
+This question is a "Tangential Knowledge" question — it is EXPECTED to go BEYOND the main narrative to explore interesting background knowledge triggered by visual/audio cues. The Reference Scene Summary (KSS) is primarily focused on the 'narrative/story progression'. However, an excellent tangential question does NOT need to be tied to the main story. We highly value "Tangential World Knowledge" triggered by visual/audio cues.
 For example:
 - Dramas/Variety: Asking about the historical origin of a prop or filming location.
 - Sports: Asking about a player's recent form, transfer history, or team history for newbies.
@@ -209,13 +209,64 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
     except Exception as e:
         return {"mode": mode, "query_type": query_type, "query": query_text, "success": False, "msg": f"[Error] Judge 최종 실패 ({mode}, {query_type}): {e}"}
 
+def is_content_id_fully_evaluated_vh(content_id, input_file, target_modes_set, summary_map, scores_file):
+    """content_id에 해당하는 모든 target_mode의 질문들이 scores_file에 정상적으로 평가 완료되었는지 확인합니다."""
+    expected_scenes = {s_idx for (c_id, s_idx) in summary_map.keys() if c_id == content_id}
+    if not expected_scenes:
+        return False
+
+    # 해당 content_id에 대해 입력 파일에 존재하는 실제 모드들을 추출
+    existing_modes = set()
+    for scene_item in load_jsonl(input_file):
+        if scene_item.get("content_id") == content_id:
+            m = scene_item.get("mode")
+            if m:
+                existing_modes.add(m)
+                
+    active_modes = target_modes_set & existing_modes
+    if not active_modes:
+        return False
+
+    actual_records = {}
+    for scene_item in load_jsonl(input_file):
+        if scene_item.get("pipeline_done"):
+            continue
+        c_id = scene_item.get("content_id")
+        if c_id != content_id:
+            continue
+        s_idx = scene_item.get("scene_idx")
+        mode = scene_item.get("mode")
+        if mode not in active_modes:
+            continue
+        if s_idx not in expected_scenes:
+            continue
+        queries_list = scene_item.get("queries", [])
+        if queries_list:
+            actual_records[(s_idx, mode)] = queries_list
+
+    processed_pairs = load_processed_pairs(scores_file, key_fields=("content_id", "mode", "query"))
+    
+    for s_idx in expected_scenes:
+        for mode in active_modes:
+            key = (s_idx, mode)
+            if key not in actual_records:
+                return False
+            queries = actual_records[key]
+            for q_text in queries:
+                if (content_id, mode, q_text) not in processed_pairs:
+                    return False
+                    
+    return True
+
+
+
 def main():
     parser = get_common_argparser(description="Voice Hint 질문을 KeyScene Summary 기반으로 품질 평가")
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
     parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], 
-    choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"], help="평가할 모드 직접 지정")
+    choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], help="평가할 모드 직접 지정")
     
 
     args, client = init_pipeline(parser.parse_args())
@@ -237,11 +288,28 @@ def main():
 
     file_write_lock = threading.Lock()
     target_modes_set = set(args.modes)
-    target_mode_order = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_sentence_meta", "imgvlm_chunk2", "imgvlm_chunk2_meta", "imgvlm_graph", "imgvlm_graph_meta"]
+    target_mode_order = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+    
+    printed_content_ids = set()
+    _VH_SCORE_KEYS = ["temporal_immersion", "content_depth", "curiosity_and_hook"]
+
+    def check_and_print_summaries():
+        all_content_ids = set()
+        for scene_item in load_jsonl(args.input_file):
+            c_id = scene_item.get("content_id")
+            if c_id:
+                all_content_ids.add(c_id)
+        for c_id in sorted(all_content_ids):
+            if c_id not in printed_content_ids:
+                if is_content_id_fully_evaluated_vh(c_id, args.input_file, target_modes_set, summary_map, args.scores_file):
+                    printed_content_ids.add(c_id)
+                    print_scores_summary(args.scores_file, c_id, _VH_SCORE_KEYS, target_mode_order, max_score=10)
+
     try:
         discovery_pass = 0
         while True:
             discovery_pass += 1
+            check_and_print_summaries()
 
             # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 VH 레코드를 감지
             processed_pairs = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
@@ -302,14 +370,8 @@ def main():
             print(f"{'='*50}")
 
             pass_evaluated = 0
-            completed_content_ids = set()
-            prev_c_id = None
-            _VH_SCORE_KEYS = ["temporal_immersion", "content_depth", "curiosity_and_hook"]
+            tracker = ProgressTracker(total_pending, unit="queries", action="evaluated")
             for (c_id, s_idx), items in accumulated_groups.items():
-                if prev_c_id and prev_c_id != c_id and prev_c_id not in completed_content_ids:
-                    completed_content_ids.add(prev_c_id)
-                    print_scores_summary(args.scores_file, prev_c_id, _VH_SCORE_KEYS, target_mode_order, max_score=10)
-                prev_c_id = c_id
                 print(f"\n[{c_id} | Scene {s_idx}] {len(items)}개 질문(전체 모드) 병렬 평가 시작...")
 
                 results_list = []
@@ -350,10 +412,10 @@ def main():
                     for r in mode_groups[mode]:
                         print(r["out_str"])
 
-            # 마지막 content_id 집계
-            if prev_c_id and prev_c_id not in completed_content_ids:
-                print_scores_summary(args.scores_file, prev_c_id, _VH_SCORE_KEYS, target_mode_order, max_score=10)
-
+                check_and_print_summaries()
+                tracker.update(pass_evaluated)
+                
+            check_and_print_summaries()
             print(f"\n▶ [Discovery {discovery_pass}] {pass_evaluated}개 평가 완료")
 
     except KeyboardInterrupt:

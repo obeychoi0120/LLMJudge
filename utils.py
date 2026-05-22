@@ -217,6 +217,43 @@ def append_jsonl(path, record, lock=None):
             f.write(line)
 
 
+def format_remaining_time(seconds):
+    """초 단위 시간을 받아 'Hh Mm Ss' 또는 'Mm Ss' 형식의 문자열로 변환합니다."""
+    if seconds < 0:
+        seconds = 0
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h}h {m}m {s}s"
+    else:
+        return f"{m}m {s}s"
+
+
+class ProgressTracker:
+    """진행률 및 남은 시간을 계산하여 10 iteration 단위로 출력하는 추적기"""
+    def __init__(self, total, unit="items", action="processed", start_time=None):
+        self.total = total
+        self.unit = unit
+        self.action = action
+        self.start_time = start_time if start_time is not None else time.time()
+        self.last_printed_count = 0
+
+    def update(self, current):
+        if self.total <= 0:
+            return
+        # 10의 배수 구간을 통과하거나 최종 완료 시점에 출력
+        if (current // 10) > (self.last_printed_count // 10) or current == self.total:
+            elapsed = time.time() - self.start_time
+            avg_time = elapsed / current if current > 0 else 0
+            rem_items = self.total - current
+            est_remaining = avg_time * rem_items
+            est_str = format_remaining_time(est_remaining)
+            pct = (current / self.total * 100) if self.total > 0 else 0
+            print(f"[Progress] {current}/{self.total} {self.unit} {self.action} ({pct:.1f}%) | Elapsed: {int(elapsed)}s | Est. Remaining: {est_str}")
+            self.last_printed_count = current
+
+
+
 def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_score=None):
     """scores JSONL에서 특정 content_id의 mode별 평균 점수를 집계하여 출력합니다.
 
@@ -868,11 +905,8 @@ _TEXT_MODE_FETCHERS = {
     "raw":              lambda gs, cid, s, e: get_gcs_raw_fields_by_scene_idx(gs, cid, s, e),
     "raw_with_mmvlm":   lambda gs, cid, s, e: get_gcs_raw_with_mmvlm_by_scene_idx(gs, cid, s, e),
     "imgvlm_chunk2":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
-    "imgvlm_chunk2_meta": lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_chunk2", s, e),
     "imgvlm_sentence":    lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_sentence", s, e),
-    "imgvlm_sentence_meta": lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_img_structure_sentence", s, e),
     "imgvlm_graph":     lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
-    "imgvlm_graph_meta":  lambda gs, cid, s, e: get_processed_vlm_descriptions_by_scene_idx(gs, cid, "vlm_graph", s, e),
 }
 
 
@@ -1144,7 +1178,7 @@ def print_pipeline_done(output_path):
     print("=" * 50)
 
 
-_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_sentence": 3, "imgvlm_sentence_meta": 4, "imgvlm_chunk2": 5, "imgvlm_chunk2_meta": 6, "imgvlm_graph": 7, "imgvlm_graph_meta": 8, "blank": 9, "kss": 10}
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_sentence": 3, "imgvlm_chunk2": 4, "imgvlm_graph": 5, "blank": 6, "kss": 7}
 
 def sort_jsonl_file(filepath):
     """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
