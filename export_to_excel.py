@@ -434,10 +434,16 @@ def export_vh_scores(input_dir, output_dir):
 
 
 
-def aggregate_vh_response_scores(input_dir):
+def aggregate_vh_response_scores(input_dir, query_source="kss"):
     """VH Response Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
-    scores_file = os.path.join(input_dir, "vh_response_scores.jsonl")
-    output_file = os.path.join(input_dir, "vh_response_scores_aggregated.json")
+    scores_file = os.path.join(input_dir, f"vh_response_scores_{query_source}.jsonl")
+    output_file = os.path.join(input_dir, f"vh_response_scores_aggregated_{query_source}.json")
+
+    if not os.path.exists(scores_file) and query_source == "kss":
+        fallback_file = os.path.join(input_dir, "vh_response_scores.jsonl")
+        if os.path.exists(fallback_file):
+            scores_file = fallback_file
+            output_file = os.path.join(input_dir, "vh_response_scores_aggregated.json")
 
     if not os.path.exists(scores_file):
         print(f"[Skip] {scores_file} 파일이 없어 VH Response Score Aggregation을 건너뜁니다.")
@@ -526,16 +532,26 @@ def aggregate_vh_response_scores(input_dir):
     print(f"[Done] VH Response Score Aggregation (by query_type): {output_file}")
 
 
-def export_vh_response_details(input_dir, output_dir):
+def export_vh_response_details(input_dir, output_dir, query_source="kss"):
     """VH Response Judge 상세 결과를 Excel로 내보냅니다."""
-    scores_path = os.path.join(input_dir, "vh_response_scores.jsonl")
+    scores_path = os.path.join(input_dir, f"vh_response_scores_{query_source}.jsonl")
+    responses_path = os.path.join(input_dir, f"vh_responses_{query_source}.jsonl")
+    out_path = os.path.join(output_dir, f"vh_response_score_details_{query_source}.xlsx")
+
+    if not os.path.exists(scores_path) and query_source == "kss":
+        fallback_scores = os.path.join(input_dir, "vh_response_scores.jsonl")
+        fallback_responses = os.path.join(input_dir, "vh_responses.jsonl")
+        if os.path.exists(fallback_scores):
+            scores_path = fallback_scores
+            responses_path = fallback_responses
+            out_path = os.path.join(output_dir, "vh_response_score_details.xlsx")
+
     if not os.path.exists(scores_path):
         print(f"[Skip] {scores_path} 파일이 없어 VH Response Details 내보내기를 건너뜁니다.")
         return
 
     # (content_id, scene_idx, mode, query) → response 매핑
     answer_map = {}
-    responses_path = os.path.join(input_dir, "vh_responses.jsonl")
     if os.path.exists(responses_path):
         for r in load_jsonl(responses_path):
             c = r.get("content_id")
@@ -581,7 +597,6 @@ def export_vh_response_details(input_dir, output_dir):
         return
 
     df = pd.DataFrame(flat_rows)
-    out_path = os.path.join(output_dir, "vh_response_score_details.xlsx")
 
     writer = pd.ExcelWriter(out_path, engine="openpyxl")
     df.to_excel(writer, index=False, sheet_name="VH Resp Score Details")
@@ -601,11 +616,19 @@ def export_vh_response_details(input_dir, output_dir):
     print(f"Created: {out_path}")
 
 
-def export_vh_response_scores(input_dir, output_dir):
-    """VH Response Judge 집계 점수를 단일 Excel 파일(vh_response_scores.xlsx)로 내보냅니다.
+def export_vh_response_scores(input_dir, output_dir, query_source="kss"):
+    """VH Response Judge 집계 점수를 단일 Excel 파일(vh_response_scores_{query_source}.xlsx)로 내보냅니다.
     'high-context'와 'low-context' subcolumn을 포함합니다.
     """
-    agg_path = os.path.join(input_dir, "vh_response_scores_aggregated.json")
+    agg_path = os.path.join(input_dir, f"vh_response_scores_aggregated_{query_source}.json")
+    out_path = os.path.join(output_dir, f"vh_response_scores_{query_source}.xlsx")
+
+    if not os.path.exists(agg_path) and query_source == "kss":
+        fallback_agg = os.path.join(input_dir, "vh_response_scores_aggregated.json")
+        if os.path.exists(fallback_agg):
+            agg_path = fallback_agg
+            out_path = os.path.join(output_dir, "vh_response_scores.xlsx")
+
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 VH Response Scores 내보내기를 건너뜁니다.")
         return
@@ -625,8 +648,10 @@ def export_vh_response_scores(input_dir, output_dir):
         "high-context": ["blank", "video", "raw", "raw_with_mmvlm"],
         "low-context": ["blank", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
     }
+    if query_source == "sourcewise":
+        track_config["high-context"] = [m for m in track_config["high-context"] if m != "blank"]
+        track_config["low-context"] = [m for m in track_config["low-context"] if m != "blank"]
 
-    out_path = os.path.join(output_dir, "vh_response_scores.xlsx")
     sheet_name = "VH Response Scores"
     
     _write_response_pivot_scores_xlsx(
@@ -725,19 +750,34 @@ if __name__ == "__main__":
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
 
+    # assets 디렉토리 내 파일을 스캔하여 존재하는 query_source 모드 검색
+    query_sources = set()
+    if os.path.exists(assets_dir):
+        for filename in os.listdir(assets_dir):
+            if filename.startswith("vh_response_scores_") and filename.endswith(".jsonl"):
+                qs = filename[len("vh_response_scores_"):-len(".jsonl")]
+                query_sources.add(qs)
+        if os.path.exists(os.path.join(assets_dir, "vh_response_scores.jsonl")):
+            query_sources.add("kss")
+
+    if not query_sources:
+        query_sources.add("kss")
+
     print("="*60)
     print("1. Data Aggregation Phase")
     print("="*60)
     aggregate_vh_scores(assets_dir)
-    aggregate_vh_response_scores(assets_dir)
+    for qs in sorted(query_sources):
+        aggregate_vh_response_scores(assets_dir, query_source=qs)
 
     print("\n" + "="*60)
     print("2. Excel Export Phase")
     print("="*60)
     export_vh_details(assets_dir, results_dir)
     export_vh_scores(assets_dir, results_dir)
-    export_vh_response_details(assets_dir, results_dir)
-    export_vh_response_scores(assets_dir, results_dir)
+    for qs in sorted(query_sources):
+        export_vh_response_details(assets_dir, results_dir, query_source=qs)
+        export_vh_response_scores(assets_dir, results_dir, query_source=qs)
     export_voice_hints(assets_dir, results_dir)
 
     print("\nAll pipeline tasks completed.")

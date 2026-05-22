@@ -18,6 +18,8 @@ def main():
     # VH Response 입출력 설정 (B-track)
     parser.add_argument("--vh_responses_file",  default="assets/vh_responses.jsonl",      help="VH Response 저장 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--vh_scores_file",      default="assets/vh_response_scores.jsonl", help="VH Response Judge 점수 저장 경로")
+    parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
+                        help="Response 생성에 사용할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
     args = parser.parse_args()
     args = load_config(args)
@@ -117,6 +119,7 @@ def main():
         "--keypoints_file",  args.keypoints_file,
         "--vh_response_model",           args.vh_response_model,
         "--vh_response_thinking_level",  str(args.vh_response_thinking_level),
+        "--query_source",                args.query_source,
     ] + common_project_args
     subprocess.run(cmd, check=True)
     print(f"-> VH Response 저장 완료: {args.vh_responses_file}")
@@ -129,17 +132,17 @@ def main():
     print("="*60)
     cmd = [
         sys.executable, "judge_vh_response.py",
-        "--answers_file", args.vh_responses_file,
         "--keyscene_summary_file", args.keyscene_summary_file,
         "--output_file", args.vh_scores_file,
         "--vh_response_judge_model", args.vh_response_judge_model,
         "--vh_response_judge_thinking_level", str(args.vh_response_judge_thinking_level),
+        "--query_source", args.query_source,
     ] + common_project_args
     subprocess.run(cmd, check=True)
     print(f"-> VH Response 점수 저장 완료: {args.vh_scores_file}")
 
     # ──────────────────────────────────────────────
-    # B-3: 엑셀 내보내기
+    # B-3: 엑셀 리포트 내보내기
     # ──────────────────────────────────────────────
     print("\n" + "="*60)
     print(">>> B-3. 엑셀 리포트 내보내기")

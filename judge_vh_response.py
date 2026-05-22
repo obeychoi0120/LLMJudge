@@ -103,26 +103,26 @@ def evaluate_answer(client, model_name, judge_config, user_prompt, generated_ans
     )
 
 
-def is_content_id_fully_evaluated_vh_response(content_id, answers_file, target_modes_set, summary_map, processed_pairs):
-    """content_id에 해당하는 모든 target_mode의 응답들이 processed_pairs에 존재하여 평가가 완료되었는지 확인합니다."""
+def is_content_id_fully_evaluated_vh_response(content_id, input_file, target_sources_set, summary_map, processed_pairs):
+    """content_id에 해당하는 모든 target_source의 응답들이 processed_pairs에 존재하여 평가가 완료되었는지 확인합니다."""
     expected_scenes = {s_idx for (c_id, s_idx) in summary_map.keys() if c_id == content_id}
     if not expected_scenes:
         return False
 
     # 해당 content_id에 대해 입력 파일에 존재하는 실제 모드들을 추출
     existing_modes = set()
-    for obj in load_jsonl(answers_file):
+    for obj in load_jsonl(input_file):
         if obj.get("content_id") == content_id:
             m = obj.get("mode")
             if m:
                 existing_modes.add(m)
                 
-    active_modes = target_modes_set & existing_modes
+    active_modes = target_sources_set & existing_modes
     if not active_modes:
         return False
 
     actual_answers = {}
-    for obj in load_jsonl(answers_file):
+    for obj in load_jsonl(input_file):
         if obj.get("pipeline_done"):
             continue
         c_id = obj.get("content_id")
@@ -159,19 +159,28 @@ def is_content_id_fully_evaluated_vh_response(content_id, answers_file, target_m
 
 def main():
     parser = get_common_argparser(description="Evaluate VH Responses using Judge model")
-    parser.add_argument("--answers_file", default="assets/vh_responses.jsonl", help="VH Response JSONL 경로 (generate_vh_response.py 출력)")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"], 
-    choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"], help="평가할 모드 직접 지정")
+    parser.add_argument("--sources", nargs="+", default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"], 
+                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_sentence", "imgvlm_graph"], help="평가할 Source 직접 지정")
+    parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
+                        help="평가할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
     args, client = init_pipeline(parser.parse_args())
+
+    query_source = args.query_source
+
+    # query_source에 따라 input_file, output_file 경로 변경
+    args.input_file = f"assets/vh_responses_{query_source}.jsonl"
+    if args.output_file == "assets/vh_response_scores.jsonl":
+        args.output_file = f"assets/vh_response_scores_{query_source}.jsonl"
+
     judge_config = make_judge_config(thinking_level=args.vh_response_judge_thinking_level)
 
     ensure_output_dir(args.output_file)
 
-    if not os.path.exists(args.answers_file):
-        print(f"[Error] {args.answers_file} 파일이 없습니다. generate_vh_response.py를 먼저 실행하세요.")
+    if not os.path.exists(args.input_file):
+        print(f"[Error] {args.input_file} 파일이 없습니다. generate_vh_response.py를 먼저 실행하세요.")
         return
 
     # KSS Anchor 로드
@@ -184,7 +193,9 @@ def main():
     print_pipeline_banner("VH Response 품질 평가 파이프라인을 시작합니다.")
 
     file_write_lock = threading.Lock()
-    target_modes_set = set(args.modes)
+    target_sources_set = set(args.sources)
+    if query_source == "sourcewise" and "blank" in target_sources_set:
+        target_sources_set.remove("blank")
     _SCORE_KEYS = ["answer_relevance", "factual_precision", "informativeness"]
     _MODE_ORDER = ["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
 
@@ -269,13 +280,13 @@ def main():
 
     def check_and_print_summaries(pairs_set):
         all_content_ids = set()
-        for obj in load_jsonl(args.answers_file):
+        for obj in load_jsonl(args.input_file):
             c_id = obj.get("content_id")
             if c_id:
                 all_content_ids.add(c_id)
         for c_id in sorted(all_content_ids):
             if c_id not in printed_content_ids:
-                if is_content_id_fully_evaluated_vh_response(c_id, args.answers_file, target_modes_set, summary_map, pairs_set):
+                if is_content_id_fully_evaluated_vh_response(c_id, args.input_file, target_sources_set, summary_map, pairs_set):
                     printed_content_ids.add(c_id)
                     print_scores_summary(args.output_file, c_id, _SCORE_KEYS, _MODE_ORDER, max_score=15)
 
@@ -301,7 +312,7 @@ def main():
                 print(f"[기처리] {len(processed_pairs)}개 항목이 이미 평가 완료됨.")
 
             # 전체 파일 로드 → 미처리 항목 그룹핑
-            all_data = [r for r in load_jsonl(args.answers_file) if not r.get("pipeline_done")]
+            all_data = [r for r in load_jsonl(args.input_file) if not r.get("pipeline_done")]
 
             if not all_data:
                 if discovery_pass == 1:
@@ -319,7 +330,7 @@ def main():
                 query = obj.get("query")
                 if not (c_id and s_idx is not None and mode and query):
                     continue
-                if mode not in target_modes_set:
+                if mode not in target_sources_set:
                     continue
                 if (c_id, s_idx, mode, query) in processed_pairs:
                     continue

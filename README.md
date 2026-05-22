@@ -11,7 +11,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 - **A-Track (Voice Hint)**: 시청자 유도용 질문을 생성하고 평가하는 트랙으로, 소스 데이터의 수준에 따라 두 개의 트랙으로 명확히 구분 및 정렬됩니다.
   - **High-Context 트랙** (`kss`, `video`, `raw`, `raw_with_mmvlm` 모드): 현재 및 과거의 풍부한 맥락을 바탕으로 화면 속 주요 인물·사건·주제에 직접 연결된 깊이 있는 **콘텐츠 특화 질문 (Content-Anchored)** 2개를 생성하고 평가합니다.
   - **Low-Context 트랙** (`imgvlm_sentence`, `imgvlm_chunk2`, `imgvlm_graph` 모드): 비식별화 처리된 시각 메타데이터만을 바탕으로 화면 속 지형·사물·소품 등에서 파생된 외부 상식과 호기심을 자극하는 **곁다리 지식 질문 (Tangential Knowledge)** 2개를 생성하고 평가합니다. 과거 장면 정보(비식별 VLM 형태)도 함께 인지하여 시청 흐름을 이해하되, 이전 장면에 이미 밝혀진 사실을 중복 질문하는 것을 방지하는 **"과거 뒷북 금지"** 제약이 적용됩니다.
-- **B-Track (VH Response)**: A-Track의 `kss` 모드로 생성된 고품질의 질문(Query)들을 **공통 Query**로 일치시켜 던지고, 각 데이터소스별로 답변을 생성하여 비교하는 **통제 변인 실험** 트랙입니다. 답변을 KSS 및 World Knowledge 기준으로 채점하며, `blank` 모드는 어떠한 메타데이터(예: 채널/작품명 등의 Video Context)나 비디오/텍스트 정보도 제공받지 않고 오로지 사전에 학습된 세계 지식(World Knowledge)만으로 답변하는 제로-메타데이터(Zero Metadata) 베이스라인 역할을 합니다.
+- **B-Track (VH Response)**: A-Track의 `kss` 모드로 생성된 고품질의 질문(Query)들을 **공통 Query**로 일치시켜 던지고 각 데이터소스별로 답변을 생성하여 비교하는 **통제 변인 실험** 트랙(기본값, `--query_source kss`) 또는 각 모드별로 생성된 자체 Voice Hint를 질문으로 사용하는 트랙(옵션, `--query_source sourcewise`)입니다. 답변을 KSS 및 World Knowledge 기준으로 채점하며, `blank` 모드는 어떠한 메타데이터(예: 채널/작품명 등의 Video Context)나 비디오/텍스트 정보도 제공받지 않고 오로지 사전에 학습된 세계 지식(World Knowledge)만으로 답변하는 제로-메타데이터(Zero Metadata) 베이스라인 역할을 합니다. (단, `blank` 모드는 자체 Voice Hint가 존재하지 않으므로 `sourcewise` 옵션에서는 생성이 제외됩니다.)
 
 #### A-Track 모드 (Voice Hint 생성)
 
@@ -79,7 +79,7 @@ flowchart TD
     subgraph TRACKS[" "]
         direction LR
         subgraph BTRACK["B-Track: VH Response"]
-            B1["B-1. generate_vh_response.py\nKSS에서 생성된 고품질 VH를 공통 Query로 사용\n각 모드별 Source로 답변 생성"]
+            B1["B-1. generate_vh_response.py\nKSS 공통 VH 또는 각 모드별 VH를 Query로 사용\n각 모드별 Source로 답변 생성"]
             VHR["vh_responses.jsonl"]
             B2["B-2. judge_vh_response.py\n(KSS + World Knowledge, 3기준 15점)"]
             VHRS["vh_response_scores.jsonl"]
@@ -367,12 +367,17 @@ python judge_voice_hint.py --modes imgvlm_chunk2 video
 
 ### B-Track (VH Response)
 ```bash
-python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_chunk2, imgvlm_sentence, imgvlm_graph, blank 등)
+python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_sentence, imgvlm_graph, blank 등)
 python judge_vh_response.py                       # B-2: Response Judge
 
-# 특정 모드만 선택하여 실행할 경우 --modes 인자 사용 (여러 개 지정 가능):
-python generate_vh_response.py --modes imgvlm_chunk2 video
-python judge_vh_response.py --modes imgvlm_chunk2 video
+# 특정 Source만 선택하여 실행할 경우 --sources 인자 사용 (여러 개 지정 가능):
+python generate_vh_response.py --sources imgvlm_chunk2 video
+python judge_vh_response.py --sources imgvlm_chunk2 video
+
+# Response 생성 시 사용할 Voice Hint 질문의 출처(Query Source) 선택:
+# - kss (기본값): KSS 모드로 생성된 질문을 공통 Query로 삼아 모든 Source에 동일하게 전달 (통제 변인 실험)
+# - sourcewise: 각 모드별로 생성된 자체 Voice Hint 질문을 해당 모드의 Response 생성 Query로 사용
+python generate_vh_response.py --query_source sourcewise
 ```
 
 ### 누락분 자동 재처리 및 Discovery Loop

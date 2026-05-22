@@ -463,8 +463,8 @@ def _load_completed_pairs(output_path):
 # Validation
 # ============================================================
 
-def _validate_vh_responses(output_file, vh_input_file, target_modes):
-    """VH Response 파일을 정렬하고, KSS Query × target mode 기준으로 누락을 점검합니다."""
+def _validate_vh_responses(output_file, vh_input_file, target_sources, query_source="kss"):
+    """VH Response 파일을 정렬하고, 지정된 Query Source와 target source 기준으로 누락을 점검합니다."""
     if not os.path.exists(output_file):
         print(f"[Warning] 파일을 찾을 수 없습니다: {output_file}")
         return
@@ -477,19 +477,37 @@ def _validate_vh_responses(output_file, vh_input_file, target_modes):
 
     data_records = load_jsonl(output_file)
 
-    # 2) KSS Query × target mode 기준 누락 점검
+    # 2) Query × target source 기준 누락 점검
     print("\n[최종 누락분 점검]")
 
-    # KSS VH에서 기대되는 (content_id, scene_idx, query) 집합 추출
     expected = set()
     if os.path.exists(vh_input_file):
-        for rec in load_jsonl(vh_input_file):
-            if rec.get("mode") != "kss":
+        vh_records = load_jsonl(vh_input_file)
+        vh_lookup = {}
+        for r in vh_records:
+            c_id = r.get("content_id")
+            s_idx = r.get("scene_idx")
+            mode = r.get("mode")
+            if c_id and s_idx is not None and mode:
+                vh_lookup[(c_id, s_idx, mode)] = r.get("queries", [])
+
+        # KSS VH 레코드를 기준으로 각 scene 식별
+        for r in vh_records:
+            if r.get("mode") != "kss":
                 continue
-            c_id = rec.get("content_id")
-            s_idx = rec.get("scene_idx")
-            for q in rec.get("queries", []):
-                for m in target_modes:
+            c_id = r.get("content_id")
+            s_idx = r.get("scene_idx")
+            for m in target_sources:
+                if query_source == "kss":
+                    queries = r.get("queries", [])
+                else:  # sourcewise
+                    if m == "blank":
+                        continue
+                    if (c_id, s_idx, m) not in vh_lookup:
+                        queries = r.get("queries", [])
+                    else:
+                        queries = vh_lookup[(c_id, s_idx, m)]
+                for q in queries:
                     expected.add((c_id, s_idx, m, q))
 
     # 실제 존재하는 (content_id, scene_idx, mode, query) 집합
@@ -505,7 +523,7 @@ def _validate_vh_responses(output_file, vh_input_file, target_modes):
         for c, s, m, q in missing:
             missing_by_scene.setdefault((c, s), []).append(m)
 
-        print(f"-> 총 {len(missing)}개의 (Scene, Mode, Query) 처리가 누락되었습니다. ({len(missing_by_scene)}개 Scene)")
+        print(f"-> 총 {len(missing)}개의 (Scene, Source, Query) 처리가 누락되었습니다. ({len(missing_by_scene)}개 Scene)")
         for (c, s), modes in sorted(missing_by_scene.items())[:20]:
             mode_counts = {}
             for m in modes:
@@ -515,7 +533,7 @@ def _validate_vh_responses(output_file, vh_input_file, target_modes):
         if len(missing_by_scene) > 20:
             print(f"    ... 외 {len(missing_by_scene) - 20}개 Scene")
     else:
-        print("-> 모든 KSS Query × Mode 조합이 누락 없이 정상적으로 생성되었습니다.")
+        print(f"-> 모든 {query_source.upper()} Query × Source 조합이 누락 없이 정상적으로 생성되었습니다.")
     print("=" * 50 + "\n")
 
 
@@ -524,14 +542,16 @@ def _validate_vh_responses(output_file, vh_input_file, target_modes):
 # ============================================================
 
 def main():
-    parser = get_common_argparser(description="KSS 모드 Voice Hint의 질문을 공통 Query로 삼아, 각 모드의 Source로 Response를 생성합니다.")
+    parser = get_common_argparser(description="Voice Hint의 질문을 Query로 삼아, 각 Source 컨텍스트 정보를 활용해 Response를 생성합니다.")
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
-    parser.add_argument("--modes", nargs="+",
+    parser.add_argument("--sources", nargs="+",
                         default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
                         choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "imgvlm_chunk2"],
-                        help="Response를 생성할 대상 모드 (KSS Query를 이 모드들의 Source로 답변). blank=컨텍스트 없이 World Knowledge만 사용")
+                        help="Response를 생성할 대상 Source (blank=컨텍스트 없이 World Knowledge만 사용)")
+    parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
+                        help="Response 생성에 사용할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -541,7 +561,16 @@ def main():
         print(f"Error: {args.keypoints_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
         return
 
-    target_modes = args.modes
+    target_sources = args.sources
+    query_source = args.query_source
+
+    # sourcewise source에서는 blank 모드의 VH Resp 생성을 제외
+    if query_source == "sourcewise" and "blank" in target_sources:
+        target_sources = [s for s in target_sources if s != "blank"]
+
+    # query_source에 따라 output_file 경로 변경
+    if args.output_file == "assets/vh_responses.jsonl":
+        args.output_file = f"assets/vh_responses_{query_source}.jsonl"
 
     # Gen configs
     gen_configs = make_vh_gen_config(thinking_level=args.vh_response_thinking_level)
@@ -553,29 +582,41 @@ def main():
         return
 
     print_pipeline_banner("VH Response 생성 파이프라인을 시작합니다.")
-    print(f"[Mode] KSS Query → Target Response Modes: {target_modes}")
+    print(f"[Query Source] {query_source} | Target Response Sources: {target_sources}")
     if args.vh_response_past_scenes_size:
         print(f"[Window] vh_response_past_scenes_size={args.vh_response_past_scenes_size} 설정: 현재 Scene 기준 직전 {args.vh_response_past_scenes_size}개 Scene만 Source로 사용합니다.")
 
     file_write_lock = threading.Lock()
     _checked_contents = set()
 
-    def _process_kss_record(rec):
-        """KSS VH 레코드의 queries를 공통 Query로 삼아 모든 target 모드에 대해 Response를 병렬 생성합니다."""
+    def _process_scene_record(rec):
+        """KSS VH 레코드(scene 기준)에 대해 지정된 query_source에 기반한 질문들을 바탕으로 각 target source Response를 생성합니다."""
         c_id = rec.get("content_id")
         s_idx = rec.get("scene_idx")
-        queries = rec.get("queries", [])
-        # query_types 필드에서 유형 읽기 (없으면 index 기반 추론)
-        query_types = rec.get("query_types", ["content_anchored", "tangential"][:len(queries)])
 
-        if not (c_id and s_idx is not None and queries):
+        if not (c_id and s_idx is not None):
             return 0
 
-        # 각 target 모드 × 각 query 조합에서 미처리분만 추출
+        # 각 target source × 각 query 조합에서 미처리분만 추출
         pending_items = []
-        for q_idx, q_text in enumerate(queries):
-            q_type = query_types[q_idx] if q_idx < len(query_types) else "tangential"
-            for mode in target_modes:
+        for mode in target_sources:
+            if query_source == "kss":
+                mode_queries = rec.get("queries", [])
+                mode_query_types = rec.get("query_types", ["content_anchored", "tangential"][:len(mode_queries)])
+            else:  # sourcewise
+                if mode == "blank":
+                    continue
+                if (c_id, s_idx, mode) not in vh_lookup:
+                    kss_info = vh_lookup.get((c_id, s_idx, "kss"), {})
+                    mode_queries = kss_info.get("queries", [])
+                    mode_query_types = kss_info.get("query_types", [])
+                else:
+                    mode_info = vh_lookup.get((c_id, s_idx, mode), {})
+                    mode_queries = mode_info.get("queries", [])
+                    mode_query_types = mode_info.get("query_types", [])
+
+            for q_idx, q_text in enumerate(mode_queries):
+                q_type = mode_query_types[q_idx] if q_idx < len(mode_query_types) else "tangential"
                 if (c_id, s_idx, mode, q_text) not in completed_pairs:
                     pending_items.append({
                         "content_id": c_id,
@@ -603,30 +644,82 @@ def main():
         current_dur = end_time - start_time
         past_n = min(args.vh_response_past_scenes_size, s_idx) if args.vh_response_past_scenes_size else s_idx
         past_approx_sec = past_n * (start_time / s_idx) if s_idx > 0 else 0
-        print(f"\n[VH Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Current: {current_dur:.1f}s, Past: {past_approx_sec:.0f}s ({past_n} scenes) | KSS Queries → {len(pending_items)}개 (mode×query) 조합 처리")
+        print(f"\n[VH Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Current: {current_dur:.1f}s, Past: {past_approx_sec:.0f}s ({past_n} scenes) | Queries → {len(pending_items)}개 조합 처리")
 
         # Source 캐시: 같은 Scene의 같은 mode는 Source를 1번만 빌드
         source_cache = {}
         count = 0
 
-        # Query 단위로 그룹핑
-        from collections import OrderedDict
-        query_groups = OrderedDict()
-        for item in pending_items:
-            query_groups.setdefault(item["query"], []).append(item)
+        if query_source == "kss":
+            # Query 단위로 그룹핑하여 출력 (동일 Query가 여러 mode에 적용되므로)
+            from collections import OrderedDict
+            query_groups = OrderedDict()
+            for item in pending_items:
+                query_groups.setdefault(item["query"], []).append(item)
 
-        for q_text, items in query_groups.items():
-            print(f"\nQuery: {q_text}")
-            
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(target_modes)) as executor:
+            for q_text, items in query_groups.items():
+                print(f"\nQuery: {q_text}")
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
+                    futures = {}
+                    for item in items:
+                        def process_item(item_data):
+                            _s_idx = item_data["scene_idx"]
+                            _m = item_data["mode"]
+                            _q = item_data["query"]
+                            try:
+                                if _m not in source_cache:
+                                    source_cache[_m] = _build_source(
+                                        args.gs_bucket_name, c_id,
+                                        _s_idx, keypoints, _m,
+                                        max_past_scenes=args.vh_response_past_scenes_size,
+                                    )
+                                source = source_cache[_m]
+                                _, answer, elapsed, ttft = _generate_for_mode(
+                                    client, args.vh_response_model, gen_configs,
+                                    source, _m, _q, _s_idx, video_context=video_context
+                                )
+                                return item_data, answer, elapsed, ttft, None
+                            except Exception as e:
+                                return item_data, None, 0.0, None, str(e)
+
+                        futures[executor.submit(process_item, item)] = item
+
+                    for future in concurrent.futures.as_completed(futures):
+                        item, answer, elapsed, ttft, error = future.result()
+                        scene_idx = item["scene_idx"]
+                        mode      = item["mode"]
+                        query     = item["query"]
+
+                        if error:
+                            print(f"  -> [{mode}] ERROR: {error}")
+                            answer = f"Error: {error}"
+                        else:
+                            length_info = len(answer) if not answer.startswith("Error") else 0
+                            ttft_str = f"TTFT={ttft:.2f}s, " if ttft is not None else ""
+                            print(f"  -> [{mode}] OK ({ttft_str}total={elapsed:.1f}s, {length_info}자)")
+
+                        record = {
+                            "content_id": c_id,
+                            "scene_idx":  scene_idx,
+                            "mode":       mode,
+                            "query_type": item.get("query_type", "tangential"),
+                            "query":      query,
+                            "answer":     answer,
+                        }
+                        append_jsonl(args.output_file, record, lock=file_write_lock)
+                        completed_pairs.add((c_id, scene_idx, mode, query))
+                        count += 1
+        else:
+            # sourcewise: 각 mode마다 쿼리가 다르므로 동시에 모든 pending_items를 병렬로 생성 수행
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(pending_items)) as executor:
                 futures = {}
-                for item in items:
+                for item in pending_items:
                     def process_item(item_data):
                         _s_idx = item_data["scene_idx"]
                         _m = item_data["mode"]
                         _q = item_data["query"]
                         try:
-                            # Source 캐시 활용 (같은 Query 내에서는 _m이 중복되지 않으므로 Thread-safe)
                             if _m not in source_cache:
                                 source_cache[_m] = _build_source(
                                     args.gs_bucket_name, c_id,
@@ -678,13 +771,26 @@ def main():
         while True:
             discovery_pass += 1
 
-            # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 KSS 레코드를 감지
+            # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 레코드를 감지
             completed_pairs = _load_completed_pairs(args.output_file)
             if discovery_pass == 1 and completed_pairs:
                 print(f"[기처리] {len(completed_pairs)}개 항목이 이미 처리 완료됨.")
 
+            # voice_hint 파일 로드 및 lookup 테이블 구축
+            vh_records = load_jsonl(args.input_file)
+            vh_lookup = {}
+            for r in vh_records:
+                c_id = r.get("content_id")
+                s_idx = r.get("scene_idx")
+                mode = r.get("mode")
+                if c_id and s_idx is not None and mode:
+                    vh_lookup[(c_id, s_idx, mode)] = {
+                        "queries": r.get("queries", []),
+                        "query_types": r.get("query_types", [])
+                    }
+
             all_kss_records = [
-                r for r in load_jsonl(args.input_file)
+                r for r in vh_records
                 if r.get("mode") == "kss" and not r.get("pipeline_done")
             ]
 
@@ -697,12 +803,23 @@ def main():
                     break
 
             # 미처리 항목 개수 확인
-            pending_count = sum(
-                1 for r in all_kss_records
-                for q in r.get("queries", [])
-                for m in target_modes
-                if (r.get("content_id"), r.get("scene_idx"), m, q) not in completed_pairs
-            )
+            pending_count = 0
+            for r in all_kss_records:
+                c_id = r.get("content_id")
+                s_idx = r.get("scene_idx")
+                for m in target_sources:
+                    if query_source == "kss":
+                        queries = r.get("queries", [])
+                    else:  # sourcewise
+                        if m == "blank":
+                            continue
+                        if (c_id, s_idx, m) not in vh_lookup:
+                            queries = r.get("queries", [])
+                        else:
+                            queries = vh_lookup[(c_id, s_idx, m)].get("queries", [])
+                    for q in queries:
+                        if (c_id, s_idx, m, q) not in completed_pairs:
+                            pending_count += 1
 
             if pending_count == 0:
                 print("[완료] 모든 항목이 처리되었습니다.")
@@ -714,10 +831,11 @@ def main():
 
             processed_count = 0
             tracker = ProgressTracker(pending_count, unit="items", action="processed")
-            for rec in all_kss_records:
-                processed_in_rec = _process_kss_record(rec)
+            for rec_idx, rec in enumerate(all_kss_records):
+                processed_in_rec = _process_scene_record(rec)
                 if processed_in_rec > 0:
                     processed_count += processed_in_rec
+                if processed_count > 0 and ((rec_idx + 1) % 10 == 0 or (rec_idx + 1) == len(all_kss_records)):
                     tracker.update(processed_count)
 
             print(f"\n▶ [Discovery {discovery_pass}] 완료")
@@ -727,7 +845,7 @@ def main():
         os._exit(1)
 
     # 결과 파일 정렬 및 누락 점검
-    _validate_vh_responses(args.output_file, args.input_file, target_modes)
+    _validate_vh_responses(args.output_file, args.input_file, target_sources, query_source=query_source)
 
     print_pipeline_done(args.output_file)
 

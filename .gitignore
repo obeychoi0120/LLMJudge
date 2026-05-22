@@ -4,6 +4,7 @@ __pycache__/
 assets/
 results/
 scratch/
+sample_data/
 
 # JSON Files (Data Privacy)
 *.json
