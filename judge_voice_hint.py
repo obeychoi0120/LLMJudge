@@ -11,7 +11,7 @@ from utils import (
     _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
     init_pipeline, load_jsonl, append_jsonl,
-    load_summary_map, check_input_file,
+    load_summary_map, check_input_file, load_content_indices,
     sort_jsonl_file,
     print_pipeline_banner, print_pipeline_done,
     print_scores_summary, ProgressTracker,
@@ -172,15 +172,17 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
             for k in score_keys
         ) if score_dict else 0
 
-        score_record = {
-            "content_id": content_id,
-            "scene_idx": scene_idx,
-            "mode": mode,
-            "query_type": query_type,
-            "query": query_text,
-            "judge": score_dict,
-            "total_score": total,
-        }
+        from collections import OrderedDict
+        score_record = OrderedDict([
+            ("index", q_item.get("index")),
+            ("content_id", content_id),
+            ("scene_idx", scene_idx),
+            ("mode", mode),
+            ("query_type", query_type),
+            ("query", query_text),
+            ("judge", score_dict),
+            ("total_score", total),
+        ])
 
         _ITEM_LABELS_BY_TYPE = {
             "content_anchored": [
@@ -265,11 +267,12 @@ def main():
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], 
-    choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], help="평가할 모드 직접 지정")
+    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
+    choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="평가할 모드 직접 지정")
     
 
     args, client = init_pipeline(parser.parse_args())
+    content_indices = load_content_indices()
     judge_config = make_query_judge_config(thinking_level=args.vh_judge_thinking_level)
 
     ensure_output_dir(args.scores_file)
@@ -288,7 +291,7 @@ def main():
 
     file_write_lock = threading.Lock()
     target_modes_set = set(args.modes)
-    target_mode_order = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+    target_mode_order = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"]
     
     printed_content_ids = set()
     _VH_SCORE_KEYS = ["temporal_immersion", "content_depth", "curiosity_and_hook"]
@@ -299,7 +302,7 @@ def main():
             c_id = scene_item.get("content_id")
             if c_id:
                 all_content_ids.add(c_id)
-        for c_id in sorted(all_content_ids):
+        for c_id in sorted(all_content_ids, key=lambda c: content_indices.get(c, 999)):
             if c_id not in printed_content_ids:
                 if is_content_id_fully_evaluated_vh(c_id, args.input_file, target_modes_set, summary_map, args.scores_file):
                     printed_content_ids.add(c_id)
@@ -340,6 +343,7 @@ def main():
                     q_type = query_types_list[q_idx] if q_idx < len(query_types_list) else "tangential"
                     if (content_id, mode, q_text) not in processed_pairs:
                         accumulated_groups.setdefault(group_key, []).append({
+                            "index": scene_item.get("index", content_indices.get(content_id, 999)),
                             "content_id": content_id,
                             "scene_idx": scene_idx,
                             "mode": mode,
@@ -379,7 +383,7 @@ def main():
                     futures = [
                         executor.submit(
                             judge_one,
-                            {"mode": item["mode"], "query_type": item.get("query_type", "tangential"), "query": item["query"]},
+                            {"index": item.get("index"), "mode": item["mode"], "query_type": item.get("query_type", "tangential"), "query": item["query"]},
                             item["content_id"], item["scene_idx"], item["detailed_summary"],
                             client, args, judge_config, file_write_lock
                         )

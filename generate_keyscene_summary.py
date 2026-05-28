@@ -14,7 +14,7 @@ from utils import (
     init_pipeline, load_jsonl, append_jsonl,
     sort_and_validate_jsonl,
     load_keypoints_by_content, check_input_file,
-    print_pipeline_banner, print_pipeline_done,
+    print_pipeline_banner, print_pipeline_done, load_content_indices,
 )
 
 # ───────────────────────────────────────────────
@@ -159,6 +159,7 @@ def main():
     parser.add_argument("--parallel", type=int, default=4, help="동시에 병렬 처리할 비디오(Content) 수 (기본값: 4)")
 
     args, client = init_pipeline(parser.parse_args())
+    content_indices = load_content_indices()
 
     past_summary_config = make_past_summary_config(thinking_level=args.kss_past_summary_thinking_level)
     current_scene_config = make_current_scene_config(thinking_level=args.kss_current_scene_thinking_level)
@@ -323,13 +324,15 @@ def main():
                 scene_key = (content_id, scene_idx)
                 with file_lock:
                     if scene_key not in summary_pairs:
-                        summary_record = {
-                            "content_id": content_id,
-                            "scene_idx": scene_idx,
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "summary": summary_text,
-                        }
+                        from collections import OrderedDict
+                        summary_record = OrderedDict([
+                            ("index", content_indices.get(content_id, 999)),
+                            ("content_id", content_id),
+                            ("scene_idx", scene_idx),
+                            ("start_time", start_time),
+                            ("end_time", end_time),
+                            ("summary", summary_text),
+                        ])
                         append_jsonl(args.keyscene_summary_file, summary_record)
                         summary_pairs.add(scene_key)
                         summary_texts_by_scene[scene_key] = summary_record

@@ -207,6 +207,12 @@ def main():
     with open(args.input_file, "r", encoding="utf-8") as f:
         input_list = json.load(f)
 
+    content_indices = {}
+    for idx, item in enumerate(input_list):
+        cid = item if isinstance(item, str) else item.get("content_id")
+        if cid:
+            content_indices[cid] = idx
+
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
@@ -419,10 +425,12 @@ def main():
                 print(f"  {i:2d}. [Scene {kp['scene_idx']:2d}] {kp['start_time']:.1f}s ~ {kp['end_time']:.1f}s{rationale_str}")
 
             # ---- 저장 ----
-            kp_record = {
-                "content_id": content_id,
-                "keypoints": keypoints
-            }
+            from collections import OrderedDict
+            kp_record = OrderedDict([
+                ("index", content_indices.get(content_id, 999)),
+                ("content_id", content_id),
+                ("keypoints", keypoints),
+            ])
             append_jsonl(args.output_file, kp_record)
 
             processed_ids.add(content_id)

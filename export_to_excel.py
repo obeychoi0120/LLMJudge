@@ -2,9 +2,11 @@ import pandas as pd
 import json
 import os
 from openpyxl.utils import get_column_letter
-from utils import load_jsonl
+from utils import load_jsonl, load_content_indices
 
-_MODE_ORDER = ["blank", "video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+content_indices = load_content_indices()
+
+_MODE_ORDER = ["blank", "meta", "video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"]
 
 def _sort_modes(modes):
     """MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순."""
@@ -12,10 +14,10 @@ def _sort_modes(modes):
     ordered += sorted(set(modes) - set(_MODE_ORDER))
     return ordered
 
-def aggregate_vh_scores(input_dir):
+def aggregate_vh_scores(input_dir, output_dir):
     """VH Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
     scores_file = os.path.join(input_dir, "voice_hint_scores.jsonl")
-    output_file = os.path.join(input_dir, "voice_hint_scores_aggregated.json")
+    output_file = os.path.join(output_dir, "voice_hint_scores_aggregated.json")
 
     if not os.path.exists(scores_file):
         print(f"[Skip] {scores_file} 파일이 없어 VH Aggregation을 건너뜁니다.")
@@ -135,6 +137,7 @@ def export_vh_details(input_dir, output_dir):
             total = item.get("total_score", "")
             q_type = item.get("query_type", "")
             row = {
+                "index": content_indices.get(cid, 999),
                 "content_id": cid,
                 "scene_idx": item_scene_idx,
                 "mode": item.get("mode", ""),
@@ -152,6 +155,15 @@ def export_vh_details(input_dir, output_dir):
         print("[Skip] Voice Hint Score 데이터가 비어 있습니다.")
         return
 
+    # index 순으로 정렬
+    flat_vh.sort(key=lambda x: (
+        x.get("index", 999),
+        x.get("content_id", ""),
+        x.get("scene_idx", 0),
+        x.get("mode", ""),
+        x.get("query", ""),
+    ))
+
     df = pd.DataFrame(flat_vh)
     out_path = os.path.join(output_dir, "vh_score_details.xlsx")
 
@@ -160,6 +172,7 @@ def export_vh_details(input_dir, output_dir):
     worksheet = writer.sheets['VH Score Details']
     
     col_widths = {
+        "index": 10,
         "content_id": 20, "scene_idx": 10, "mode": 10, "query_type": 16, "query": 40,
         "rationale_temporal_immersion": 40, "temporal_immersion": 12,
         "rationale_content_depth": 40, "content_depth": 12,
@@ -199,14 +212,22 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
     )
     metric_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
 
-    # ── Row 1: 상위 헤더 (content_id + 메트릭 이름, 각 메트릭은 n_modes 열 병합) ──
+    # ── Row 1: 상위 헤더 (index + content_id + 메트릭 이름, 각 메트릭은 n_modes 열 병합) ──
+    # index (col 1)
     ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
-    cell = ws.cell(row=1, column=1, value="content_id")
+    cell = ws.cell(row=1, column=1, value="index")
     cell.font = header_font
     cell.alignment = center_align
     cell.border = thin_border
 
-    col = 2  # 현재 열 위치 (1-indexed)
+    # content_id (col 2)
+    ws.merge_cells(start_row=1, start_column=2, end_row=2, end_column=2)
+    cell = ws.cell(row=1, column=2, value="content_id")
+    cell.font = header_font
+    cell.alignment = center_align
+    cell.border = thin_border
+
+    col = 3  # 현재 열 위치 (1-indexed)
     for met in metrics:
         ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + n_modes - 1)
         cell = ws.cell(row=1, column=col, value=met)
@@ -217,7 +238,7 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
         col += n_modes
 
     # ── Row 2: 하위 헤더 (모드 이름 반복) ──
-    col = 2
+    col = 3
     for _ in metrics:
         for mode in ordered_modes:
             cell = ws.cell(row=2, column=col, value=mode)
@@ -228,10 +249,13 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
 
     # ── Data rows (Row 3~) ──
     data_start_row = 3
-    for r_idx, cid in enumerate(sorted(all_cids)):
+    sorted_cids = sorted(all_cids, key=lambda c: content_indices.get(c, 999))
+    for r_idx, cid in enumerate(sorted_cids):
         row_num = data_start_row + r_idx
-        ws.cell(row=row_num, column=1, value=cid).border = thin_border
-        col = 2
+        idx_val = content_indices.get(cid, 999)
+        ws.cell(row=row_num, column=1, value=idx_val).border = thin_border
+        ws.cell(row=row_num, column=2, value=cid).border = thin_border
+        col = 3
         modes_data = by_video.get(cid, {})
         for met in metrics:
             for mode in ordered_modes:
@@ -243,10 +267,11 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
     # OVERALL 행
     if overall_data:
         row_num = data_start_row + len(all_cids)
-        c = ws.cell(row=row_num, column=1, value="OVERALL")
+        ws.cell(row=row_num, column=1, value="").border = thin_border
+        c = ws.cell(row=row_num, column=2, value="OVERALL")
         c.font = Font(bold=True)
         c.border = thin_border
-        col = 2
+        col = 3
         for met in metrics:
             for mode in ordered_modes:
                 val = overall_data.get(mode, {}).get(met, "")
@@ -255,9 +280,10 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
                 col += 1
 
     # ── 열 너비 조정 ──
-    ws.column_dimensions[get_column_letter(1)].width = 28
-    total_cols = 1 + len(metrics) * n_modes
-    for ci in range(2, total_cols + 1):
+    ws.column_dimensions[get_column_letter(1)].width = 10
+    ws.column_dimensions[get_column_letter(2)].width = 28
+    total_cols = 2 + len(metrics) * n_modes
+    for ci in range(3, total_cols + 1):
         ws.column_dimensions[get_column_letter(ci)].width = 14
 
     wb.save(out_path)
@@ -292,9 +318,17 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
         "low-context": PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     }
 
-    # ── Row 1-3: content_id (세로 병합) ──
+    # ── Row 1-3: index 및 content_id (세로 병합) ──
+    # index (col 1)
     ws.merge_cells(start_row=1, start_column=1, end_row=3, end_column=1)
-    cell = ws.cell(row=1, column=1, value="content_id")
+    cell = ws.cell(row=1, column=1, value="index")
+    cell.font = header_font
+    cell.alignment = center_align
+    cell.border = thin_border
+
+    # content_id (col 2)
+    ws.merge_cells(start_row=1, start_column=2, end_row=3, end_column=2)
+    cell = ws.cell(row=1, column=2, value="content_id")
     cell.font = header_font
     cell.alignment = center_align
     cell.border = thin_border
@@ -302,8 +336,9 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
     # 격자 테두리 초기화
     for r in range(1, 4):
         ws.cell(row=r, column=1).border = thin_border
+        ws.cell(row=r, column=2).border = thin_border
 
-    col = 2  # 현재 열 위치 (1-indexed)
+    col = 3  # 현재 열 위치 (1-indexed)
     for met in metrics:
         total_modes_for_metric = sum(len(modes) for modes in track_config.values())
         ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + total_modes_for_metric - 1)
@@ -338,11 +373,14 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
 
     # ── Data rows (Row 4~) ──
     data_start_row = 4
-    for r_idx, cid in enumerate(sorted(all_cids)):
+    sorted_cids = sorted(all_cids, key=lambda c: content_indices.get(c, 999))
+    for r_idx, cid in enumerate(sorted_cids):
         row_num = data_start_row + r_idx
-        ws.cell(row=row_num, column=1, value=cid).border = thin_border
+        idx_val = content_indices.get(cid, 999)
+        ws.cell(row=row_num, column=1, value=idx_val).border = thin_border
+        ws.cell(row=row_num, column=2, value=cid).border = thin_border
         
-        col = 2
+        col = 3
         for met in metrics:
             for track_name, modes in track_config.items():
                 for mode in modes:
@@ -360,11 +398,12 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
     # OVERALL 행
     if all_cids:
         row_num = data_start_row + len(all_cids)
-        c = ws.cell(row=row_num, column=1, value="OVERALL")
+        ws.cell(row=row_num, column=1, value="").border = thin_border
+        c = ws.cell(row=row_num, column=2, value="OVERALL")
         c.font = Font(bold=True)
         c.border = thin_border
         
-        col = 2
+        col = 3
         for met in metrics:
             for track_name, modes in track_config.items():
                 for mode in modes:
@@ -379,9 +418,10 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
                     col += 1
 
     # ── 열 너비 조정 ──
-    ws.column_dimensions[get_column_letter(1)].width = 28
-    total_cols = 1 + len(metrics) * sum(len(modes) for modes in track_config.values())
-    for ci in range(2, total_cols + 1):
+    ws.column_dimensions[get_column_letter(1)].width = 10
+    ws.column_dimensions[get_column_letter(2)].width = 28
+    total_cols = 2 + len(metrics) * sum(len(modes) for modes in track_config.values())
+    for ci in range(3, total_cols + 1):
         ws.column_dimensions[get_column_letter(ci)].width = 14
 
     wb.save(out_path)
@@ -390,7 +430,7 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
 
 def export_vh_scores(input_dir, output_dir):
     """Voice Hint Judge 집계 점수를 고맥락/저맥락별 엑셀 파일로 내보냅니다."""
-    agg_path = os.path.join(input_dir, "voice_hint_scores_aggregated.json")
+    agg_path = os.path.join(output_dir, "voice_hint_scores_aggregated.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 VH Scores 내보내기를 건너뜁니다.")
         return
@@ -418,7 +458,7 @@ def export_vh_scores(input_dir, output_dir):
         ordered_modes = _sort_modes(all_modes)
 
         # 트랙에 해당하는 모드만 필터링
-        target_modes = ["video", "kss", "raw", "raw_with_mmvlm"] if q_type == "content_anchored" else ["imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+        target_modes = ["video", "kss", "raw", "raw_with_mmvlm"] if q_type == "content_anchored" else ["meta", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
         ordered_modes = [m for m in ordered_modes if m in target_modes]
 
         if not ordered_modes:
@@ -434,16 +474,16 @@ def export_vh_scores(input_dir, output_dir):
 
 
 
-def aggregate_vh_response_scores(input_dir, query_source="kss"):
+def aggregate_vh_response_scores(input_dir, output_dir, query_source="kss"):
     """VH Response Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
     scores_file = os.path.join(input_dir, f"vh_response_scores_{query_source}.jsonl")
-    output_file = os.path.join(input_dir, f"vh_response_scores_aggregated_{query_source}.json")
+    output_file = os.path.join(output_dir, f"vh_response_scores_aggregated_{query_source}.json")
 
     if not os.path.exists(scores_file) and query_source == "kss":
         fallback_file = os.path.join(input_dir, "vh_response_scores.jsonl")
         if os.path.exists(fallback_file):
             scores_file = fallback_file
-            output_file = os.path.join(input_dir, "vh_response_scores_aggregated.json")
+            output_file = os.path.join(output_dir, "vh_response_scores_aggregated.json")
 
     if not os.path.exists(scores_file):
         print(f"[Skip] {scores_file} 파일이 없어 VH Response Score Aggregation을 건너뜁니다.")
@@ -583,7 +623,7 @@ def export_vh_response_details(input_dir, output_dir, query_source="kss"):
         )
         response_text = answer_map.get((c_id, s_idx, mode, query), "")
         q_type = item.get("query_type", "")
-        row = {"content_id": c_id, "scene_idx": s_idx, "mode": mode, "query_type": q_type, "query": query, "response": response_text}
+        row = {"index": content_indices.get(c_id, 999), "content_id": c_id, "scene_idx": s_idx, "mode": mode, "query_type": q_type, "query": query, "response": response_text}
         
         for k in score_keys:
             met_data = judge.get(k, {})
@@ -596,12 +636,22 @@ def export_vh_response_details(input_dir, output_dir, query_source="kss"):
         print("[Skip] VH Response Score 데이터가 비어 있습니다.")
         return
 
+    # index 순으로 정렬
+    flat_rows.sort(key=lambda x: (
+        x.get("index", 999),
+        x.get("content_id", ""),
+        x.get("scene_idx", 0),
+        x.get("mode", ""),
+        x.get("query", ""),
+    ))
+
     df = pd.DataFrame(flat_rows)
 
     writer = pd.ExcelWriter(out_path, engine="openpyxl")
     df.to_excel(writer, index=False, sheet_name="VH Resp Score Details")
     worksheet = writer.sheets["VH Resp Score Details"]
     col_widths = {
+        "index": 10,
         "content_id": 22, "scene_idx": 10, "mode": 12, "query_type": 16, "query": 40, "response": 60,
         "rationale_answer_relevance": 45,  "answer_relevance": 16,
         "rationale_factual_precision": 45, "factual_precision": 16,
@@ -620,11 +670,11 @@ def export_vh_response_scores(input_dir, output_dir, query_source="kss"):
     """VH Response Judge 집계 점수를 단일 Excel 파일(vh_response_scores_{query_source}.xlsx)로 내보냅니다.
     'high-context'와 'low-context' subcolumn을 포함합니다.
     """
-    agg_path = os.path.join(input_dir, f"vh_response_scores_aggregated_{query_source}.json")
+    agg_path = os.path.join(output_dir, f"vh_response_scores_aggregated_{query_source}.json")
     out_path = os.path.join(output_dir, f"vh_response_scores_{query_source}.xlsx")
 
     if not os.path.exists(agg_path) and query_source == "kss":
-        fallback_agg = os.path.join(input_dir, "vh_response_scores_aggregated.json")
+        fallback_agg = os.path.join(output_dir, "vh_response_scores_aggregated.json")
         if os.path.exists(fallback_agg):
             agg_path = fallback_agg
             out_path = os.path.join(output_dir, "vh_response_scores.xlsx")
@@ -645,7 +695,7 @@ def export_vh_response_scores(input_dir, output_dir, query_source="kss"):
             all_cids.update(agg[q_type].get("by_video", {}).keys())
 
     track_config = {
-        "high-context": ["blank", "video", "raw", "raw_with_mmvlm"],
+        "high-context": ["video", "raw", "raw_with_mmvlm"],
         "low-context": ["blank", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
     }
     if query_source == "sourcewise":
@@ -700,10 +750,13 @@ def export_voice_hints(input_dir, output_dir):
     query_columns = [f"queries_{m}" for m in ordered_modes]
     
     flat_rows = []
-    for c_id in sorted(scenes_by_content.keys()):
+    sorted_cids = sorted(scenes_by_content.keys(), key=lambda c: content_indices.get(c, 999))
+    for c_id in sorted_cids:
         first = True
         for s_idx in sorted(scenes_by_content[c_id].keys()):
+            idx_val = content_indices.get(c_id, 999)
             row = {
+                "index": idx_val if first else "",
                 "content_id": c_id if first else "",
                 "scene_idx":  s_idx,
             }
@@ -719,7 +772,7 @@ def export_voice_hints(input_dir, output_dir):
     df.to_excel(writer, index=False, sheet_name="Voice Hints")
     worksheet = writer.sheets["Voice Hints"]
 
-    col_widths = {"content_id": 28, "scene_idx": 10}
+    col_widths = {"index": 10, "content_id": 28, "scene_idx": 10}
     for qc in query_columns:
         col_widths[qc] = 60
 
@@ -766,9 +819,9 @@ if __name__ == "__main__":
     print("="*60)
     print("1. Data Aggregation Phase")
     print("="*60)
-    aggregate_vh_scores(assets_dir)
+    aggregate_vh_scores(assets_dir, results_dir)
     for qs in sorted(query_sources):
-        aggregate_vh_response_scores(assets_dir, query_source=qs)
+        aggregate_vh_response_scores(assets_dir, results_dir, query_source=qs)
 
     print("\n" + "="*60)
     print("2. Excel Export Phase")

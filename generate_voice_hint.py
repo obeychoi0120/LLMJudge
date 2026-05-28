@@ -248,6 +248,36 @@ Summary는 다음 두 부분으로 구성됩니다:
 - 4단계 (질문 기획): 3단계에서 식별된 핵심 사건 2가지에 각각 매칭하여, queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
+_VOICE_HINT_PROMPT_META = """당신은 제공되는 비디오의 메타데이터를 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
+
+[주의] 이 모드는 저작권 및 플랫폼 제약으로 인해 영상 내용(비디오 및 상세 장면 맥락)에 전혀 접근할 수 없는 **메타데이터 전용 모드**입니다.
+오직 제공되는 [Video Context] (채널명, 제목, 업로드 날짜, 설명 등)만을 분석하여 영상의 장르와 흐름을 추론하고, 시청자가 흥미로워할 만한 **곁다리 지식 질문(Tangential Knowledge) 2개**를 생성하세요.
+
+[입력 형식 설명]
+당신에게는 오직 [Video Context]만 제공되며, [이전까지의 과거 시청 맥락]이나 [현재 시청 중인 장면] 등 구체적인 영상의 정보나 대화/자막/시각 데이터는 일절 제공되지 않습니다.
+
+■ Tangential Knowledge (곁다리 지식 질문)
+  현재 장면에서 직접적인 영상 프레임 묘사 없이, 영상 제목/채널/설명에서 파생되는 흥미로운 곁다리 지식 질문입니다.
+  영상의 주된 서사와 직접 관련되지 않더라도, 관련 분야 소품·장소·문화·기술 등에서 호기심을 자극하는 '깊이 있는 외부 지식'을 질문하세요.
+
+[질문 생성 핵심 지침]
+- 구체적인 장면이나 프레임 묘사 금지: 화면을 볼 수 없으므로 "방금 장면에서", "이 장면에 등장하는" 등 특정 시각적 프레임에 대한 언급은 피하세요. 대신 영상 제목이나 설명에 기반한 외부 상식 및 관련 지식 질문으로 구성하세요.
+- 미래 예측 금지: 앞으로 전개될 스토리나 결과를 묻는 질문은 금지합니다.
+- 서로 다른 주제의 질문 2개 생성: `queries` 배열에는 반드시 서로 다른 주제의 매력적인 곁다리 지식 질문 **2개**가 포함되어야 합니다.
+
+[출력 형식]
+- 언어: 한국어 (단, 영어 콘텐츠의 고유명사는 원어 병기 허용)
+- 형식: 반드시 아래 JSON 형식으로 출력하세요. 다른 설명은 덧붙이지 마십시오.
+
+[JSON 형식 예시]
+{
+    "rationale": "1) 메타데이터 분석: 채널명이 내셔널지오그래픽이고 제목이 일각고래 다큐멘터리임을 파악함. 2) 장면 언급 배제 선언: 구체적인 씬 묘사를 피하고 상식 질문으로 기획함. 3) Tangential 1 기획: 일각고래의 독특한 엄니(Tusk) 생물학적 기원에 대한 곁다리 질문을 기획함. 4) Tangential 2 기획: 북극 바다 얼음의 물리적 특징이나 극지 지형(폴리냐 등)에 대한 상식 질문을 기획함.",
+    "queries": [
+        "일각고래의 머리 앞에 길게 뻗은 엄니는 실제 이빨이 발달한 것일까요, 아니면 뿔일까요?",
+        "북극해의 얼어붙은 빙하 한가운데에 얼지 않고 동그랗게 뚫려 있는 구멍인 '폴리냐'는 어떤 원리로 형성되나요?"
+    ]
+}"""
+
 def make_voice_hint_configs(thinking_level=0):
     """Voice Hint 생성용 GenerateContentConfig 정보를 반환합니다."""
     return {
@@ -257,10 +287,11 @@ def make_voice_hint_configs(thinking_level=0):
         "imgvlm_chunk2": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2, thinking_level=thinking_level),
         "imgvlm_sentence": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_SENTENCE, thinking_level=thinking_level),
         "imgvlm_graph": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH, thinking_level=thinking_level),
-        "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level)
+        "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level),
+        "meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_META, thinking_level=thinking_level)
     }
 
-def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, end_time, target_modes=None, kss_text=None, video_context=""):
+def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, end_time, target_modes=None, kss_text=None, video_context="", scene_idx=None, start_time=0.0):
     """하나의 Keypoint에 대해 Voice Hint를 지정된 모드에 대해서만 병렬 수행합니다."""
     if target_modes is None:
         target_modes = ["video", "raw_with_mmvlm", "imgvlm"]
@@ -286,6 +317,12 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
                 "특히 3단계에서 [2. 현재 장면 묘사]의 핵심 사건들(인물들의 행동, 대화, 상황 등)에 집중하여, "
                 "queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 콘텐츠 특화 질문(Content-Anchored)으로 작성하세요. "
                 "[1. 과거 장면 요약]에서 이미 밝혀진 사실을 묻는 뒷북 질문과 미래 지향적 질문은 금지입니다."
+            ]
+        elif mode == "meta":
+            # meta 모드: 씬 식별 컨텍스트 없이 순수하게 메타데이터(Video Context)만을 사용하여 곁다리 질문 생성
+            contents += [
+                "--- 요청 사항 ---",
+                "제공된 [Video Context]의 메타데이터만을 바탕으로, 시스템 프롬프트의 지침을 준수하여 서로 다른 주제의 매력적인 곁다리 지식 질문(Tangential Knowledge) **2개**를 [JSON 형식 예시]와 같이 생성하세요."
             ]
         else:
             current_part = current_parts.get(mode)
@@ -366,8 +403,8 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
-    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], 
-    choices=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], help="생성할 모드 직접 지정")
+    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
+    choices=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
 
@@ -381,6 +418,34 @@ def main():
     if not keypoints_by_content:
         print(f"Error: {args.input_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
         return
+
+    # content_id -> index 매핑 로드
+    content_indices = {}
+    if os.path.exists(args.input_file):
+        with open(args.input_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        data = json.loads(line)
+                        cid = data.get("content_id")
+                        idx = data.get("index")
+                        if cid and idx is not None:
+                            content_indices[cid] = idx
+                    except Exception:
+                        pass
+    metadata_path = "video_metadata.jsonl"
+    if os.path.exists(metadata_path):
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        data = json.loads(line)
+                        cid = data.get("content_id")
+                        idx = data.get("index")
+                        if cid and idx is not None:
+                            content_indices[cid] = idx
+                    except Exception:
+                        pass
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
@@ -454,19 +519,36 @@ def main():
             print(f"Processing Content: '{content_id}' ({len(remaining)}/{len(keypoints)}개 Keypoint 추가 처리)")
             print(f"{'='*50}")
 
-            if not check_gcs_files_exist(args.gs_bucket_name, content_id):
-                continue
-
-            # JSONL 메타데이터 프리로드 (캐시 워밍업)
-            preload_content_metadata(args.gs_bucket_name, content_id)
+            # GCS check and preload only if we need GCS data (i.e. modes other than kss and meta)
+            requires_gcs = any(
+                any(m not in ("kss", "meta") for m in original_missing_modes)
+                for kp, original_missing_modes in remaining
+            )
+            if requires_gcs:
+                if not check_gcs_files_exist(args.gs_bucket_name, content_id):
+                    continue
+                # JSONL 메타데이터 프리로드 (캐시 워밍업)
+                preload_content_metadata(args.gs_bucket_name, content_id)
 
             # Video Metadata 로드 (채널명, 제목 등)
-            video_metadata = load_video_metadata(args.gs_bucket_name, content_id)
+            try:
+                video_metadata = load_video_metadata(args.gs_bucket_name, content_id)
+            except Exception as e:
+                print(f"[ERROR] '{content_id}'의 메타데이터 로드 실패: {e}")
+                continue
+
             video_context = format_video_context(video_metadata)
             if video_context:
                 print(f"[Video Context] {video_metadata.get('channel', '')} — {video_metadata.get('title', '')}")
+                print(f"\n[Description] {video_metadata.get('description', '')}")
 
-            for kp, missing_modes in remaining:
+            for kp, original_missing_modes in remaining:
+                missing_modes = list(original_missing_modes)
+                if not missing_modes:
+                    processed_keypoints += 1
+                    tracker.update(processed_keypoints)
+                    continue
+
                 real_idx = keypoints.index(kp)
                 scene_idx = kp.get("scene_idx", real_idx)
                 start_time = float(kp.get("start_time", 0.0))
@@ -482,8 +564,8 @@ def main():
                     past_end_scene_idx = scene_idx - 1  # 현재 Scene 직전까지
 
                     has_past = past_end_scene_idx >= past_start_scene_idx
-                    # KSS 외 모드만 GCS 데이터 빌드 (kss는 Summary 텍스트 직접 사용)
-                    non_kss_modes = [m for m in missing_modes if m != "kss"]
+                    # KSS 및 meta 외 모드만 GCS 데이터 빌드
+                    non_kss_modes = [m for m in missing_modes if m not in ("kss", "meta")]
                     if non_kss_modes:
                         past_parts, current_parts = build_mode_parts(
                             args.gs_bucket_name, content_id, non_kss_modes,
@@ -497,7 +579,10 @@ def main():
                     # KSS Summary 텍스트 조회
                     kss_text = kss_map.get((content_id, scene_idx), "") if "kss" in missing_modes else None
 
-                    return process_vh_modes(client, args.vh_gen_model, vh_configs, past_parts, current_parts, end_time, missing_modes, kss_text=kss_text, video_context=video_context)
+                    return process_vh_modes(
+                        client, args.vh_gen_model, vh_configs, past_parts, current_parts, end_time, missing_modes, 
+                        kss_text=kss_text, video_context=video_context, scene_idx=scene_idx, start_time=start_time
+                    )
 
                 try:
                     vh_dict, vh_elapsed_dict = _retry_api_call(
@@ -508,25 +593,26 @@ def main():
                     # 각 mode별로 별도의 줄로 저장 (content_id + scene_idx + mode = 1 line)
                     for mod in missing_modes:
                         queries = vh_dict.get(mod, [])
-                        # High-context 모드는 2개 모두 content_anchored, Low-context 모드는 2개 모두 tangential
-                        if mod.startswith("imgvlm"):
-                            query_types = ["tangential", "tangential"][:len(queries)]
+                        # High-context 모드는 content_anchored, Low-context 모드(imgvlm, meta)는 tangential
+                        if mod.startswith("imgvlm") or mod == "meta":
+                            query_types = ["tangential"] * len(queries)
                         else:
-                            query_types = ["content_anchored", "content_anchored"][:len(queries)]
-                        mode_record = {
-                            "content_id": content_id,
-                            "scene_idx": scene_idx,
-                            "mode": mod,
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "queries": queries,
-                            "query_types": query_types,
-                            "rationale": vh_dict.get("rationales", {}).get(mod, ""),
-                        }
+                            query_types = ["content_anchored"] * len(queries)
+                        from collections import OrderedDict
+                        mode_record = OrderedDict()
+                        mode_record["index"] = content_indices.get(content_id, 0)
+                        mode_record["content_id"] = content_id
+                        mode_record["scene_idx"] = scene_idx
+                        mode_record["mode"] = mod
+                        mode_record["start_time"] = start_time
+                        mode_record["end_time"] = end_time
+                        mode_record["queries"] = queries
+                        mode_record["query_types"] = query_types
+                        mode_record["rationale"] = vh_dict.get("rationales", {}).get(mod, "")
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
-                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"}
+                    _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"}
                     for mod in missing_modes:
                         if vh_dict.get(mod):
                             if mod in _LOG_MODES:

@@ -9,7 +9,7 @@ from utils import (
     _retry_api_call, retry_parse_json,
     ensure_output_dir, load_processed_pairs,
     init_pipeline, load_jsonl, append_jsonl,
-    load_summary_map,
+    load_summary_map, load_content_indices,
     sort_jsonl_file,
     print_pipeline_banner, print_pipeline_done,
     print_scores_summary, ProgressTracker,
@@ -167,6 +167,7 @@ def main():
                         help="평가할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
     args, client = init_pipeline(parser.parse_args())
+    content_indices = load_content_indices()
 
     query_source = args.query_source
 
@@ -234,15 +235,16 @@ def main():
             for k in _SCORE_KEYS
         )
 
-        record = {
-            "content_id": c_id,
-            "scene_idx":  s_idx,
-            "mode":       mode,
-            "query_type": query_type,
-            "query":      query,
-            "judge":      score_dict,
-            "total":      total,
-        }
+        record = OrderedDict([
+            ("index",      data.get("index", content_indices.get(c_id, 999))),
+            ("content_id", c_id),
+            ("scene_idx",  s_idx),
+            ("mode",       mode),
+            ("query_type", query_type),
+            ("query",      query),
+            ("judge",      score_dict),
+            ("total",      total),
+        ])
         with file_write_lock:
             append_jsonl(args.output_file, record)
             processed_pairs.add((c_id, s_idx, mode, query))
@@ -276,6 +278,32 @@ def main():
 
         return len(results)
 
+    def _process_scene_group_sourcewise(c_id, s_idx, items):
+        """sourcewise 모드: 한 Scene 내의 모든 Response(서로 다른 Query)를 병렬 평가 후, 점수를 정렬 출력합니다."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
+            futures = {executor.submit(judge_query_item, obj): obj for obj in items}
+            results = []
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
+        if not results:
+            return 0
+
+        # mode 순서 및 query 기준으로 정렬하여 출력
+        results.sort(key=lambda r: (_MODE_ORDER.index(r["mode"]) if r["mode"] in _MODE_ORDER else 99, r["query"]))
+        
+        print(f"\n[{c_id} | Scene {s_idx}]")
+        for r in results:
+            scores_str = " | ".join(
+                f"{k}={r['judge'].get(k, {}).get('score', '?')}" for k in _SCORE_KEYS
+            )
+            print(f"  -> [{r['mode']}] {r['total']}/15 ({scores_str})")
+
+        return len(results)
+
+
     printed_content_ids = set()
 
     def check_and_print_summaries(pairs_set):
@@ -284,7 +312,7 @@ def main():
             c_id = obj.get("content_id")
             if c_id:
                 all_content_ids.add(c_id)
-        for c_id in sorted(all_content_ids):
+        for c_id in sorted(all_content_ids, key=lambda c: content_indices.get(c, 999)):
             if c_id not in printed_content_ids:
                 if is_content_id_fully_evaluated_vh_response(c_id, args.input_file, target_sources_set, summary_map, pairs_set):
                     printed_content_ids.add(c_id)
@@ -334,7 +362,10 @@ def main():
                     continue
                 if (c_id, s_idx, mode, query) in processed_pairs:
                     continue
-                q_key = (c_id, s_idx, query)
+                if query_source == "kss":
+                    q_key = (c_id, s_idx, query)
+                else:  # sourcewise
+                    q_key = (c_id, s_idx)
                 unprocessed_groups.setdefault(q_key, []).append(obj)
 
             if not unprocessed_groups:
@@ -355,15 +386,24 @@ def main():
 
             total_pending = sum(len(v) for v in unprocessed_groups.values())
             print(f"\n{'='*50}")
-            print(f"[Discovery {discovery_pass}] {len(unprocessed_groups)}개 Query, 미처리 {total_pending}개 항목 발견")
+            if query_source == "kss":
+                print(f"[Discovery {discovery_pass}] {len(unprocessed_groups)}개 Query, 미처리 {total_pending}개 항목 발견")
+            else:
+                print(f"[Discovery {discovery_pass}] {len(unprocessed_groups)}개 Scene, 미처리 {total_pending}개 항목 발견")
             print(f"{'='*50}")
 
             pass_evaluated = 0
             tracker = ProgressTracker(total_pending, unit="responses", action="evaluated")
-            for (c_id, s_idx, q_text), items in unprocessed_groups.items():
-                pass_evaluated += _process_query_group(q_text, items)
-                check_and_print_summaries(processed_pairs)
-                tracker.update(pass_evaluated)
+            if query_source == "kss":
+                for (c_id, s_idx, q_text), items in unprocessed_groups.items():
+                    pass_evaluated += _process_query_group(q_text, items)
+                    check_and_print_summaries(processed_pairs)
+                    tracker.update(pass_evaluated)
+            else:  # sourcewise
+                for (c_id, s_idx), items in unprocessed_groups.items():
+                    pass_evaluated += _process_scene_group_sourcewise(c_id, s_idx, items)
+                    check_and_print_summaries(processed_pairs)
+                    tracker.update(pass_evaluated)
             print(f"\n▶ [Discovery {discovery_pass}] {pass_evaluated}개 평가 완료")
 
     except KeyboardInterrupt:

@@ -17,7 +17,7 @@ from utils import (
     preload_content_metadata,
     init_pipeline, load_jsonl, append_jsonl,
     sort_jsonl_file,
-    load_keypoints_by_content, check_input_file,
+    load_keypoints_by_content, check_input_file, load_content_indices,
     load_scenes,
     load_video_metadata, format_video_context,
     print_pipeline_banner, print_pipeline_done, ProgressTracker,
@@ -554,6 +554,7 @@ def main():
                         help="Response 생성에 사용할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
     args, client = init_pipeline(parser.parse_args())
+    content_indices = load_content_indices()
 
     # Keypoint 로드 (scene_idx → start/end_time 매핑용)
     keypoints_by_content = load_keypoints_by_content(args.keypoints_file)
@@ -619,6 +620,7 @@ def main():
                 q_type = mode_query_types[q_idx] if q_idx < len(mode_query_types) else "tangential"
                 if (c_id, s_idx, mode, q_text) not in completed_pairs:
                     pending_items.append({
+                        "index":      rec.get("index", content_indices.get(c_id, 999)),
                         "content_id": c_id,
                         "scene_idx":  s_idx,
                         "mode":       mode,
@@ -630,7 +632,8 @@ def main():
             return 0
 
         keypoints = keypoints_by_content.get(c_id, [])
-        if c_id not in _checked_contents:
+        requires_gcs = any(item["mode"] != "blank" for item in pending_items)
+        if requires_gcs and c_id not in _checked_contents:
             if not check_gcs_files_exist(args.gs_bucket_name, c_id):
                 return 0
             preload_content_metadata(args.gs_bucket_name, c_id)
@@ -699,14 +702,16 @@ def main():
                             ttft_str = f"TTFT={ttft:.2f}s, " if ttft is not None else ""
                             print(f"  -> [{mode}] OK ({ttft_str}total={elapsed:.1f}s, {length_info}자)")
 
-                        record = {
-                            "content_id": c_id,
-                            "scene_idx":  scene_idx,
-                            "mode":       mode,
-                            "query_type": item.get("query_type", "tangential"),
-                            "query":      query,
-                            "answer":     answer,
-                        }
+                        from collections import OrderedDict
+                        record = OrderedDict([
+                            ("index",      item.get("index", content_indices.get(c_id, 999))),
+                            ("content_id", c_id),
+                            ("scene_idx",  scene_idx),
+                            ("mode",       mode),
+                            ("query_type", item.get("query_type", "tangential")),
+                            ("query",      query),
+                            ("answer",     answer),
+                        ])
                         append_jsonl(args.output_file, record, lock=file_write_lock)
                         completed_pairs.add((c_id, scene_idx, mode, query))
                         count += 1
@@ -751,14 +756,16 @@ def main():
                         ttft_str = f"TTFT={ttft:.2f}s, " if ttft is not None else ""
                         print(f"  -> [{mode}] OK ({ttft_str}total={elapsed:.1f}s, {length_info}자)")
 
-                    record = {
-                        "content_id": c_id,
-                        "scene_idx":  scene_idx,
-                        "mode":       mode,
-                        "query_type": item.get("query_type", "tangential"),
-                        "query":      query,
-                        "answer":     answer,
-                    }
+                    from collections import OrderedDict
+                    record = OrderedDict([
+                        ("index",      item.get("index", content_indices.get(c_id, 999))),
+                        ("content_id", c_id),
+                        ("scene_idx",  scene_idx),
+                        ("mode",       mode),
+                        ("query_type", item.get("query_type", "tangential")),
+                        ("query",      query),
+                        ("answer",     answer),
+                    ])
                     append_jsonl(args.output_file, record, lock=file_write_lock)
                     completed_pairs.add((c_id, scene_idx, mode, query))
                     count += 1
@@ -785,6 +792,7 @@ def main():
                 mode = r.get("mode")
                 if c_id and s_idx is not None and mode:
                     vh_lookup[(c_id, s_idx, mode)] = {
+                        "index": r.get("index"),
                         "queries": r.get("queries", []),
                         "query_types": r.get("query_types", [])
                     }

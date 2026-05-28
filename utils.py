@@ -523,25 +523,30 @@ def load_scenes(gs_bucket_name, content_id, mode="ref"):
 
 
 def load_video_metadata(gs_bucket_name, content_id):
-    """*_final.jsonl의 첫 줄에서 video_metadata 헤더를 추출합니다.
+    """로컬의 assets/video_metadata.jsonl 파일에서 content_id에 해당하는 메타데이터를 로드합니다.
+    파일을 찾을 수 없거나 매칭되는 content_id가 없으면 ValueError를 발생시킵니다.
 
     Returns:
-        dict (title, channel, upload_date 등) 또는 빈 dict
+        dict (title, channel, upload_date, description 등)
     """
-    path_template, _ = _GCS_MODE_MAP["final"]
-    blob_path = path_template.format(cid=content_id)
-    text = download_gcs_text(gs_bucket_name, blob_path)
-    for line in text.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-            if record.get("_type") == "video_metadata":
-                return record
-        except json.JSONDecodeError:
-            pass
-        break  # 첫 줄이 metadata가 아니면 없는 것
-    return {}
+    local_path = "video_metadata.jsonl"
+    if not os.path.exists(local_path):
+        raise FileNotFoundError(f"로컬 메타데이터 파일을 찾을 수 없습니다: {local_path}")
+
+    with open(local_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+                if record.get("content_id") == content_id:
+                    if "_type" not in record:
+                        record["_type"] = "video_metadata"
+                    return record
+            except json.JSONDecodeError:
+                continue
+            
+    raise ValueError(f"로컬 video_metadata.jsonl 파일에서 content_id '{content_id}'를 찾을 수 없습니다.")
 
 
 def format_video_context(metadata):
@@ -557,6 +562,8 @@ def format_video_context(metadata):
         parts.append(f"채널: {metadata['channel']}")
     if metadata.get("title"):
         parts.append(f"제목: {metadata['title']}")
+    if metadata.get("description"):
+        parts.append(f"설명(Description): {metadata['description']}")
     return "\n".join(parts) if parts else ""
 
 
@@ -1178,10 +1185,62 @@ def print_pipeline_done(output_path):
     print("=" * 50)
 
 
-_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "imgvlm_sentence": 3, "imgvlm_chunk2": 4, "imgvlm_graph": 5, "blank": 6, "kss": 7}
+_MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "meta": 3, "imgvlm_sentence": 4, "imgvlm_chunk2": 5, "imgvlm_graph": 6, "blank": 7, "kss": 8}
+
+
+def load_content_indices():
+    """content_list.json, assets/keypoint_scenes.jsonl, 또는 video_metadata.jsonl을 참조하여
+    content_id -> index 매핑 딕셔너리를 반환합니다."""
+    indices = {}
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 1. content_list.json (인덱스 순서대로 정렬되어 있음)
+    content_list_path = os.path.join(base_dir, "content_list.json")
+    if os.path.exists(content_list_path):
+        try:
+            with open(content_list_path, "r", encoding="utf-8") as f:
+                cids = json.load(f)
+                if isinstance(cids, list):
+                    for idx, cid in enumerate(cids):
+                        indices[cid] = idx
+        except Exception:
+            pass
+            
+    # 2. assets/keypoint_scenes.jsonl
+    kp_path = os.path.join(base_dir, "assets", "keypoint_scenes.jsonl")
+    if os.path.exists(kp_path):
+        try:
+            with open(kp_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        data = json.loads(line)
+                        cid = data.get("content_id")
+                        idx = data.get("index")
+                        if cid and idx is not None:
+                            indices[cid] = idx
+        except Exception:
+            pass
+            
+    # 3. video_metadata.jsonl
+    meta_path = os.path.join(base_dir, "video_metadata.jsonl")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        data = json.loads(line)
+                        cid = data.get("content_id")
+                        idx = data.get("index")
+                        if cid and idx is not None:
+                            indices[cid] = idx
+        except Exception:
+            pass
+            
+    return indices
+
 
 def sort_jsonl_file(filepath):
-    """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
+    """JSONL 파일을 (index/content_id, scene_idx, mode, query) 순으로 정렬합니다."""
     if not os.path.exists(filepath):
         return
     records = []
@@ -1196,7 +1255,11 @@ def sort_jsonl_file(filepath):
                     pass
     if not records:
         return
+        
+    indices = load_content_indices()
+    
     records.sort(key=lambda x: (
+        x.get("index", indices.get(x.get("content_id", ""), 9999)),
         x.get("content_id", ""),
         x.get("scene_idx", 0),
         _MODE_SORT_ORDER.get(x.get("mode", ""), 99),
