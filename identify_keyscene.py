@@ -427,7 +427,6 @@ def main():
             # ---- 저장 ----
             from collections import OrderedDict
             kp_record = OrderedDict([
-                ("index", content_indices.get(content_id, 999)),
                 ("content_id", content_id),
                 ("keypoints", keypoints),
             ])
@@ -440,6 +439,8 @@ def main():
         print("\n\n사용자에 의해 중단되었습니다.")
         os._exit(1)
 
+    from utils import sort_jsonl_file
+    sort_jsonl_file(args.output_file)
     print_pipeline_done(args.output_file)
 
 

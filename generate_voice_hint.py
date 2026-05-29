@@ -403,7 +403,7 @@ def main():
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
     parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
-    parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "meta"], 
+    parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
     choices=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
@@ -419,33 +419,7 @@ def main():
         print(f"Error: {args.input_file} 에서 Keypoint 데이터를 읽을 수 없습니다.")
         return
 
-    # content_id -> index 매핑 로드
-    content_indices = {}
-    if os.path.exists(args.input_file):
-        with open(args.input_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        data = json.loads(line)
-                        cid = data.get("content_id")
-                        idx = data.get("index")
-                        if cid and idx is not None:
-                            content_indices[cid] = idx
-                    except Exception:
-                        pass
-    metadata_path = "video_metadata.jsonl"
-    if os.path.exists(metadata_path):
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        data = json.loads(line)
-                        cid = data.get("content_id")
-                        idx = data.get("index")
-                        if cid and idx is not None:
-                            content_indices[cid] = idx
-                    except Exception:
-                        pass
+
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
@@ -600,7 +574,6 @@ def main():
                             query_types = ["content_anchored"] * len(queries)
                         from collections import OrderedDict
                         mode_record = OrderedDict()
-                        mode_record["index"] = content_indices.get(content_id, 0)
                         mode_record["content_id"] = content_id
                         mode_record["scene_idx"] = scene_idx
                         mode_record["mode"] = mod

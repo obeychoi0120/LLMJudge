@@ -159,6 +159,8 @@ def main():
     parser.add_argument("--parallel", type=int, default=4, help="동시에 병렬 처리할 비디오(Content) 수 (기본값: 4)")
 
     args, client = init_pipeline(parser.parse_args())
+    # KSS 생성 시 항상 reference metadata를 참조하도록 고정
+    args.use_ref_for_keyscene_summary = True
     content_indices = load_content_indices()
 
     past_summary_config = make_past_summary_config(thinking_level=args.kss_past_summary_thinking_level)
@@ -326,7 +328,6 @@ def main():
                     if scene_key not in summary_pairs:
                         from collections import OrderedDict
                         summary_record = OrderedDict([
-                            ("index", content_indices.get(content_id, 999)),
                             ("content_id", content_id),
                             ("scene_idx", scene_idx),
                             ("start_time", start_time),

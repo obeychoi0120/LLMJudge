@@ -547,8 +547,8 @@ def main():
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--sources", nargs="+",
-                        default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph"],
-                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph"],
+                        default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
+                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
                         help="Response를 생성할 대상 Source (blank=컨텍스트 없이 World Knowledge만 사용)")
     parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
                         help="Response 생성에 사용할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
@@ -620,7 +620,6 @@ def main():
                 q_type = mode_query_types[q_idx] if q_idx < len(mode_query_types) else "tangential"
                 if (c_id, s_idx, mode, q_text) not in completed_pairs:
                     pending_items.append({
-                        "index":      rec.get("index", content_indices.get(c_id, 999)),
                         "content_id": c_id,
                         "scene_idx":  s_idx,
                         "mode":       mode,
@@ -702,9 +701,7 @@ def main():
                             ttft_str = f"TTFT={ttft:.2f}s, " if ttft is not None else ""
                             print(f"  -> [{mode}] OK ({ttft_str}total={elapsed:.1f}s, {length_info}자)")
 
-                        from collections import OrderedDict
                         record = OrderedDict([
-                            ("index",      item.get("index", content_indices.get(c_id, 999))),
                             ("content_id", c_id),
                             ("scene_idx",  scene_idx),
                             ("mode",       mode),
@@ -756,9 +753,7 @@ def main():
                         ttft_str = f"TTFT={ttft:.2f}s, " if ttft is not None else ""
                         print(f"  -> [{mode}] OK ({ttft_str}total={elapsed:.1f}s, {length_info}자)")
 
-                    from collections import OrderedDict
                     record = OrderedDict([
-                        ("index",      item.get("index", content_indices.get(c_id, 999))),
                         ("content_id", c_id),
                         ("scene_idx",  scene_idx),
                         ("mode",       mode),
@@ -792,7 +787,6 @@ def main():
                 mode = r.get("mode")
                 if c_id and s_idx is not None and mode:
                     vh_lookup[(c_id, s_idx, mode)] = {
-                        "index": r.get("index"),
                         "queries": r.get("queries", []),
                         "query_types": r.get("query_types", [])
                     }

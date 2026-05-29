@@ -24,6 +24,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 | **Low-Context**<br>(곁다리 지식 질문) | `imgvlm_chunk2` | VLM 시각 구조화 데이터 (2어절 단편) | 시각 프레임에서 추출한 Subjects/Contexts를 2어절 단위로 단편화·셔플·마스킹한 저작권 안전 형태. 과거 맥락 정보(과거 chunk2)도 제공되어 시청 흐름 유추에 활용 |
 | | `imgvlm_sentence` | VLM 시각 구조화 데이터 (문장형) | 시각 프레임에서 추출한 Subjects/Contexts를 비식별화된 문장 형태로 구성한 데이터. 과거 맥락 정보(과거 sentence)도 함께 제공됨 |
 | | `imgvlm_graph` | VLM 장면 지식 그래프 | 시각 프레임에서 추출한 (subject)-[relation]->(object) 트리플로 장면 관계를 압축 표현. 과거 맥락 정보(과거 graph 트리플)도 제공됨 |
+| | `meta` | 영상 기본 메타데이터 (채널명, 제목 등) | 동영상 내용(비디오/자막/VLM)을 보지 않고, 영상의 채널명/제목/설명 등 메타데이터만 활용해 곁다리 지식 질문 생성 |
 
 #### B-Track 모드 (VH Response 생성)
 
@@ -70,9 +71,9 @@ flowchart TD
     end
 
     subgraph INFRA["공통 인프라"]
-        A1["A-1. identify_keyscene.py"]
+        A1["O-1. identify_keyscene.py"]
         KP["keypoint_scenes.jsonl"]
-        A2["A-2. generate_keyscene_summary.py\n[Phase 1] 과거 요약 (Pro)\n[Phase 2] 현재 생성 (Pro)"]
+        A2["O-2. generate_keyscene_summary.py\n[Phase 1] 과거 요약 (Pro)\n[Phase 2] 현재 생성 (Pro)"]
         KSS["keyscene_summary.jsonl\n(Ground Truth Anchor)"]
     end
 
@@ -85,9 +86,9 @@ flowchart TD
             VHRS["vh_response_scores.jsonl"]
         end
         subgraph ATRACK["A-Track: Voice Hint"]
-            A3["A-3. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / imgvlm_sentence / imgvlm_graph"]
+            A3["A-1. generate_voice_hint.py\nkss / video / raw / raw_with_mmvlm\nimgvlm_chunk2 / imgvlm_sentence / imgvlm_graph / meta"]
             VH["voice_hint.jsonl"]
-            A4["A-4. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
+            A4["A-2. judge_voice_hint.py\n(KSS Anchor 기준, 2기준 10점)"]
             VHS["voice_hint_scores.jsonl"]
         end
     end
@@ -120,10 +121,10 @@ flowchart TD
 
 | Step | 스크립트 | Output | 모델 (기본값) |
 |------|----------|--------|------|
-| A-1 | `identify_keyscene.py` | `keypoint_scenes.jsonl` | `gemini-3.1-flash-lite` |
-| A-2 | `generate_keyscene_summary.py` | `keyscene_summary.jsonl` | `gemini-3.5-flash` |
-| A-3 | `generate_voice_hint.py` | `voice_hint.jsonl` | `gemini-3.5-flash` |
-| A-4 | `judge_voice_hint.py` | `voice_hint_scores.jsonl` | `gemini-3.1-pro-preview` |
+| O-1 | `identify_keyscene.py` | `keypoint_scenes.jsonl` | `gemini-3.1-flash-lite` |
+| O-2 | `generate_keyscene_summary.py` | `keyscene_summary.jsonl` | `gemini-3.5-flash` |
+| A-1 | `generate_voice_hint.py` | `voice_hint.jsonl` | `gemini-3.5-flash` |
+| A-2 | `judge_voice_hint.py` | `voice_hint_scores.jsonl` | `gemini-3.1-pro-preview` |
 | B-1 | `generate_vh_response.py` | `vh_responses.jsonl` | `gemini-3.1-flash-lite` |
 | B-2 | `judge_vh_response.py` | `vh_response_scores.jsonl` | `gemini-3.1-pro-preview` |
 | - | `export_to_excel.py` | Excel 리포트 | - |
@@ -132,13 +133,15 @@ flowchart TD
 
 ## 핵심 설계 기술 상세
 
-### 1. KeyScene 식별: Scene 규모별 적응형 3단계 전략
+### 1. KeyScene 식별: Scene 규모별 적응형 분할 전략
 
-| Scene 수 | 구분 | Stage 1 | Stage 2 |
-|----------|------|---------|---------|
-| ≤ 12개 | A | 전체를 KeyScene으로 그대로 사용 | - |
-| 13 ~ 35개 | B | 2분할 → 각 세그먼트에서 6개씩 추출 | 단순 결합하여 최대 12개 채택 |
-| ≥ 36개 | C | 3분할 → Candidate 리스트 생성 | Selector가 최대 12개 최종 선별 |
+| Scene 수 | 구분 | 분할 및 선별 전략 |
+|----------|------|---------|
+| ≤ 8개 | A | LLM 판단 없이 전체 Scene을 KeyScene으로 그대로 사용 |
+| 9 ~ 15개 | B | 분할 없이 전체 영상에서 8개의 Keypoint 선별 |
+| 16 ~ 32개 | C | 2분할 → 각 세그먼트에서 4개씩 추출 (최대 8개 결합) |
+| 33 ~ 63개 | D | 3분할 → 각 세그먼트에서 4개씩 추출 (최대 12개 결합) |
+| ≥ 64개 | E | 4분할 → 각 세그먼트에서 4개씩 추출 (최대 16개 결합) |
 
 ### 2. KeyScene Summary: 2-Phase 순차 생성전략
 
@@ -367,7 +370,7 @@ python judge_voice_hint.py --modes imgvlm_chunk2 video
 
 ### B-Track (VH Response)
 ```bash
-python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_sentence, imgvlm_graph, blank 등)
+python generate_vh_response.py                    # B-1: 다모드 Response 생성 (video, raw, raw_with_mmvlm, imgvlm_sentence, imgvlm_chunk2, imgvlm_graph, blank 등)
 python judge_vh_response.py                       # B-2: Response Judge
 
 # 특정 Source만 선택하여 실행할 경우 --sources 인자 사용 (여러 개 지정 가능):

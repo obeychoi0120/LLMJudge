@@ -71,7 +71,7 @@ def get_common_argparser(description=""):
     parser.add_argument("--kss_past_summary_thinking_level", default="medium", help="[Session 1] 과거 요약 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--kss_current_scene_model", default="gemini-3.1-pro-preview", help="[Session 2] 현재 장면 묘사 모델명")
     parser.add_argument("--kss_current_scene_thinking_level", default="high", help="[Session 2] 현재 장면 묘사 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--use_ref_for_keyscene_summary", type=lambda x: str(x).lower() == 'true', default=False, help="Summary 생성 시 Ref JSONL 참조 여부")
+    parser.add_argument("--use_ref_for_keyscene_summary", type=lambda x: str(x).lower() == 'true', default=True, help="Summary 생성 시 Ref JSONL 참조 여부")
     parser.add_argument("--vh_judge_model", default="gemini-3.1-pro-preview", help="Voice Hint 질문 Judge 모델명")
     parser.add_argument("--vh_judge_thinking_level", default="high", help="Voice Hint Judge 모델의 Thinking Level (low/medium/high)")
 
@@ -435,7 +435,7 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
     bucket = client.bucket(gs_bucket_name)
 
     required_files = [
-        f"video_540p/{content_id}_540p.mp4",
+        f"video_540p/{content_id}_540p_30fps.mp4",
         f"jsonl/{content_id}_final.jsonl",
         f"jsonl/{content_id}_ref.jsonl",
     ]
@@ -451,7 +451,7 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
 
 
 _GCS_MODE_MAP = {
-    "video": ("video_540p/{cid}_540p.mp4", "video/mp4"),
+    "video": ("video_540p/{cid}_540p_30fps.mp4", "video/mp4"),
     "final": ("jsonl/{cid}_final.jsonl", "text/plain"),
     "ref":   ("jsonl/{cid}_ref.jsonl", "text/plain"),
 }
@@ -969,21 +969,38 @@ def build_mode_parts(gs_bucket_name, content_id, target_modes,
     return past_parts, current_parts
 
 
+def parse_video_duration_from_content_id(content_id):
+    """content_id 명칭(예: '002_..._11m33s')에서 비디오 길이를 초 단위로 파싱합니다.
+    파싱 실패 시 None을 반환합니다.
+    """
+    match = re.search(r'_(\d+)m(?:(\d+)s)?', content_id)
+    if match:
+        minutes = int(match.group(1))
+        seconds = int(match.group(2)) if match.group(2) is not None else 0
+        return float(minutes * 60 + seconds)
+    return None
+
+
 def process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time):
     """[start_time, end_time] 구간으로 클리핑된 비디오 Part를 반환합니다. (VideoMetadata 기반, 캐시 적용)"""
     path_template, mime_type = _GCS_MODE_MAP["video"]
     blob_path = path_template.format(cid=content_id)
     file_uri = f"gs://{gs_bucket_name}/{blob_path}"
 
-    cache_key = f"{gs_bucket_name}/{content_id}/video/{start_time:.3f}-{end_time:.3f}"
+    cache_end = f"{end_time:.3f}" if end_time is not None else "end"
+    cache_key = f"{gs_bucket_name}/{content_id}/video/{start_time:.3f}-{cache_end}"
     if cache_key in _gcs_part_cache:
         return _gcs_part_cache[cache_key]
+
+    video_meta_args = {}
+    if start_time is not None:
+        video_meta_args["start_offset"] = f"{start_time:.3f}s"
+    if end_time is not None:
+        video_meta_args["end_offset"] = f"{end_time:.3f}s"
+
     part = types.Part(
         file_data=types.FileData(file_uri=file_uri, mime_type=mime_type),
-        video_metadata=types.VideoMetadata(
-            start_offset=f"{start_time:.3f}s",
-            end_offset=f"{end_time:.3f}s",
-        ),
+        video_metadata=types.VideoMetadata(**video_meta_args) if video_meta_args else None,
     )
     _gcs_part_cache[cache_key] = part
     return part
@@ -1009,6 +1026,29 @@ def process_gcs_file_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, e
             # ref JSONL은 "duration": "0.0 - 35.97" 형태이므로 파싱하여 사용
             start_time = parse_duration_to_times(start_scene["duration"])[0] if start_scene and start_scene.get("duration") else 0.0
             end_time   = parse_duration_to_times(end_scene["duration"])[1]   if end_scene   and end_scene.get("duration")   else 0.0
+
+            # content_id에서 비디오 실제 길이 유추 후 클리핑 방어
+            video_duration = parse_video_duration_from_content_id(content_id)
+            if video_duration is not None:
+                if end_time > video_duration:
+                    end_time = video_duration - 0.5  # 실제 길이보다 초과 시 안전 마진 0.5초 감쇄
+                elif end_time >= video_duration - 0.5:
+                    end_time = video_duration - 0.5  # 끝에 아주 가까운 경우에도 감쇄하여 초과 방지
+            else:
+                # 파싱 실패 시 마지막 Scene 검출 방어 로직
+                is_last_scene = False
+                if ref_scenes:
+                    last_scene = ref_scenes[-1]
+                    if last_scene.get("scene_idx") == end_idx:
+                        is_last_scene = True
+
+                if is_last_scene and end_time > 1.0:
+                    end_time = end_time - 1.0  # 안전하게 1.0초 감쇄
+
+            # start_time보다 end_time이 작아지지 않도록 보정
+            if end_time is not None:
+                end_time = max(start_time + 0.1, end_time)
+
         return process_gcs_video_part(gs_bucket_name, content_id, start_time, end_time)
     else:
         range_text = get_gcs_text_by_scene_idx(gs_bucket_name, content_id, mode, start_idx, end_idx)
@@ -1222,8 +1262,7 @@ class ContentIndexDict(dict):
 
 
 def load_content_indices():
-    """content_list.json, assets/keypoint_scenes.jsonl, 또는 video_metadata.jsonl을 참조하여
-    content_id -> index 매핑 딕셔너리(ContentIndexDict)를 반환합니다."""
+    """content_list.json을 참조하여 content_id -> index 매핑 딕셔너리(ContentIndexDict)를 반환합니다."""
     indices = ContentIndexDict()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -1239,41 +1278,11 @@ def load_content_indices():
         except Exception:
             pass
             
-    # 2. assets/keypoint_scenes.jsonl
-    kp_path = os.path.join(base_dir, "assets", "keypoint_scenes.jsonl")
-    if os.path.exists(kp_path):
-        try:
-            with open(kp_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        data = json.loads(line)
-                        cid = data.get("content_id")
-                        idx = data.get("index")
-                        if cid and idx is not None:
-                            indices[cid] = idx
-        except Exception:
-            pass
-            
-    # 3. video_metadata.jsonl
-    meta_path = os.path.join(base_dir, "video_metadata.jsonl")
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        data = json.loads(line)
-                        cid = data.get("content_id")
-                        idx = data.get("index")
-                        if cid and idx is not None:
-                            indices[cid] = idx
-        except Exception:
-            pass
-            
     return indices
 
 
 def sort_jsonl_file(filepath):
-    """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
+    """JSONL 파일을 (content_list의 content_id 순서, scene_idx, mode, query) 순으로 정렬합니다."""
     if not os.path.exists(filepath):
         return
     records = []
@@ -1289,8 +1298,10 @@ def sort_jsonl_file(filepath):
     if not records:
         return
         
+    indices = load_content_indices()
+    
     records.sort(key=lambda x: (
-        x.get("content_id", ""),
+        indices.get(x.get("content_id", ""), 9999),
         x.get("scene_idx", 0),
         _MODE_SORT_ORDER.get(x.get("mode", ""), 99),
         x.get("query", ""),

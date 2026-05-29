@@ -40,12 +40,19 @@ This question is a "Content-Anchored" question — it is EXPECTED to directly en
 [Evaluation Criteria]
 
 1. Temporal Immersion & Answerability (Platform Constraints)
-Does the question logically fit the [Current Scene] without making future predictions, and can the TV system immediately answer it based on current information?
-- 5: Perfectly timed. Excludes future speculations like "What will happen next?". Focuses purely on immediately identifiable objects or hidden background knowledge based on specific visual/audio/narrative clues in the [Current Scene].
-- 4: Highly relevant to the current scene and answerable, but the timing or clarity of the clues might be very slightly off.
-- 3: Relevant to the current scene, but the clues are too vague or the focus is too broad, making it less appealing for immediate curiosity resolution.
-- 2: Answerable, but somewhat out of context or might unnecessarily distract the viewer from the current screen.
-- 1: Unanswerable "future prediction" questions (e.g., "What will the result be?") that require watching more of the video to know, OR "late" questions asking about facts already revealed in the [Past Scene Summary].
+Evaluate whether the candidate question is perfectly timed with the [Current Scene] and can be answered immediately, without referencing future events (spoilers/predictions) or being redundant with past events.
+
+To evaluate this accurately, analyze the following three checks in your rationale:
+- Clue Trigger Check: Is there a clear visual, auditory, or narrative clue in the [Current Scene] that naturally sparks this question?
+- Future/Spoiler Check: Does the question or its answer require information from future scenes, or contain spoilers of what will happen next? (Critical violation if yes).
+- Past Redundancy Check: Is the question asking about something already fully resolved or explained in the [Past Scene Summary] (i.e., a "late" question) without any fresh relevance to the [Current Scene]?
+
+Scoring Rubric:
+- 5: Perfect Timing. Clear trigger clue in the [Current Scene]. Absolutely no future predictions or spoilers. The TV system/viewer can answer or explore this immediately.
+- 4: Highly relevant and timed well, but the trigger clue in the [Current Scene] is slightly weak, indirect, or subtle.
+- 3: Moderately timed. The question is answerable, but the connection to the [Current Scene] is weak (feels somewhat generic), OR it feels slightly "late" (referencing past facts with minimal current connection).
+- 2: Poorly timed. The trigger clue is completely absent in the [Current Scene] (feels out-of-nowhere), OR it heavily relies on past information that has already lost its freshness.
+- 1: Critical temporal violation. The question asks about future events ("What will happen?"), contains future spoilers, is completely unanswerable at the current moment, OR is a direct repetition of already answered facts from the [Past Scene Summary] with zero current context.
 
 2. Content Depth & Relevance (Core Topic Engagement)
 How deeply and precisely does the question engage with the CORE topic, event, or person of the current scene?
@@ -70,12 +77,19 @@ If a question successfully leverages such deep, tangential background knowledge 
 [Evaluation Criteria]
 
 1. Temporal Immersion & Answerability (Platform Constraints)
-Does the question logically fit the [Current Scene] without making future predictions, and can the TV system immediately answer it based on current information?
-- 5: Perfectly timed. Excludes future speculations like "What will happen next?". Focuses purely on immediately identifiable objects or hidden background knowledge based on specific visual/audio/narrative clues in the [Current Scene].
-- 4: Highly relevant to the current scene and answerable, but the timing or clarity of the clues might be very slightly off.
-- 3: Relevant to the current scene, but the clues are too vague or the focus is too broad, making it less appealing for immediate curiosity resolution.
-- 2: Answerable, but somewhat out of context or might unnecessarily distract the viewer from the current screen.
-- 1: Unanswerable "future prediction" questions (e.g., "What will the result be?") that require watching more of the video to know, OR "late" questions asking about facts already revealed in the [Past Scene Summary].
+Evaluate whether the candidate question is perfectly timed with the [Current Scene] and can be answered immediately, without referencing future events (spoilers/predictions) or being redundant with past events.
+
+To evaluate this accurately, analyze the following three checks in your rationale:
+- Clue Trigger Check: Is there a clear visual, auditory, or narrative clue in the [Current Scene] that naturally sparks this question?
+- Future/Spoiler Check: Does the question or its answer require information from future scenes, or contain spoilers of what will happen next? (Critical violation if yes).
+- Past Redundancy Check: Is the question asking about something already fully resolved or explained in the [Past Scene Summary] (i.e., a "late" question) without any fresh relevance to the [Current Scene]?
+
+Scoring Rubric:
+- 5: Perfect Timing. Clear trigger clue in the [Current Scene]. Absolutely no future predictions or spoilers. The TV system/viewer can answer or explore this immediately.
+- 4: Highly relevant and timed well, but the trigger clue in the [Current Scene] is slightly weak, indirect, or subtle.
+- 3: Moderately timed. The question is answerable, but the connection to the [Current Scene] is weak (feels somewhat generic), OR it feels slightly "late" (referencing past facts with minimal current connection).
+- 2: Poorly timed. The trigger clue is completely absent in the [Current Scene] (feels out-of-nowhere), OR it heavily relies on past information that has already lost its freshness.
+- 1: Critical temporal violation. The question asks about future events ("What will happen?"), contains future spoilers, is completely unanswerable at the current moment, OR is a direct repetition of already answered facts from the [Past Scene Summary] with zero current context.
 
 2. Curiosity & Hook (Intrinsic Intrigue & Tone)
 Evaluate the psychological hook, conversational tone, and naturalness of the question ITSELF, entirely independent of Criterion 1. Even if the question asks about the future or is poorly timed, how engaging is the wording?
@@ -90,7 +104,7 @@ Output ONLY the following JSON. Do NOT output any other text.
 Write the rationale first, followed by the score for each criterion.
 {
     "temporal_immersion": {
-        "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
+        "rationale": "Clue Check: <Identify the clue in the current scene or state if missing>. Future/Spoiler Check: <Explain if future knowledge/spoiler is leaked>. Past Redundancy Check: <Explain if it is a late question>. Final justification for the score.",
         "score": <integer 1-5>
     },
     "content_depth": {
@@ -104,7 +118,7 @@ Output ONLY the following JSON. Do NOT output any other text.
 Write the rationale first, followed by the score for each criterion.
 {
     "temporal_immersion": {
-        "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
+        "rationale": "Clue Check: <Identify the clue in the current scene or state if missing>. Future/Spoiler Check: <Explain if future knowledge/spoiler is leaked>. Past Redundancy Check: <Explain if it is a late question>. Final justification for the score.",
         "score": <integer 1-5>
     },
     "curiosity_and_hook": {
@@ -174,7 +188,6 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
 
         from collections import OrderedDict
         score_record = OrderedDict([
-            ("index", q_item.get("index")),
             ("content_id", content_id),
             ("scene_idx", scene_idx),
             ("mode", mode),
@@ -267,7 +280,7 @@ def main():
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "meta"], 
+    parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
     choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="평가할 모드 직접 지정")
     
 
@@ -343,7 +356,6 @@ def main():
                     q_type = query_types_list[q_idx] if q_idx < len(query_types_list) else "tangential"
                     if (content_id, mode, q_text) not in processed_pairs:
                         accumulated_groups.setdefault(group_key, []).append({
-                            "index": scene_item.get("index", content_indices.get(content_id, 999)),
                             "content_id": content_id,
                             "scene_idx": scene_idx,
                             "mode": mode,
@@ -383,7 +395,7 @@ def main():
                     futures = [
                         executor.submit(
                             judge_one,
-                            {"index": item.get("index"), "mode": item["mode"], "query_type": item.get("query_type", "tangential"), "query": item["query"]},
+                            {"mode": item["mode"], "query_type": item.get("query_type", "tangential"), "query": item["query"]},
                             item["content_id"], item["scene_idx"], item["detailed_summary"],
                             client, args, judge_config, file_write_lock
                         )

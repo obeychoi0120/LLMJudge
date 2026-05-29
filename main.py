@@ -23,6 +23,8 @@ def main():
 
     args = parser.parse_args()
     args = load_config(args)
+    # KSS 생성 시 항상 reference metadata를 참조하도록 고정
+    args.use_ref_for_keyscene_summary = True
 
     if not args.gcp_project_id or not args.gs_bucket_name:
         print("Error: GCP Project ID 및 GCS 버킷 이름이 필요합니다. (--gcp_project_id 인자를 주입하거나 config.json을 생성하세요)")
@@ -30,7 +32,7 @@ def main():
 
     # 기본값 설정 로직 (config 적용 후)
     if args.keyscene_summary_file is None:
-        args.keyscene_summary_file = "assets/keyscene_summary_withref.jsonl" if args.use_ref_for_keyscene_summary else "assets/keyscene_summary_noref.jsonl"
+        args.keyscene_summary_file = "assets/keyscene_summary.jsonl"
 
     common_project_args = [
         "--gcp_project_id", args.gcp_project_id,

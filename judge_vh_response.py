@@ -161,8 +161,8 @@ def main():
     parser = get_common_argparser(description="Evaluate VH Responses using Judge model")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
-    parser.add_argument("--sources", nargs="+", default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph"], 
-                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph"], help="평가할 Source 직접 지정")
+    parser.add_argument("--sources", nargs="+", default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], 
+                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], help="평가할 Source 직접 지정")
     parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
                         help="평가할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
@@ -236,7 +236,6 @@ def main():
         )
 
         record = OrderedDict([
-            ("index",      data.get("index", content_indices.get(c_id, 999))),
             ("content_id", c_id),
             ("scene_idx",  s_idx),
             ("mode",       mode),
