@@ -547,8 +547,8 @@ def main():
     parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--sources", nargs="+",
-                        default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
-                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "imgvlm_chunk2"],
+                        default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph"],
+                        choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph"],
                         help="Response를 생성할 대상 Source (blank=컨텍스트 없이 World Knowledge만 사용)")
     parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
                         help="Response 생성에 사용할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")

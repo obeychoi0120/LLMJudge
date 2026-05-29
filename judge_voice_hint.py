@@ -267,7 +267,7 @@ def main():
     parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
     parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
-    parser.add_argument("--modes", nargs="+", default=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
+    parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "meta"], 
     choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="평가할 모드 직접 지정")
     
 
@@ -291,7 +291,7 @@ def main():
 
     file_write_lock = threading.Lock()
     target_modes_set = set(args.modes)
-    target_mode_order = ["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"]
+    target_mode_order = ["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "meta"]
     
     printed_content_ids = set()
     _VH_SCORE_KEYS = ["temporal_immersion", "content_depth", "curiosity_and_hook"]

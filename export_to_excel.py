@@ -6,7 +6,7 @@ from utils import load_jsonl, load_content_indices
 
 content_indices = load_content_indices()
 
-_MODE_ORDER = ["blank", "meta", "video", "kss", "raw", "raw_with_mmvlm", "imgvlm_chunk2", "imgvlm_graph"]
+_MODE_ORDER = ["blank", "meta", "video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph"]
 
 def _sort_modes(modes):
     """MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순."""
@@ -155,9 +155,8 @@ def export_vh_details(input_dir, output_dir):
         print("[Skip] Voice Hint Score 데이터가 비어 있습니다.")
         return
 
-    # index 순으로 정렬
+    # content_id 순으로 정렬
     flat_vh.sort(key=lambda x: (
-        x.get("index", 999),
         x.get("content_id", ""),
         x.get("scene_idx", 0),
         x.get("mode", ""),
@@ -249,7 +248,7 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
 
     # ── Data rows (Row 3~) ──
     data_start_row = 3
-    sorted_cids = sorted(all_cids, key=lambda c: content_indices.get(c, 999))
+    sorted_cids = sorted(all_cids)
     for r_idx, cid in enumerate(sorted_cids):
         row_num = data_start_row + r_idx
         idx_val = content_indices.get(cid, 999)
@@ -373,7 +372,7 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
 
     # ── Data rows (Row 4~) ──
     data_start_row = 4
-    sorted_cids = sorted(all_cids, key=lambda c: content_indices.get(c, 999))
+    sorted_cids = sorted(all_cids)
     for r_idx, cid in enumerate(sorted_cids):
         row_num = data_start_row + r_idx
         idx_val = content_indices.get(cid, 999)
@@ -458,7 +457,7 @@ def export_vh_scores(input_dir, output_dir):
         ordered_modes = _sort_modes(all_modes)
 
         # 트랙에 해당하는 모드만 필터링
-        target_modes = ["video", "kss", "raw", "raw_with_mmvlm"] if q_type == "content_anchored" else ["meta", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+        target_modes = ["video", "raw", "raw_with_mmvlm"] if q_type == "content_anchored" else ["imgvlm_sentence", "imgvlm_graph", "meta"]
         ordered_modes = [m for m in ordered_modes if m in target_modes]
 
         if not ordered_modes:
@@ -636,9 +635,8 @@ def export_vh_response_details(input_dir, output_dir, query_source="kss"):
         print("[Skip] VH Response Score 데이터가 비어 있습니다.")
         return
 
-    # index 순으로 정렬
+    # content_id 순으로 정렬
     flat_rows.sort(key=lambda x: (
-        x.get("index", 999),
         x.get("content_id", ""),
         x.get("scene_idx", 0),
         x.get("mode", ""),
@@ -696,7 +694,7 @@ def export_vh_response_scores(input_dir, output_dir, query_source="kss"):
 
     track_config = {
         "high-context": ["video", "raw", "raw_with_mmvlm"],
-        "low-context": ["blank", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"]
+        "low-context": ["blank", "imgvlm_sentence", "imgvlm_graph"]
     }
     if query_source == "sourcewise":
         track_config["high-context"] = [m for m in track_config["high-context"] if m != "blank"]
@@ -750,7 +748,7 @@ def export_voice_hints(input_dir, output_dir):
     query_columns = [f"queries_{m}" for m in ordered_modes]
     
     flat_rows = []
-    sorted_cids = sorted(scenes_by_content.keys(), key=lambda c: content_indices.get(c, 999))
+    sorted_cids = sorted(scenes_by_content.keys())
     for c_id in sorted_cids:
         first = True
         for s_idx in sorted(scenes_by_content[c_id].keys()):

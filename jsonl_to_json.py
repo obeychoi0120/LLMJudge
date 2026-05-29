@@ -162,13 +162,7 @@ def main():
                         return len(reference_order) # 리스트에 없으면 맨 뒤로
                 data.sort(key=get_sort_key)
             else:
-                try:
-                    from utils import load_content_indices
-                    indices = load_content_indices()
-                    if indices:
-                        data.sort(key=lambda item: indices.get(item.get("content_id", ""), 999))
-                except Exception:
-                    pass
+                data.sort(key=lambda item: item.get("content_id", ""))
             
             # 사람이 보기 편하도록 indent=4 속성 추가
             with open(json_path, "w", encoding="utf-8") as f:

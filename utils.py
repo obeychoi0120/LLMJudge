@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import re
 from google import genai
 from google.genai import types
 from google.cloud import storage
@@ -1188,10 +1189,42 @@ def print_pipeline_done(output_path):
 _MODE_SORT_ORDER = {"video": 0, "raw": 1, "raw_with_mmvlm": 2, "meta": 3, "imgvlm_sentence": 4, "imgvlm_chunk2": 5, "imgvlm_graph": 6, "blank": 7, "kss": 8}
 
 
+class ContentIndexDict(dict):
+    """content_id에서 앞의 접두사 숫자를 파싱하여 인덱스로 반환하거나,
+    기존 딕셔너리 및 lstrip("_") 매핑을 지원하는 하위 호환 딕셔너리 클래스입니다."""
+    def get(self, key, default=None):
+        if not key:
+            return default
+            
+        key_str = str(key)
+        
+        # 1. 딕셔너리에서 직접 찾기
+        if key_str in self:
+            return self[key_str]
+            
+        # 2. content_id가 "001_..." 형태인지 정규식으로 파싱하여 숫자 리턴
+        match = re.match(r"^(\d+)_", key_str)
+        if match:
+            return int(match.group(1))
+            
+        # 3. 접두사 숫자 및 언더바를 제외한 본문 매칭
+        clean_key = re.sub(r"^\d+_", "", key_str.lstrip("_")).lstrip("_")
+        for k, v in self.items():
+            clean_k = re.sub(r"^\d+_", "", str(k).lstrip("_")).lstrip("_")
+            if clean_k == clean_key:
+                return v
+                
+        # 4. 언더바를 제거한 후 찾아보기
+        stripped = key_str.lstrip("_")
+        if stripped in self:
+            return self[stripped]
+        return default
+
+
 def load_content_indices():
     """content_list.json, assets/keypoint_scenes.jsonl, 또는 video_metadata.jsonl을 참조하여
-    content_id -> index 매핑 딕셔너리를 반환합니다."""
-    indices = {}
+    content_id -> index 매핑 딕셔너리(ContentIndexDict)를 반환합니다."""
+    indices = ContentIndexDict()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
     # 1. content_list.json (인덱스 순서대로 정렬되어 있음)
@@ -1240,7 +1273,7 @@ def load_content_indices():
 
 
 def sort_jsonl_file(filepath):
-    """JSONL 파일을 (index/content_id, scene_idx, mode, query) 순으로 정렬합니다."""
+    """JSONL 파일을 (content_id, scene_idx, mode, query) 순으로 정렬합니다."""
     if not os.path.exists(filepath):
         return
     records = []
@@ -1256,10 +1289,7 @@ def sort_jsonl_file(filepath):
     if not records:
         return
         
-    indices = load_content_indices()
-    
     records.sort(key=lambda x: (
-        x.get("index", indices.get(x.get("content_id", ""), 9999)),
         x.get("content_id", ""),
         x.get("scene_idx", 0),
         _MODE_SORT_ORDER.get(x.get("mode", ""), 99),
