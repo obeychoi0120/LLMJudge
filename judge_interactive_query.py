@@ -18,7 +18,7 @@ from utils import (
 )
 
 # ───────────────────────────────────────────────
-# Voice Hint Judge 프롬프트 — query_type별 분리
+# Interactive Query Judge 프롬프트 — query_type별 분리
 # ───────────────────────────────────────────────
 
 # 공통 도입부
@@ -194,10 +194,10 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
 
         score_dict = retry_parse_json(
             lambda: evaluate_query(
-                client, args.vh_judge_model, judge_config,
+                client, args.interactive_query_judge_model, judge_config,
                 detailed_summary, query_text, query_type=query_type
             ),
-            label=f"VH Judge (Scene {scene_idx}, {mode}, {query_type})",
+            label=f"Interactive Query Judge (Scene {scene_idx}, {mode}, {query_type})",
         )
 
         score_keys = _SCORE_KEYS_BY_TYPE.get(query_type, ["scene_relevance", "curiosity_hook"])
@@ -253,7 +253,7 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
     except Exception as e:
         return {"mode": mode, "query_type": query_type, "query": query_text, "success": False, "msg": f"[Error] Judge 최종 실패 ({mode}, {query_type}): {e}"}
 
-def is_content_id_fully_evaluated_vh(content_id, input_file, target_modes_set, summary_map, scores_file):
+def is_content_id_fully_evaluated_interactive_query(content_id, input_file, target_modes_set, summary_map, scores_file):
     """content_id에 해당하는 모든 target_mode의 질문들이 scores_file에 정상적으로 평가 완료되었는지 확인합니다."""
     expected_scenes = {s_idx for (c_id, s_idx) in summary_map.keys() if c_id == content_id}
     if not expected_scenes:
@@ -305,21 +305,21 @@ def is_content_id_fully_evaluated_vh(content_id, input_file, target_modes_set, s
 
 
 def main():
-    parser = get_common_argparser(description="Voice Hint 질문을 KeyScene Summary 기반으로 품질 평가")
-    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint 질문 목록 JSONL 경로")
+    parser = get_common_argparser(description="Interactive Query 질문을 KeyScene Summary 기반으로 품질 평가")
+    parser.add_argument("--input_file", default="assets/interactive_queries.jsonl", help="Interactive Query 질문 목록 JSONL 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
-    parser.add_argument("--scores_file", default="assets/voice_hint_scores.jsonl", help="Voice Hint 질문별 Judge 점수 저장 경로")
+    parser.add_argument("--scores_file", default="assets/interactive_query_scores.jsonl", help="Interactive Query 질문별 Judge 점수 저장 경로")
     parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
     choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="평가할 모드 직접 지정")
     
 
     args, client = init_pipeline(parser.parse_args())
     content_indices = load_content_indices()
-    judge_config = make_query_judge_config(thinking_level=args.vh_judge_thinking_level)
+    judge_config = make_query_judge_config(thinking_level=args.interactive_query_judge_thinking_level)
 
     ensure_output_dir(args.scores_file)
 
-    if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
+    if not check_input_file(args.input_file, hint="먼저 generate_interactive_query.py를 실행하세요."):
         return
 
     # Summary 맵 로드: (content_id, scene_idx) -> summary_text
@@ -329,14 +329,14 @@ def main():
     elif not os.path.exists(args.kss_file):
         print(f"[Warning] Summary 파일을 찾을 수 없습니다: {args.kss_file}")
 
-    print_pipeline_banner("Voice Hint 질문 품질 평가 프로세스 시작")
+    print_pipeline_banner("Interactive Query 질문 품질 평가 프로세스 시작")
 
     file_write_lock = threading.Lock()
     target_modes_set = set(args.modes)
     target_mode_order = ["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "meta"]
     
     printed_content_ids = set()
-    _VH_SCORE_KEYS = ["scene_relevance", "content_depth", "curiosity_hook"]
+    _INTERACTIVE_QUERY_SCORE_KEYS = ["scene_relevance", "content_depth", "curiosity_hook"]
 
     def check_and_print_summaries():
         all_content_ids = set()
@@ -346,9 +346,9 @@ def main():
                 all_content_ids.add(c_id)
         for c_id in sorted(all_content_ids, key=lambda c: content_indices.get(c, 999)):
             if c_id not in printed_content_ids:
-                if is_content_id_fully_evaluated_vh(c_id, args.input_file, target_modes_set, summary_map, args.scores_file):
+                if is_content_id_fully_evaluated_interactive_query(c_id, args.input_file, target_modes_set, summary_map, args.scores_file):
                     printed_content_ids.add(c_id)
-                    print_scores_summary(args.scores_file, c_id, _VH_SCORE_KEYS, target_mode_order, max_score=10)
+                    print_scores_summary(args.scores_file, c_id, _INTERACTIVE_QUERY_SCORE_KEYS, target_mode_order, max_score=10)
 
     try:
         discovery_pass = 0
@@ -356,7 +356,7 @@ def main():
             discovery_pass += 1
             check_and_print_summaries()
 
-            # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 VH 레코드를 감지
+            # 매 pass마다 입력 파일을 다시 읽어 새로 추가된 Interactive Query 레코드를 감지
             processed_pairs = load_processed_pairs(args.scores_file, key_fields=("content_id", "mode", "query"))
             if discovery_pass == 1 and processed_pairs:
                 print(f"[{len(processed_pairs)}] 개의 (content_id, mode, query) 쌍이 이미 처리됨.")

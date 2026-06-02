@@ -19,10 +19,10 @@ from utils import (
 )
 
 # ───────────────────────────────────────────────
-# Voice Hint 생성 모델 프롬프트
+# Interactive Query 생성 모델 프롬프트
 # ───────────────────────────────────────────────
 
-_VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현재 장면)을 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
+_INTERACTIVE_QUERY_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현재 장면)을 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
 
 당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 통해 콘텐츠의 장르(드라마/스포츠/게임/뉴스/다큐 등)와 도메인을 먼저 파악하고, 아래 장르별 전략에 정확히 매칭하세요.
 
@@ -66,7 +66,7 @@ _VOICE_HINT_BASE = """당신은 제공되는 시청 기억(과거 맥락 및 현
     ]
 }"""
 
-_VOICE_HINT_BASE_LOW_CONTEXT = """당신은 제공되는 시청 기억(과거 맥락 및 현재 장면)을 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
+_INTERACTIVE_QUERY_BASE_LOW_CONTEXT = """당신은 제공되는 시청 기억(과거 맥락 및 현재 장면)을 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
 
 당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 통해 콘텐츠의 장르(드라마/스포츠/게임/뉴스/다큐 등)와 도메인을 참고하고, 아래 전략에 맞추세요. (단, 저작권 제약으로 인해 과거 맥락과 현재 장면 모두 비식별화된 VLM 추출 데이터 형식으로 제공됩니다.)
 
@@ -110,7 +110,7 @@ _VOICE_HINT_BASE_LOW_CONTEXT = """당신은 제공되는 시청 기억(과거 �
     ]
 }"""
 
-_VOICE_HINT_PROMPT_VIDEO = _VOICE_HINT_BASE + """
+_INTERACTIVE_QUERY_PROMPT_VIDEO = _INTERACTIVE_QUERY_BASE + """
 [입력 형식 설명]
 당신에게는 실제 비디오 클립이 제공됩니다. 비디오 클립의 시각 및 청각 정보를 모두 활용하여 흥미로운 질문을 생성하세요.
 
@@ -121,7 +121,7 @@ _VOICE_HINT_PROMPT_VIDEO = _VOICE_HINT_BASE + """
 - 3단계 (질문 기획): 비디오의 현재 장면에 포착된 단서에 집중하여 queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
-_VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
+_INTERACTIVE_QUERY_PROMPT_RAW = _INTERACTIVE_QUERY_BASE + """
 [입력 형식 설명]
 당신에게는 음성 인식(ASR) 텍스트와 화면 글씨(OCR) 텍스트 데이터가 Scene 단위로 제공됩니다.
 각 Scene의 구조:
@@ -142,7 +142,7 @@ _VOICE_HINT_PROMPT_RAW = _VOICE_HINT_BASE + """
 """
 
 
-_VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE_LOW_CONTEXT + """
+_INTERACTIVE_QUERY_PROMPT_IMGVLM_CHUNK2 = _INTERACTIVE_QUERY_BASE_LOW_CONTEXT + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [입력 형식 설명]
@@ -167,7 +167,7 @@ _VOICE_HINT_PROMPT_IMGVLM_CHUNK2 = _VOICE_HINT_BASE_LOW_CONTEXT + """
 """
 
 
-_VOICE_HINT_PROMPT_IMGVLM_SENTENCE = _VOICE_HINT_BASE_LOW_CONTEXT + """
+_INTERACTIVE_QUERY_PROMPT_IMGVLM_SENTENCE = _INTERACTIVE_QUERY_BASE_LOW_CONTEXT + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [입력 형식 설명]
@@ -190,7 +190,7 @@ _VOICE_HINT_PROMPT_IMGVLM_SENTENCE = _VOICE_HINT_BASE_LOW_CONTEXT + """
 """
 
 
-_VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE_LOW_CONTEXT + """
+_INTERACTIVE_QUERY_PROMPT_IMGVLM_GRAPH = _INTERACTIVE_QUERY_BASE_LOW_CONTEXT + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [입력 형식 설명]
@@ -208,7 +208,7 @@ _VOICE_HINT_PROMPT_IMGVLM_GRAPH = _VOICE_HINT_BASE_LOW_CONTEXT + """
 - 3단계 (미래 추측 차단): 미래 지향적 질문을 차단하겠다고 선언.
 - 4단계 (질문 기획): 1단계에서 유추된 상황을 바탕으로, 화면 내 사물에 대한 단순 묘사 질문을 엄격히 금지하고, queries[0]과 queries[1] 모두 시각 단서에서 파생된 서로 다른 주제의 Tangential 질문으로 기획.
 """
-_VOICE_HINT_PROMPT_RAW_WITH_MMVLM = _VOICE_HINT_BASE + """
+_INTERACTIVE_QUERY_PROMPT_RAW_WITH_MMVLM = _INTERACTIVE_QUERY_BASE + """
 [입력 형식 설명]
 당신에게는 음성 인식(ASR) 텍스트와 화면 글씨(OCR) 텍스트 데이터가 Scene 단위로 제공되며,
 추가로 소형 VLM이 시각·음성을 종합하여 장면의 상황을 서술한 보조 참고 정보(vlm_mm_description)가 함께 제공됩니다.
@@ -231,7 +231,7 @@ _VOICE_HINT_PROMPT_RAW_WITH_MMVLM = _VOICE_HINT_BASE + """
 - 4단계 (질문 기획): 종합하여 유추한 현재 장면의 새 단서에 집중하여 queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
-_VOICE_HINT_PROMPT_KSS = _VOICE_HINT_BASE + """
+_INTERACTIVE_QUERY_PROMPT_KSS = _INTERACTIVE_QUERY_BASE + """
 [입력 형식 설명]
 당신에게는 전문가가 영상을 직접 시청하고 작성한 **KeyScene Summary(핵심 장면 요약)**가 제공됩니다.
 Summary는 다음 두 부분으로 구성됩니다:
@@ -248,7 +248,7 @@ Summary는 다음 두 부분으로 구성됩니다:
 - 4단계 (질문 기획): 3단계에서 식별된 핵심 사건 2가지에 각각 매칭하여, queries[0]과 queries[1] 모두 서로 다른 핵심 주제에 직결된 Content-Anchored 질문으로 기획.
 """
 
-_VOICE_HINT_PROMPT_META = """당신은 제공되는 비디오의 메타데이터를 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
+_INTERACTIVE_QUERY_PROMPT_META = """당신은 제공되는 비디오의 메타데이터를 기반으로 스마트 TV 플랫폼에서 시청자의 리모컨 상호작용과 플랫폼 체류 시간을 극대화하는 '개인화된 예상 질문' 생성 전문가입니다.
 
 [주의] 이 모드는 저작권 및 플랫폼 제약으로 인해 영상 내용(비디오 및 상세 장면 맥락)에 전혀 접근할 수 없는 **메타데이터 전용 모드**입니다.
 오직 제공되는 [Video Context] (채널명, 제목, 설명 등)만을 분석하여 영상의 장르와 흐름을 추론하고, 시청자가 흥미로워할 만한 **곁다리 지식 질문(Tangential Knowledge) 2개**를 생성하세요.
@@ -278,25 +278,25 @@ _VOICE_HINT_PROMPT_META = """당신은 제공되는 비디오의 메타데이터
     ]
 }"""
 
-def make_voice_hint_configs(thinking_level=0):
-    """Voice Hint 생성용 GenerateContentConfig 정보를 반환합니다."""
+def make_interactive_query_configs(thinking_level=0):
+    """Interactive Query 생성용 GenerateContentConfig 정보를 반환합니다."""
     return {
-        "video": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_VIDEO, thinking_level=thinking_level),
-        "raw": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW, thinking_level=thinking_level),
-        "raw_with_mmvlm": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
-        "imgvlm_chunk2": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_CHUNK2, thinking_level=thinking_level),
-        "imgvlm_sentence": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_SENTENCE, thinking_level=thinking_level),
-        "imgvlm_graph": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_IMGVLM_GRAPH, thinking_level=thinking_level),
-        "kss": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_KSS, thinking_level=thinking_level),
-        "meta": make_generate_config(system_instruction=_VOICE_HINT_PROMPT_META, thinking_level=thinking_level)
+        "video": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_VIDEO, thinking_level=thinking_level),
+        "raw": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_RAW, thinking_level=thinking_level),
+        "raw_with_mmvlm": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_RAW_WITH_MMVLM, thinking_level=thinking_level),
+        "imgvlm_chunk2": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_IMGVLM_CHUNK2, thinking_level=thinking_level),
+        "imgvlm_sentence": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_IMGVLM_SENTENCE, thinking_level=thinking_level),
+        "imgvlm_graph": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_IMGVLM_GRAPH, thinking_level=thinking_level),
+        "kss": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_KSS, thinking_level=thinking_level),
+        "meta": make_generate_config(system_instruction=_INTERACTIVE_QUERY_PROMPT_META, thinking_level=thinking_level)
     }
 
-def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_parts, end_time, target_modes=None, kss_text=None, video_context="", scene_idx=None, start_time=0.0):
-    """하나의 Keypoint에 대해 Voice Hint를 지정된 모드에 대해서만 병렬 수행합니다."""
+def process_interactive_query_modes(client, interactive_query_model_name, interactive_query_configs, past_parts, current_parts, end_time, target_modes=None, kss_text=None, video_context="", scene_idx=None, start_time=0.0):
+    """하나의 Keypoint에 대해 Interactive Query를 지정된 모드에 대해서만 병렬 수행합니다."""
     if target_modes is None:
         target_modes = ["video", "raw_with_mmvlm", "imgvlm"]
         
-    def generate_voice_hints(mode):
+    def generate_interactive_queries(mode):
         contents = []
 
         # Video Context: 채널명/제목으로 도메인 컨텍스트 제공
@@ -351,18 +351,18 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
                     "제공된 [현재 시청 중인 장면]을 바탕으로 시스템 프롬프트의 [사고 과정 가이드] 지침에 따라 콘텐츠 특화 질문(Content-Anchored) **2개**를 [JSON 형식 예시]와 같이 생성하세요. 앞으로의 결과나 스토리 전개를 묻는 미래 지향적 질문은 피하세요."
                 )
             contents += ["--- 요청 사항 ---", req_text]
-        vh_config = vh_configs[mode]
+        interactive_query_config = interactive_query_configs[mode]
         
         t0 = time.time()
         
         parsed = retry_parse_json(
             lambda: _retry_api_call(
                 lambda: client.models.generate_content(
-                    model=vh_model_name, contents=contents, config=vh_config
+                    model=interactive_query_model_name, contents=contents, config=interactive_query_config
                 ).text,
-                label=f"VH API 생성 ({mode})"
+                label=f"Interactive Query API 생성 ({mode})"
             ),
-            label=f"VH JSON Parse ({mode})"
+            label=f"Interactive Query JSON Parse ({mode})"
         )
         
         rationale = ""
@@ -378,7 +378,7 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
         return {"queries": queries[:2], "rationale": rationale}, time.time() - t0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {m: executor.submit(generate_voice_hints, m) for m in target_modes}
+        futures = {m: executor.submit(generate_interactive_queries, m) for m in target_modes}
         
         results = {}
         elapseds = {}
@@ -399,16 +399,16 @@ def process_vh_modes(client, vh_model_name, vh_configs, past_parts, current_part
 # ───────────────────────────────────────────────
 
 def main():
-    parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 Voice Hint를 생성합니다.")
+    parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 Interactive Query를 생성합니다.")
     parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
-    parser.add_argument("--output_file", default="assets/voice_hint.jsonl", help="Voice Hint 목록 저장 경로")
+    parser.add_argument("--output_file", default="assets/interactive_queries.jsonl", help="Interactive Query 목록 저장 경로")
     parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로 (kss 모드 사용 시 필요)")
     parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
     choices=["kss", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="생성할 모드 직접 지정")
 
     args, client = init_pipeline(parser.parse_args())
 
-    vh_configs = make_voice_hint_configs(thinking_level=args.vh_thinking_level)
+    interactive_query_configs = make_interactive_query_configs(thinking_level=args.interactive_query_thinking_level)
 
     if not check_input_file(args.input_file, hint="먼저 identify_keypoint.py를 실행하세요."):
         return
@@ -471,7 +471,7 @@ def main():
             all_content_remaining_jobs[content_id] = remaining
             total_keypoints_to_process += len(remaining)
 
-    print_pipeline_banner("Voice Hint 생성 파이프라인을 시작합니다.")
+    print_pipeline_banner("Interactive Query 생성 파이프라인을 시작합니다.")
     print(f"Modes={target_modes}")
     print(f"[Info] 총 {len(all_content_remaining_jobs)}개 콘텐츠, {total_keypoints_to_process}개 Keypoint 생성 작업 대기 중")
 
@@ -528,13 +528,13 @@ def main():
                 start_time = float(kp.get("start_time", 0.0))
                 end_time = float(kp.get("end_time", 0.0))
                 current_dur = end_time - start_time
-                past_n = min(args.vh_gen_past_scenes_size, scene_idx)
+                past_n = min(args.interactive_query_gen_past_scenes_size, scene_idx)
                 past_approx_sec = past_n * (start_time / scene_idx) if scene_idx > 0 else 0
                 print(f"[{real_idx}/{len(keypoints)}] Scene {scene_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Current: {current_dur:.1f}s, Past: {past_approx_sec:.0f}s ({past_n} scenes)")
 
                 def _run_keypoint():
                     # 과거 N개 Scene을 위한 scene_idx 계산 (현재 Scene 직전 N개)
-                    past_start_scene_idx = max(0, scene_idx - args.vh_gen_past_scenes_size)
+                    past_start_scene_idx = max(0, scene_idx - args.interactive_query_gen_past_scenes_size)
                     past_end_scene_idx = scene_idx - 1  # 현재 Scene 직전까지
 
                     has_past = past_end_scene_idx >= past_start_scene_idx
@@ -553,20 +553,20 @@ def main():
                     # KSS Summary 텍스트 조회
                     kss_text = kss_map.get((content_id, scene_idx), "") if "kss" in missing_modes else None
 
-                    return process_vh_modes(
-                        client, args.vh_gen_model, vh_configs, past_parts, current_parts, end_time, missing_modes, 
+                    return process_interactive_query_modes(
+                        client, args.interactive_query_gen_model, interactive_query_configs, past_parts, current_parts, end_time, missing_modes, 
                         kss_text=kss_text, video_context=video_context, scene_idx=scene_idx, start_time=start_time
                     )
 
                 try:
-                    vh_dict, vh_elapsed_dict = _retry_api_call(
+                    interactive_query_dict, interactive_query_elapsed_dict = _retry_api_call(
                         _run_keypoint,
-                        label=f"Voice Hint (Scene {scene_idx})"
+                        label=f"Interactive Query (Scene {scene_idx})"
                     )
 
                     # 각 mode별로 별도의 줄로 저장 (content_id + scene_idx + mode = 1 line)
                     for mod in missing_modes:
-                        queries = vh_dict.get(mod, [])
+                        queries = interactive_query_dict.get(mod, [])
                         # High-context 모드는 content_anchored, Low-context 모드(imgvlm, meta)는 tangential
                         if mod.startswith("imgvlm") or mod == "meta":
                             query_types = ["tangential"] * len(queries)
@@ -581,19 +581,19 @@ def main():
                         mode_record["end_time"] = end_time
                         mode_record["queries"] = queries
                         mode_record["query_types"] = query_types
-                        mode_record["rationale"] = vh_dict.get("rationales", {}).get(mod, "")
+                        mode_record["rationale"] = interactive_query_dict.get("rationales", {}).get(mod, "")
                         append_jsonl(args.output_file, mode_record)
                         done_modes_by_scene.add((content_id, scene_idx, mod))
 
                     _LOG_MODES = {"video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"}
                     for mod in missing_modes:
-                        if vh_dict.get(mod):
+                        if interactive_query_dict.get(mod):
                             if mod in _LOG_MODES:
-                                print(f"\n-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초)")
-                                for qi, q in enumerate(vh_dict[mod], 1):
+                                print(f"\n-> [Interactive Query - {mod}] ({interactive_query_elapsed_dict.get(mod, 0.0):.2f}초)")
+                                for qi, q in enumerate(interactive_query_dict[mod], 1):
                                     print(f"{qi}. {q}")
                             else:
-                                print(f"-> [VH - {mod}] ({vh_elapsed_dict.get(mod, 0.0):.2f}초) — {len(vh_dict[mod])}개 질문 생성됨")
+                                print(f"-> [Interactive Query - {mod}] ({interactive_query_elapsed_dict.get(mod, 0.0):.2f}초) — {len(interactive_query_dict[mod])}개 질문 생성됨")
                     print(f"------------------------------------------------------------------------------------------------------------\n")
 
                 except Exception as e:

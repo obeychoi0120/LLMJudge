@@ -6,7 +6,7 @@ import warnings
 
 warnings.warn(
     "generate_user_query.py is DEPRECATED. "
-    "Voice Hint (KSS mode) queries are now used directly via generate_vh_response.py.",
+    "Interactive Query (KSS mode) queries are now used directly via generate_interactive_query_response.py.",
     DeprecationWarning,
     stacklevel=2,
 )
@@ -97,7 +97,7 @@ def main():
     parser.add_argument("--output_file", default="assets/user_query.jsonl", help="User Query 목록 저장 경로")
 
     print("[DEPRECATED] 이 스크립트는 더 이상 사용되지 않습니다. "
-          "Voice Hint (KSS 모드) 질문을 사용하는 generate_vh_response.py를 사용하세요.")
+          "Interactive Query (KSS 모드) 질문을 사용하는 generate_interactive_query_response.py를 사용하세요.")
 
     args, client = init_pipeline(parser.parse_args())
     query_config = make_generate_config(system_instruction=_USER_QUERY_GENERATION_PROMPT,

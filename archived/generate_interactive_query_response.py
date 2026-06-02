@@ -27,7 +27,7 @@ from utils import (
 # System Prompts
 # ============================================================
 
-_VH_RESPONSE_PROMPT_BASE = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_BASE = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
 
 당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 통해 콘텐츠의 장르와 도메인을 먼저 파악하여 답변의 방향성을 설정하세요.
 
@@ -36,7 +36,7 @@ _VH_RESPONSE_PROMPT_BASE = """당신은 시청자와 나란히 소파에 앉아 
 
 이 정보를 바탕으로 시청자의 질문에 자연스럽고 정확하게 답변하여 '개인화된 인터랙티브 시청 경험'을 극대화해 주세요."""
 
-_VH_RESPONSE_PROMPT_RAW = _VH_RESPONSE_PROMPT_BASE + """
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_RAW = _INTERACTIVE_QUERY_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
 제공되는 시청 기억은 '음성 기록(ASR)'과 '화면 텍스트(OCR)'로 구성되며, Scene 단위로 제공됩니다.
@@ -70,7 +70,7 @@ _VH_RESPONSE_PROMPT_RAW = _VH_RESPONSE_PROMPT_BASE + """
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
 
-_VH_RESPONSE_PROMPT_RAW_WITH_MMVLM = _VH_RESPONSE_PROMPT_BASE + """
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_RAW_WITH_MMVLM = _INTERACTIVE_QUERY_RESPONSE_PROMPT_BASE + """
 
 [시청 기억의 구조]
 제공되는 시청 기억은 '음성 기록(ASR)'과 '화면 텍스트(OCR)'가 Scene 단위로 구성되며,
@@ -105,7 +105,7 @@ _VH_RESPONSE_PROMPT_RAW_WITH_MMVLM = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
-_VH_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
 
 당신에게는 [Video Context]로 영상의 채널명과 제목이 제공될 수 있습니다. 이를 통해 콘텐츠의 장르와 도메인을 먼저 파악하여 답변의 방향성을 설정하세요.
 
@@ -138,7 +138,7 @@ _VH_RESPONSE_PROMPT_VIDEO = """당신은 시청자와 나란히 소파에 앉아
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
-_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _VH_RESPONSE_PROMPT_BASE + """
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _INTERACTIVE_QUERY_RESPONSE_PROMPT_BASE + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [시청 기억의 구조]
@@ -171,7 +171,7 @@ _VH_RESPONSE_PROMPT_IMGVLM_CHUNK2 = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가벼운 공감이나 다음 장면에 대한 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
-_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE = _VH_RESPONSE_PROMPT_BASE + """
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_IMGVLM_SENTENCE = _INTERACTIVE_QUERY_RESPONSE_PROMPT_BASE + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [시청 기억의 구조]
@@ -204,7 +204,7 @@ _VH_RESPONSE_PROMPT_IMGVLM_SENTENCE = _VH_RESPONSE_PROMPT_BASE + """
    - 정보만 전달하고 끝내지 마세요.
    - 답변 마지막에 가볍게 공감하거나 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
-_VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_IMGVLM_GRAPH = _INTERACTIVE_QUERY_RESPONSE_PROMPT_BASE + """
 [주의] [Video Context]는 저작권 제약으로 이 모드에서는 제공되지 않습니다. 오직 아래 데이터만으로 장르를 유추하세요.
 
 [시청 기억의 구조]
@@ -238,7 +238,7 @@ _VH_RESPONSE_PROMPT_IMGVLM_GRAPH = _VH_RESPONSE_PROMPT_BASE + """
    
 
 
-_VH_RESPONSE_PROMPT_BLANK = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
+_INTERACTIVE_QUERY_RESPONSE_PROMPT_BLANK = """당신은 시청자와 나란히 소파에 앉아 TV를 함께 보며 즐겁게 대화를 나누는 '친절하고 똑똑한 비디오 전문 AI 시청 파트너'입니다.
 
 당신에게는 현재 영상에 대한 시청 정보나 영상 메타데이터(채널명, 제목 등)는 제공되지 않습니다.
 오직 질문 내용과 당신이 가진 사전 지식(World Knowledge)만을 활용하여 시청자의 질문에 답변해 주세요.
@@ -258,35 +258,35 @@ _VH_RESPONSE_PROMPT_BLANK = """당신은 시청자와 나란히 소파에 앉아
    - 답변 마지막에 가벼운 공감이나 호기심을 자극하는 '부드러운 꼬리 질문'을 던져 대화의 핑퐁을 유도하세요."""
 
 
-def make_vh_gen_config(thinking_level=None):
-    """VH Response 생성용 GenerateContentConfig 딕셔너리를 반환합니다."""
+def make_interactive_query_gen_config(thinking_level=None):
+    """Interactive Query Response 생성용 GenerateContentConfig 딕셔너리를 반환합니다."""
     return {
         "raw": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_RAW,
+            system_instruction=_INTERACTIVE_QUERY_RESPONSE_PROMPT_RAW,
             thinking_level=thinking_level,
         ),
         "imgvlm_chunk2": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_CHUNK2,
+            system_instruction=_INTERACTIVE_QUERY_RESPONSE_PROMPT_IMGVLM_CHUNK2,
             thinking_level=thinking_level,
         ),
         "imgvlm_sentence": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_SENTENCE,
+            system_instruction=_INTERACTIVE_QUERY_RESPONSE_PROMPT_IMGVLM_SENTENCE,
             thinking_level=thinking_level,
         ),
         "imgvlm_graph": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_IMGVLM_GRAPH,
+            system_instruction=_INTERACTIVE_QUERY_RESPONSE_PROMPT_IMGVLM_GRAPH,
             thinking_level=thinking_level,
         ),
         "raw_with_mmvlm": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_RAW_WITH_MMVLM,
+            system_instruction=_INTERACTIVE_QUERY_RESPONSE_PROMPT_RAW_WITH_MMVLM,
             thinking_level=thinking_level,
         ),
         "video": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_VIDEO,
+            system_instruction=_INTERACTIVE_QUERY_RESPONSE_PROMPT_VIDEO,
             thinking_level=thinking_level,
         ),
         "blank": make_generate_config(
-            system_instruction=_VH_RESPONSE_PROMPT_BLANK,
+            system_instruction=_INTERACTIVE_QUERY_RESPONSE_PROMPT_BLANK,
             thinking_level=thinking_level,
         ),
     }
@@ -426,7 +426,7 @@ def _generate_for_mode(client, model_name, gen_configs, source, mode, query, sce
 
         answer, ttft = _retry_api_call(
             _stream_generate,
-            label=f"VH Response [{mode}] (Scene {scene_idx})",
+            label=f"Interactive Query Response [{mode}] (Scene {scene_idx})",
         )
         elapsed = time.perf_counter() - start_time
         return mode, answer, elapsed, ttft
@@ -463,8 +463,8 @@ def _load_completed_pairs(output_path):
 # Validation
 # ============================================================
 
-def _validate_vh_responses(output_file, vh_input_file, target_sources, query_source="kss"):
-    """VH Response 파일을 정렬하고, 지정된 Query Source와 target source 기준으로 누락을 점검합니다."""
+def _validate_interactive_query_responses(output_file, interactive_query_input_file, target_sources, query_source="kss"):
+    """Interactive Query Response 파일을 정렬하고, 지정된 Query Source와 target source 기준으로 누락을 점검합니다."""
     if not os.path.exists(output_file):
         print(f"[Warning] 파일을 찾을 수 없습니다: {output_file}")
         return
@@ -481,18 +481,18 @@ def _validate_vh_responses(output_file, vh_input_file, target_sources, query_sou
     print("\n[최종 누락분 점검]")
 
     expected = set()
-    if os.path.exists(vh_input_file):
-        vh_records = load_jsonl(vh_input_file)
-        vh_lookup = {}
-        for r in vh_records:
+    if os.path.exists(interactive_query_input_file):
+        interactive_query_records = load_jsonl(interactive_query_input_file)
+        interactive_query_lookup = {}
+        for r in interactive_query_records:
             c_id = r.get("content_id")
             s_idx = r.get("scene_idx")
             mode = r.get("mode")
             if c_id and s_idx is not None and mode:
-                vh_lookup[(c_id, s_idx, mode)] = r.get("queries", [])
+                interactive_query_lookup[(c_id, s_idx, mode)] = r.get("queries", [])
 
-        # KSS VH 레코드를 기준으로 각 scene 식별
-        for r in vh_records:
+        # KSS Interactive Query 레코드를 기준으로 각 scene 식별
+        for r in interactive_query_records:
             if r.get("mode") != "kss":
                 continue
             c_id = r.get("content_id")
@@ -503,10 +503,10 @@ def _validate_vh_responses(output_file, vh_input_file, target_sources, query_sou
                 else:  # sourcewise
                     if m == "blank":
                         continue
-                    if (c_id, s_idx, m) not in vh_lookup:
+                    if (c_id, s_idx, m) not in interactive_query_lookup:
                         queries = r.get("queries", [])
                     else:
-                        queries = vh_lookup[(c_id, s_idx, m)]
+                        queries = interactive_query_lookup[(c_id, s_idx, m)]
                 for q in queries:
                     expected.add((c_id, s_idx, m, q))
 
@@ -542,16 +542,16 @@ def _validate_vh_responses(output_file, vh_input_file, target_sources, query_sou
 # ============================================================
 
 def main():
-    parser = get_common_argparser(description="Voice Hint의 질문을 Query로 삼아, 각 Source 컨텍스트 정보를 활용해 Response를 생성합니다.")
-    parser.add_argument("--input_file", default="assets/voice_hint.jsonl", help="Voice Hint JSONL 경로")
-    parser.add_argument("--output_file", default="assets/vh_responses.jsonl", help="VH Response 저장 경로")
+    parser = get_common_argparser(description="Interactive Query의 질문을 Query로 삼아, 각 Source 컨텍스트 정보를 활용해 Response를 생성합니다.")
+    parser.add_argument("--input_file", default="assets/interactive_queries.jsonl", help="Interactive Query JSONL 경로")
+    parser.add_argument("--output_file", default="assets/interactive_query_responses.jsonl", help="Interactive Query Response 저장 경로")
     parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로")
     parser.add_argument("--sources", nargs="+",
                         default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
                         choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"],
                         help="Response를 생성할 대상 Source (blank=컨텍스트 없이 World Knowledge만 사용)")
     parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
-                        help="Response 생성에 사용할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
+                        help="Response 생성에 사용할 Interactive Query 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
     args, client = init_pipeline(parser.parse_args())
     content_indices = load_content_indices()
@@ -565,33 +565,33 @@ def main():
     target_sources = args.sources
     query_source = args.query_source
 
-    # sourcewise source에서는 blank 모드의 VH Resp 생성을 제외
+    # sourcewise source에서는 blank 모드의 Interactive Query Resp 생성을 제외
     if query_source == "sourcewise" and "blank" in target_sources:
         target_sources = [s for s in target_sources if s != "blank"]
 
     # query_source에 따라 output_file 경로 변경
-    if args.output_file == "assets/vh_responses.jsonl":
-        args.output_file = f"assets/vh_responses_{query_source}.jsonl"
+    if args.output_file == "assets/interactive_query_responses.jsonl":
+        args.output_file = f"assets/interactive_query_responses_{query_source}.jsonl"
 
     # Gen configs
-    gen_configs = make_vh_gen_config(thinking_level=args.vh_response_thinking_level)
+    gen_configs = make_interactive_query_gen_config(thinking_level=args.interactive_query_response_thinking_level)
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
 
-    if not check_input_file(args.input_file, hint="먼저 generate_voice_hint.py를 실행하세요."):
+    if not check_input_file(args.input_file, hint="먼저 generate_interactive_query.py를 실행하세요."):
         return
 
-    print_pipeline_banner("VH Response 생성 파이프라인을 시작합니다.")
+    print_pipeline_banner("Interactive Query Response 생성 파이프라인을 시작합니다.")
     print(f"[Query Source] {query_source} | Target Response Sources: {target_sources}")
-    if args.vh_response_past_scenes_size:
-        print(f"[Window] vh_response_past_scenes_size={args.vh_response_past_scenes_size} 설정: 현재 Scene 기준 직전 {args.vh_response_past_scenes_size}개 Scene만 Source로 사용합니다.")
+    if args.interactive_query_response_past_scenes_size:
+        print(f"[Window] interactive_query_response_past_scenes_size={args.interactive_query_response_past_scenes_size} 설정: 현재 Scene 기준 직전 {args.interactive_query_response_past_scenes_size}개 Scene만 Source로 사용합니다.")
 
     file_write_lock = threading.Lock()
     _checked_contents = set()
 
     def _process_scene_record(rec):
-        """KSS VH 레코드(scene 기준)에 대해 지정된 query_source에 기반한 질문들을 바탕으로 각 target source Response를 생성합니다."""
+        """KSS Interactive Query 레코드(scene 기준)에 대해 지정된 query_source에 기반한 질문들을 바탕으로 각 target source Response를 생성합니다."""
         c_id = rec.get("content_id")
         s_idx = rec.get("scene_idx")
 
@@ -607,12 +607,12 @@ def main():
             else:  # sourcewise
                 if mode == "blank":
                     continue
-                if (c_id, s_idx, mode) not in vh_lookup:
-                    kss_info = vh_lookup.get((c_id, s_idx, "kss"), {})
+                if (c_id, s_idx, mode) not in interactive_query_lookup:
+                    kss_info = interactive_query_lookup.get((c_id, s_idx, "kss"), {})
                     mode_queries = kss_info.get("queries", [])
                     mode_query_types = kss_info.get("query_types", [])
                 else:
-                    mode_info = vh_lookup.get((c_id, s_idx, mode), {})
+                    mode_info = interactive_query_lookup.get((c_id, s_idx, mode), {})
                     mode_queries = mode_info.get("queries", [])
                     mode_query_types = mode_info.get("query_types", [])
 
@@ -644,9 +644,9 @@ def main():
         start_time = float(rec.get("start_time", 0.0))
         end_time = float(rec.get("end_time", 0.0))
         current_dur = end_time - start_time
-        past_n = min(args.vh_response_past_scenes_size, s_idx) if args.vh_response_past_scenes_size else s_idx
+        past_n = min(args.interactive_query_response_past_scenes_size, s_idx) if args.interactive_query_response_past_scenes_size else s_idx
         past_approx_sec = past_n * (start_time / s_idx) if s_idx > 0 else 0
-        print(f"\n[VH Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Current: {current_dur:.1f}s, Past: {past_approx_sec:.0f}s ({past_n} scenes) | Queries → {len(pending_items)}개 조합 처리")
+        print(f"\n[Interactive Query Response] '{c_id}' Scene {s_idx} | Range=[{start_time:.1f}s ~ {end_time:.1f}s] | Current: {current_dur:.1f}s, Past: {past_approx_sec:.0f}s ({past_n} scenes) | Queries → {len(pending_items)}개 조합 처리")
 
         # Source 캐시: 같은 Scene의 같은 mode는 Source를 1번만 빌드
         source_cache = {}
@@ -674,11 +674,11 @@ def main():
                                     source_cache[_m] = _build_source(
                                         args.gs_bucket_name, c_id,
                                         _s_idx, keypoints, _m,
-                                        max_past_scenes=args.vh_response_past_scenes_size,
+                                        max_past_scenes=args.interactive_query_response_past_scenes_size,
                                     )
                                 source = source_cache[_m]
                                 _, answer, elapsed, ttft = _generate_for_mode(
-                                    client, args.vh_response_model, gen_configs,
+                                    client, args.interactive_query_response_model, gen_configs,
                                     source, _m, _q, _s_idx, video_context=video_context
                                 )
                                 return item_data, answer, elapsed, ttft, None
@@ -726,11 +726,11 @@ def main():
                                 source_cache[_m] = _build_source(
                                     args.gs_bucket_name, c_id,
                                     _s_idx, keypoints, _m,
-                                    max_past_scenes=args.vh_response_past_scenes_size,
+                                    max_past_scenes=args.interactive_query_response_past_scenes_size,
                                 )
                             source = source_cache[_m]
                             _, answer, elapsed, ttft = _generate_for_mode(
-                                client, args.vh_response_model, gen_configs,
+                                client, args.interactive_query_response_model, gen_configs,
                                 source, _m, _q, _s_idx, video_context=video_context
                             )
                             return item_data, answer, elapsed, ttft, None
@@ -778,27 +778,27 @@ def main():
             if discovery_pass == 1 and completed_pairs:
                 print(f"[기처리] {len(completed_pairs)}개 항목이 이미 처리 완료됨.")
 
-            # voice_hint 파일 로드 및 lookup 테이블 구축
-            vh_records = load_jsonl(args.input_file)
-            vh_lookup = {}
-            for r in vh_records:
+            # interactive_query 파일 로드 및 lookup 테이블 구축
+            interactive_query_records = load_jsonl(args.input_file)
+            interactive_query_lookup = {}
+            for r in interactive_query_records:
                 c_id = r.get("content_id")
                 s_idx = r.get("scene_idx")
                 mode = r.get("mode")
                 if c_id and s_idx is not None and mode:
-                    vh_lookup[(c_id, s_idx, mode)] = {
+                    interactive_query_lookup[(c_id, s_idx, mode)] = {
                         "queries": r.get("queries", []),
                         "query_types": r.get("query_types", [])
                     }
 
             all_kss_records = [
-                r for r in vh_records
+                r for r in interactive_query_records
                 if r.get("mode") == "kss" and not r.get("pipeline_done")
             ]
 
             if not all_kss_records:
                 if discovery_pass == 1:
-                    print("[Error] KSS 모드 레코드가 없습니다. generate_voice_hint.py를 먼저 실행하세요.")
+                    print("[Error] KSS 모드 레코드가 없습니다. generate_interactive_query.py를 먼저 실행하세요.")
                     return
                 else:
                     print("[완료] 입력 파일에 처리할 KSS 레코드가 없습니다.")
@@ -815,10 +815,10 @@ def main():
                     else:  # sourcewise
                         if m == "blank":
                             continue
-                        if (c_id, s_idx, m) not in vh_lookup:
+                        if (c_id, s_idx, m) not in interactive_query_lookup:
                             queries = r.get("queries", [])
                         else:
-                            queries = vh_lookup[(c_id, s_idx, m)].get("queries", [])
+                            queries = interactive_query_lookup[(c_id, s_idx, m)].get("queries", [])
                     for q in queries:
                         if (c_id, s_idx, m, q) not in completed_pairs:
                             pending_count += 1
@@ -847,7 +847,7 @@ def main():
         os._exit(1)
 
     # 결과 파일 정렬 및 누락 점검
-    _validate_vh_responses(args.output_file, args.input_file, target_sources, query_source=query_source)
+    _validate_interactive_query_responses(args.output_file, args.input_file, target_sources, query_source=query_source)
 
     print_pipeline_done(args.output_file)
 

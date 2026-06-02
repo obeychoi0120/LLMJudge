@@ -6,10 +6,10 @@ import shutil
 
 # 4개의 기본 에셋 파일 경로
 ASSET_FILES = [
-    "assets/voice_hint.jsonl",
-    "assets/voice_hint_scores.jsonl",
-    "assets/vh_responses.jsonl",
-    "assets/vh_response_scores.jsonl"
+    "assets/interactive_queries.jsonl",
+    "assets/interactive_query_scores.jsonl",
+    "assets/interactive_query_responses.jsonl",
+    "assets/interactive_query_response_scores.jsonl"
 ]
 
 def clean_modes_from_file(file_path, target_modes):

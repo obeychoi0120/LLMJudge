@@ -14,18 +14,18 @@ from google.cloud import storage
 _CONFIG_KEYS = [
     # 공통
     "location", "keypoint_model", "keypoint_thinking_level",
-    # A-track: Voice Hint
-    "vh_gen_model", "vh_judge_model",
-    "vh_thinking_level", "vh_judge_thinking_level",
-    "vh_gen_past_scenes_size",
+    # A-track: Interactive Query
+    "interactive_query_gen_model", "interactive_query_judge_model",
+    "interactive_query_thinking_level", "interactive_query_judge_thinking_level",
+    "interactive_query_gen_past_scenes_size",
     # A-track: KeyScene Summary
     "kss_past_summary_model", "kss_past_summary_thinking_level",
     "kss_current_scene_model", "kss_current_scene_thinking_level",
     "use_ref_for_keyscene_summary",
-    # B-track: VH Response
-    "vh_response_model", "vh_response_thinking_level",
-    "vh_response_past_scenes_size",
-    "vh_response_judge_model", "vh_response_judge_thinking_level",
+    # B-track: Interactive Query Response
+    "interactive_query_response_model", "interactive_query_response_thinking_level",
+    "interactive_query_response_past_scenes_size",
+    "interactive_query_response_judge_model", "interactive_query_response_judge_thinking_level",
 ]
 
 
@@ -64,23 +64,23 @@ def get_common_argparser(description=""):
     # 모델 공통 (A-track)
     parser.add_argument("--keypoint_model", default="gemini-3.1-flash-lite-preview", help="Keypoint 식별에 사용할 모델명")
     parser.add_argument("--keypoint_thinking_level", default="low", help="Keypoint 식별 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--vh_gen_model", default="gemini-3.1-flash-lite-preview", help="Voice Hint 생성 모델명")
-    parser.add_argument("--vh_thinking_level", default="low", help="Voice Hint 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--vh_gen_past_scenes_size", type=int, default=5, help="Voice Hint 과거 맥락에 포함할 최대 Scene 개수")
+    parser.add_argument("--interactive_query_gen_model", default="gemini-3.1-flash-lite-preview", help="Interactive Query 생성 모델명")
+    parser.add_argument("--interactive_query_thinking_level", default="low", help="Interactive Query 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--interactive_query_gen_past_scenes_size", type=int, default=5, help="Interactive Query 과거 맥락에 포함할 최대 Scene 개수")
     parser.add_argument("--kss_past_summary_model", default="gemini-3.1-flash-lite-preview", help="[Session 1] 과거 요약 생성 모델명")
     parser.add_argument("--kss_past_summary_thinking_level", default="medium", help="[Session 1] 과거 요약 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--kss_current_scene_model", default="gemini-3.1-pro-preview", help="[Session 2] 현재 장면 묘사 모델명")
     parser.add_argument("--kss_current_scene_thinking_level", default="high", help="[Session 2] 현재 장면 묘사 모델의 Thinking Level (low/medium/high)")
     parser.add_argument("--use_ref_for_keyscene_summary", type=lambda x: str(x).lower() == 'true', default=True, help="Summary 생성 시 Ref JSONL 참조 여부")
-    parser.add_argument("--vh_judge_model", default="gemini-3.1-pro-preview", help="Voice Hint 질문 Judge 모델명")
-    parser.add_argument("--vh_judge_thinking_level", default="high", help="Voice Hint Judge 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--interactive_query_judge_model", default="gemini-3.1-pro-preview", help="Interactive Query 질문 Judge 모델명")
+    parser.add_argument("--interactive_query_judge_thinking_level", default="high", help="Interactive Query Judge 모델의 Thinking Level (low/medium/high)")
 
-    # 모델 공통 (B-track: VH Response)
-    parser.add_argument("--vh_response_model", default="gemini-3.1-flash-lite-preview", help="VH Response 생성 모델명")
-    parser.add_argument("--vh_response_thinking_level", default="low", help="VH Response 생성 모델의 Thinking Level (low/medium/high)")
-    parser.add_argument("--vh_response_past_scenes_size", type=int, default=5, help="VH Response 생성 시 과거 맥락에 포함할 최대 Scene 개수")
-    parser.add_argument("--vh_response_judge_model", default="gemini-3.1-pro-preview", help="VH Response Judge 모델명")
-    parser.add_argument("--vh_response_judge_thinking_level", default="high", help="VH Response Judge 모델의 Thinking Level (low/medium/high)")
+    # 모델 공통 (B-track: Interactive Query Response)
+    parser.add_argument("--interactive_query_response_model", default="gemini-3.1-flash-lite-preview", help="Interactive Query Response 생성 모델명")
+    parser.add_argument("--interactive_query_response_thinking_level", default="low", help="Interactive Query Response 생성 모델의 Thinking Level (low/medium/high)")
+    parser.add_argument("--interactive_query_response_past_scenes_size", type=int, default=5, help="Interactive Query Response 생성 시 과거 맥락에 포함할 최대 Scene 개수")
+    parser.add_argument("--interactive_query_response_judge_model", default="gemini-3.1-pro-preview", help="Interactive Query Response Judge 모델명")
+    parser.add_argument("--interactive_query_response_judge_thinking_level", default="high", help="Interactive Query Response Judge 모델의 Thinking Level (low/medium/high)")
 
     return parser
 
@@ -259,7 +259,7 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
     """scores JSONL에서 특정 content_id의 mode별 평균 점수를 집계하여 출력합니다.
 
     query_type 필드가 있는 레코드는 Content-Anchored / Tangential로 분리하여 집계합니다.
-    query_type이 없는 레코드(VH Response 등)는 통합 집계합니다.
+    query_type이 없는 레코드(Interactive Query Response 등)는 통합 집계합니다.
 
     Args:
         scores_file: 점수 JSONL 파일 경로
@@ -1159,7 +1159,7 @@ def sort_and_validate_jsonl(file_path, keypoints_by_content, expected_modes=None
         else:
             print("-> 모든 Scene이 누락 없이 정상적으로 생성되었습니다.")
     else:
-        # 모드 기반 파일 (KSD, VH 등): (content_id, scene_idx, mode) 3-tuple 단위
+        # 모드 기반 파일 (KSD, Interactive Query 등): (content_id, scene_idx, mode) 3-tuple 단위
         modes_to_check = expected_modes or ["video", "raw", "raw_with_mmvlm", "imgvlm"]
         done_set_modes = {
             (x.get("content_id"), x.get("scene_idx"), x.get("mode"))

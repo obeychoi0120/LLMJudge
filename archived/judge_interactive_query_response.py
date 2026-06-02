@@ -99,11 +99,11 @@ def evaluate_answer(client, model_name, judge_config, user_prompt, generated_ans
             ],
             config=judge_config
         ).text,
-        label="VH Response Judge API",
+        label="Interactive Query Response Judge API",
     )
 
 
-def is_content_id_fully_evaluated_vh_response(content_id, input_file, target_sources_set, summary_map, processed_pairs):
+def is_content_id_fully_evaluated_interactive_query_response(content_id, input_file, target_sources_set, summary_map, processed_pairs):
     """content_id에 해당하는 모든 target_source의 응답들이 processed_pairs에 존재하여 평가가 완료되었는지 확인합니다."""
     expected_scenes = {s_idx for (c_id, s_idx) in summary_map.keys() if c_id == content_id}
     if not expected_scenes:
@@ -158,13 +158,13 @@ def is_content_id_fully_evaluated_vh_response(content_id, input_file, target_sou
 
 
 def main():
-    parser = get_common_argparser(description="Evaluate VH Responses using Judge model")
+    parser = get_common_argparser(description="Evaluate Interactive Query Responses using Judge model")
     parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
-    parser.add_argument("--output_file", default="assets/vh_response_scores.jsonl", help="평가 결과 저장 경로")
+    parser.add_argument("--output_file", default="assets/interactive_query_response_scores.jsonl", help="평가 결과 저장 경로")
     parser.add_argument("--sources", nargs="+", default=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], 
                         choices=["blank", "video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph"], help="평가할 Source 직접 지정")
     parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
-                        help="평가할 Voice Hint 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
+                        help="평가할 Interactive Query 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
     args, client = init_pipeline(parser.parse_args())
     content_indices = load_content_indices()
@@ -172,16 +172,16 @@ def main():
     query_source = args.query_source
 
     # query_source에 따라 input_file, output_file 경로 변경
-    args.input_file = f"assets/vh_responses_{query_source}.jsonl"
-    if args.output_file == "assets/vh_response_scores.jsonl":
-        args.output_file = f"assets/vh_response_scores_{query_source}.jsonl"
+    args.input_file = f"assets/interactive_query_responses_{query_source}.jsonl"
+    if args.output_file == "assets/interactive_query_response_scores.jsonl":
+        args.output_file = f"assets/interactive_query_response_scores_{query_source}.jsonl"
 
-    judge_config = make_judge_config(thinking_level=args.vh_response_judge_thinking_level)
+    judge_config = make_judge_config(thinking_level=args.interactive_query_response_judge_thinking_level)
 
     ensure_output_dir(args.output_file)
 
     if not os.path.exists(args.input_file):
-        print(f"[Error] {args.input_file} 파일이 없습니다. generate_vh_response.py를 먼저 실행하세요.")
+        print(f"[Error] {args.input_file} 파일이 없습니다. generate_interactive_query_response.py를 먼저 실행하세요.")
         return
 
     # KSS Anchor 로드
@@ -191,7 +191,7 @@ def main():
     else:
         print(f"[Warning] KSS 파일을 찾을 수 없거나 비어있습니다: {args.keyscene_summary_file}")
 
-    print_pipeline_banner("VH Response 품질 평가 파이프라인을 시작합니다.")
+    print_pipeline_banner("Interactive Query Response 품질 평가 파이프라인을 시작합니다.")
 
     file_write_lock = threading.Lock()
     target_sources_set = set(args.sources)
@@ -218,13 +218,13 @@ def main():
         score_dict = retry_parse_json(
             lambda: evaluate_answer(
                 client=client,
-                model_name=args.vh_response_judge_model,
+                model_name=args.interactive_query_response_judge_model,
                 judge_config=judge_config,
                 user_prompt=query,
                 generated_answer=generated_answer,
                 keyscene_summary=anchor,
             ),
-            label=f"VH Judge ({c_id}, {mode})",
+            label=f"Interactive Query Judge ({c_id}, {mode})",
         )
 
         if not score_dict:
@@ -313,7 +313,7 @@ def main():
                 all_content_ids.add(c_id)
         for c_id in sorted(all_content_ids, key=lambda c: content_indices.get(c, 999)):
             if c_id not in printed_content_ids:
-                if is_content_id_fully_evaluated_vh_response(c_id, args.input_file, target_sources_set, summary_map, pairs_set):
+                if is_content_id_fully_evaluated_interactive_query_response(c_id, args.input_file, target_sources_set, summary_map, pairs_set):
                     printed_content_ids.add(c_id)
                     print_scores_summary(args.output_file, c_id, _SCORE_KEYS, _MODE_ORDER, max_score=15)
 
@@ -343,7 +343,7 @@ def main():
 
             if not all_data:
                 if discovery_pass == 1:
-                    print("[Error] 평가할 Response 데이터가 없습니다. generate_vh_response.py를 먼저 실행하세요.")
+                    print("[Error] 평가할 Response 데이터가 없습니다. generate_interactive_query_response.py를 먼저 실행하세요.")
                     return
                 else:
                     print("[완료] 입력 파일에 처리할 Response가 없습니다.")

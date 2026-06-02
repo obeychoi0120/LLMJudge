@@ -4,16 +4,16 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 
 ## 핵심 아키텍처 개요
 
-이 파이프라인은 동영상의 시간적 구조를 기반으로 핵심 장면 구간 별 주요 전환 점(KeyScene)을 식별하고, 각각의 장면에서 **과거 맥락(Past)** 과 **현재 초점(Current Focus)** 을 결합하여 분석합니다. 현재 활성 파이프라인은 **A-Track (Voice Hint)** 중심이며, 과거의 B-Track(VH Response)은 실험 종료 후 `archived/`로 이동되었습니다.
+이 파이프라인은 동영상의 시간적 구조를 기반으로 핵심 장면 구간 별 주요 전환 점(KeyScene)을 식별하고, 각각의 장면에서 **과거 맥락(Past)** 과 **현재 초점(Current Focus)** 을 결합하여 분석합니다. 현재 활성 파이프라인은 **A-Track (Interactive Query)** 중심이며, 과거의 B-Track(Interactive Query Response)은 실험 종료 후 `archived/`로 이동되었습니다.
 
 ### Track 상태
 
-- **A-Track (Voice Hint)**: 시청자 유도용 질문을 생성하고 평가하는 트랙으로, 소스 데이터의 수준에 따라 두 개의 트랙으로 명확히 구분 및 정렬됩니다.
+- **A-Track (Interactive Query)**: 시청자 유도용 질문을 생성하고 평가하는 트랙으로, 소스 데이터의 수준에 따라 두 개의 트랙으로 명확히 구분 및 정렬됩니다.
   - **High-Context 트랙** (`kss`, `video`, `raw`, `raw_with_mmvlm` 모드): 현재 및 과거의 풍부한 맥락을 바탕으로 화면 속 주요 인물·사건·주제에 직접 연결된 깊이 있는 **콘텐츠 특화 질문 (Content-Anchored)** 2개를 생성하고 평가합니다.
   - **Low-Context 트랙** (`imgvlm_sentence`, `imgvlm_chunk2`, `imgvlm_graph` 모드): 비식별화 처리된 시각 메타데이터만을 바탕으로 화면 속 지형·사물·소품 등에서 파생된 외부 상식과 호기심을 자극하는 **곁다리 지식 질문 (Tangential Knowledge)** 2개를 생성하고 평가합니다. 과거 장면 정보(비식별 VLM 형태)도 함께 인지하여 시청 흐름을 이해하되, 이전 장면에 이미 밝혀진 사실을 중복 질문하는 것을 방지하는 **"과거 뒷북 금지"** 제약이 적용됩니다.
-- **~~B-Track (VH Response)~~** (Deprecated): A-Track의 `kss` 모드로 생성된 고품질의 질문(Query)들을 **공통 Query**로 일치시켜 던지고 각 데이터소스별로 답변을 생성하여 비교하는 **통제 변인 실험** 트랙(기본값, `--query_source kss`) 또는 각 모드별로 생성된 자체 Voice Hint를 질문으로 사용하는 트랙(옵션, `--query_source sourcewise`)입니다. 답변을 KSS 및 World Knowledge 기준으로 채점하며, `blank` 모드는 어떠한 메타데이터(예: 채널/작품명 등의 Video Context)나 비디오/텍스트 정보도 제공받지 않고 오로지 사전에 학습된 세계 지식(World Knowledge)만으로 답변하는 제로-메타데이터(Zero Metadata) 베이스라인 역할을 합니다. (단, `blank` 모드는 자체 Voice Hint가 존재하지 않으므로 `sourcewise` 옵션에서는 생성이 제외됩니다.)
+- **~~B-Track (Interactive Query Response)~~** (Deprecated): A-Track의 `kss` 모드로 생성된 고품질의 질문(Query)들을 **공통 Query**로 일치시켜 던지고 각 데이터소스별로 답변을 생성하여 비교하는 **통제 변인 실험** 트랙(기본값, `--query_source kss`) 또는 각 모드별로 생성된 자체 Interactive Query를 질문으로 사용하는 트랙(옵션, `--query_source sourcewise`)입니다. 답변을 KSS 및 World Knowledge 기준으로 채점하며, `blank` 모드는 어떠한 메타데이터(예: 채널/작품명 등의 Video Context)나 비디오/텍스트 정보도 제공받지 않고 오로지 사전에 학습된 세계 지식(World Knowledge)만으로 답변하는 제로-메타데이터(Zero Metadata) 베이스라인 역할을 합니다. (단, `blank` 모드는 자체 Interactive Query가 존재하지 않으므로 `sourcewise` 옵션에서는 생성이 제외됩니다.)
 
-#### A-Track 모드 (Voice Hint 생성)
+#### A-Track 모드 (Interactive Query 생성)
 
 | 트랙 구분                                        | Mode                | 데이터 소스                            | 설명                                                                                                                                                          |
 | :----------------------------------------------- | :------------------ | :------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -26,7 +26,7 @@ Google Cloud Storage(GCS)에 저장된 영상 및 메타데이터를 활용하�
 |                                                  | `imgvlm_graph`    | VLM 장면 지식 그래프                   | 시각 프레임에서 추출한 (subject)-[relation]->(object) 트리플로 장면 관계를 압축 표현. 과거 맥락 정보(과거 graph 트리플)도 제공됨                              |
 |                                                  | `meta`            | 영상 기본 메타데이터 (채널명, 제목 등) | 동영상 내용(비디오/자막/VLM)을 보지 않고, 영상의 채널명/제목/설명 등 메타데이터만 활용해 곁다리 지식 질문 생성                                                |
 
-#### ~~B-Track 모드 (VH Response 생성)~~ (Deprecated)
+#### ~~B-Track 모드 (Interactive Query Response 생성)~~ (Deprecated)
 
 > B-Track은 현 파이프라인에서 제외되었습니다. 관련 스크립트는 `archived/`에 보관되어 있습니다.
 
@@ -64,14 +64,14 @@ flowchart TD
     KP["keypoint_scenes.jsonl"]
     A2["O-2 generate_keyscene_summary.py"]
     KSS["keyscene_summary.jsonl\nGround Truth Anchor"]
-    A3["A-1 generate_voice_hint.py\nkss / video / raw / imgvlm* / meta"]
-    VH["voice_hint.jsonl"]
-    A4["A-2 judge_voice_hint.py"]
-    VHS["voice_hint_scores.jsonl"]
+    A3["A-1 generate_interactive_query.py\nkss / video / raw / imgvlm* / meta"]
+    IQ["interactive_queries.jsonl"]
+    A4["A-2 judge_interactive_query.py"]
+    IQS["interactive_query_scores.jsonl"]
 
     VM --> A1
     GCS -.-> A1
-    A1 --> KP --> A2 --> KSS --> A3 --> VH --> A4 --> VHS
+    A1 --> KP --> A2 --> KSS --> A3 --> IQ --> A4 --> IQS
 
     VM -.-> A3
     KP -.-> A3
@@ -85,10 +85,10 @@ flowchart TD
 | -------- | -------------------------------- | --------------------------------- | ------------------------------- |
 | O-1      | `identify_keyscene.py`         | `keypoint_scenes.jsonl`         | `gemini-3.1-flash-lite`       |
 | O-2      | `generate_keyscene_summary.py` | `keyscene_summary.jsonl`        | `gemini-3.5-flash`            |
-| A-1      | `generate_voice_hint.py`       | `voice_hint.jsonl`              | `gemini-3.5-flash`            |
-| A-2      | `judge_voice_hint.py`          | `voice_hint_scores.jsonl`       | `gemini-3.1-pro-preview`      |
-| ~~B-1~~ | ~~`generate_vh_response.py`~~ | ~~`vh_responses.jsonl`~~       | ~~`gemini-3.1-flash-lite`~~  |
-| ~~B-2~~ | ~~`judge_vh_response.py`~~    | ~~`vh_response_scores.jsonl`~~ | ~~`gemini-3.1-pro-preview`~~ |
+| A-1      | `generate_interactive_query.py`       | `interactive_queries.jsonl`              | `gemini-3.5-flash`            |
+| A-2      | `judge_interactive_query.py`          | `interactive_query_scores.jsonl`       | `gemini-3.1-pro-preview`      |
+| ~~B-1~~ | ~~`generate_interactive_query_response.py`~~ | ~~`interactive_query_responses.jsonl`~~       | ~~`gemini-3.1-flash-lite`~~  |
+| ~~B-2~~ | ~~`judge_interactive_query_response.py`~~    | ~~`interactive_query_response_scores.jsonl`~~ | ~~`gemini-3.1-pro-preview`~~ |
 | -        | `export_to_excel.py`           | Excel 리포트                      | -                               |
 
 ---
@@ -114,9 +114,9 @@ flowchart TD
 
 생성된 KSS는 이후 모든 Judge 스크립트에서 **Ground Truth Anchor**로 참조됩니다.
 
-### 3. Voice Hint 생성 및 평가 철학: 이원화 트랙 전략 (Content-Anchored & Tangential Knowledge)
+### 3. Interactive Query 생성 및 평가 철학: 이원화 트랙 전략 (Content-Anchored & Tangential Knowledge)
 
-Voice Hint 파이프라인(A-Track)은 시청자가 스마트 TV 리모컨을 눌러 능동적으로 상호작용하도록 유도하기 위해 소스 데이터의 수준(풍부함)에 따라 질문 전략을 이원화하여 사용합니다.
+Interactive Query 파이프라인(A-Track)은 시청자가 스마트 TV 리모컨을 눌러 능동적으로 상호작용하도록 유도하기 위해 소스 데이터의 수준(풍부함)에 따라 질문 전략을 이원화하여 사용합니다.
 
 #### 1) High-Context 트랙: 콘텐츠 특화 질문 (Content-Anchored)
 
@@ -137,7 +137,7 @@ Voice Hint 파이프라인(A-Track)은 시청자가 스마트 TV 리모컨을 �
 
 모든 Judge는 **rationale + score의 flat JSON 포맷**을 출력합니다.
 
-#### A-Track: Voice Hint Judge (2-Criteria, 10점 만점)
+#### A-Track: Interactive Query Judge (2-Criteria, 10점 만점)
 
 KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2개 항목을 채점합니다.
 
@@ -155,15 +155,15 @@ KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2�
 | **Scene Relevance** (씬 적절성)  | 질문이 현재 씬의**고유한 디테일**에 의해 트리거되었는가? 영상 전체 주제 수준의 연결은 감점. 미래 예측·과거 뒷북은 치명적 감점                                                |
 | **Curiosity Hook** (행동 유발력) | 시청자가**실제로 리모컨을 들어 버튼을 누를 정도의 정보 격차**를 만드는가? 놀라운 전제나 반직관적 프레이밍을 통한 강한 심리적 당김을 고평가. Scene Relevance와 독립적으로 평가 |
 
-`judge_voice_hint.py`는 `scene_relevance <= 2`인 질문에 게이트를 적용합니다. 이 경우 보조 지표(`content_depth` 또는 `curiosity_hook`) 점수는 총점에 반영하지 않고, `total_score`는 `scene_relevance` 점수만 사용합니다.
+`judge_interactive_query.py`는 `scene_relevance <= 2`인 질문에 게이트를 적용합니다. 이 경우 보조 지표(`content_depth` 또는 `curiosity_hook`) 점수는 총점에 반영하지 않고, `total_score`는 `scene_relevance` 점수만 사용합니다.
 
 #### ~~C-Track: Description Judge~~ (Deprecated)
 
 > KeyScene Description 평가는 현 파이프라인에서 제외 되었습니다. 관련 스크립트는 `archived/`에 보관되어있습니다.
 
-#### ~~B-Track: VH Response Judge~~ (Deprecated)
+#### ~~B-Track: Interactive Query Response Judge~~ (Deprecated)
 
-> B-Track (VH Response Generation)은 현 파이프라인에서 제외되었습니다. 관련 스크립트(`generate_vh_response.py`, `judge_vh_response.py`)는 `archived/`에 보관되어있습니다.
+> B-Track (Interactive Query Response Generation)은 현 파이프라인에서 제외되었습니다. 관련 스크립트(`generate_interactive_query_response.py`, `judge_interactive_query_response.py`)는 `archived/`에 보관되어있습니다.
 
 ---
 
@@ -173,8 +173,8 @@ KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2�
   - `main.py`: E2E 파이프라인 오케스트레이터
   - `identify_keyscene.py`: KeyScene Scene 식별 (A-1)
   - `generate_keyscene_summary.py`: KeyScene Summary 생성 (A-2)
-  - `generate_voice_hint.py`: Voice Hint 생성 (A-3)
-  - `judge_voice_hint.py`: Voice Hint 품질 Judge (A-4)
+  - `generate_interactive_query.py`: Interactive Query 생성 (A-3)
+  - `judge_interactive_query.py`: Interactive Query 품질 Judge (A-4)
   - `utils.py`: Gemini SDK, GCS 연동, 공통 유틸리티
   - `export_to_excel.py`: Excel 리포트 생성
   - `jsonl_to_json.py`: JSONL → Pretty JSON 변환 유틸리티
@@ -184,17 +184,17 @@ KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2�
   - `sample_config.json`: config.json 템플릿
   - `sample_content_list.json`: legacy content_id JSON 리스트 예시
   - `sample_data/`: 예시 JSONL (파이프라인 참고용)
-  - `archived/`: Deprecated 스크립트 보관소 (`generate_vh_response.py`, `judge_vh_response.py` 등)
+  - `archived/`: Deprecated 스크립트 보관소 (`generate_interactive_query_response.py`, `judge_interactive_query_response.py` 등)
   - `assets/`: 파이프라인 중간 산출 및 수동 원천 JSONL 데이터
     - `keypoint_scenes.jsonl`
     - `keyscene_summary.jsonl`
-    - `voice_hint.jsonl`
-    - `voice_hint_scores.jsonl`
+    - `interactive_queries.jsonl`
+    - `interactive_query_scores.jsonl`
   - `results/`: 최종 Excel 시각화 리포트 (export_to_excel.py 출력)
-    - `vh_scores_high_context.xlsx`: A-Track High-Context 점수 집계 (Soft Green 테마)
-    - `vh_scores_low_context.xlsx`: A-Track Low-Context 점수 집계 (Soft Yellow 테마)
-    - `vh_score_details.xlsx`: A-Track Rationale 포함 세부 점수
-    - `voice_hints.xlsx`: 생성된 Voice Hint 질문 모음 리포트
+    - `interactive_query_scores_high_context.xlsx`: A-Track High-Context 점수 집계 (Soft Green 테마)
+    - `interactive_query_scores_low_context.xlsx`: A-Track Low-Context 점수 집계 (Soft Yellow 테마)
+    - `interactive_query_score_details.xlsx`: A-Track Rationale 포함 세부 점수
+    - `interactive_queries.xlsx`: 생성된 Interactive Query 질문 모음 리포트
 
 ## 사전 준비 및 환경 설정
 
@@ -283,7 +283,7 @@ KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2�
 
    #### video_metadata.jsonl 등록
 
-   업로드한 콘텐츠를 파이프라인에서 처리하려면 `video_metadata.jsonl`에 해당 `content_id`와 기본 메타데이터를 JSONL 1줄로 추가합니다. 이 파일은 실행 대상 목록이자 `meta` 모드와 Voice Hint 생성 프롬프트에 들어가는 영상 컨텍스트의 원천입니다.
+   업로드한 콘텐츠를 파이프라인에서 처리하려면 `video_metadata.jsonl`에 해당 `content_id`와 기본 메타데이터를 JSONL 1줄로 추가합니다. 이 파일은 실행 대상 목록이자 `meta` 모드와 Interactive Query 생성 프롬프트에 들어가는 영상 컨텍스트의 원천입니다.
 
    ```jsonl
    {"content_id": "my_video_001", "title": "영상 제목", "channel": "채널명", "description": "영상 설명"}
@@ -305,16 +305,16 @@ KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2�
     "kss_current_scene_model": "gemini-3.5-flash",
     "kss_current_scene_thinking_level": "high",
     "use_ref_for_keyscene_summary": true,
-    "vh_gen_model": "gemini-3.1-flash-lite",
-    "vh_gen_past_scenes_size": 2,
-    "vh_thinking_level": "low",
-    "vh_judge_model": "gemini-3.1-pro-preview",
-    "vh_judge_thinking_level": "high",
-    "vh_response_model": "gemini-3.1-flash-lite",
-    "vh_response_past_scenes_size": 5,
-    "vh_response_thinking_level": "medium",
-    "vh_response_judge_model": "gemini-3.1-pro-preview",
-    "vh_response_judge_thinking_level": "high"
+    "interactive_query_gen_model": "gemini-3.1-flash-lite",
+    "interactive_query_gen_past_scenes_size": 2,
+    "interactive_query_thinking_level": "low",
+    "interactive_query_judge_model": "gemini-3.1-pro-preview",
+    "interactive_query_judge_thinking_level": "high",
+    "interactive_query_response_model": "gemini-3.1-flash-lite",
+    "interactive_query_response_past_scenes_size": 5,
+    "interactive_query_response_thinking_level": "medium",
+    "interactive_query_response_judge_model": "gemini-3.1-pro-preview",
+    "interactive_query_response_judge_thinking_level": "high"
 }
 ```
 
@@ -339,20 +339,20 @@ python generate_keyscene_summary.py
 
 `identify_keyscene.py`는 `video_metadata.jsonl`의 콘텐츠를 순서대로 처리합니다. Scene이 16개 이하인 콘텐츠는 전체 Scene을 KeyScene으로 사용하고, 17개 이상이면 4등분 후 후보를 뽑아 impact 상위 16개를 최종 선택합니다.
 
-### A-Track (Voice Hint)
+### A-Track (Interactive Query)
 
 ```bash
-python generate_voice_hint.py
-python judge_voice_hint.py
+python generate_interactive_query.py
+python judge_interactive_query.py
 ```
 
-`generate_voice_hint.py`는 현재 Scene과 직전 `vh_gen_past_scenes_size`개 Scene을 함께 사용합니다. 현재 `sample_config.json` 기준값은 `2`이며, 대략 직전 40초~2분 수준의 문맥을 제공하기 위한 설정입니다.
+`generate_interactive_query.py`는 현재 Scene과 직전 `interactive_query_gen_past_scenes_size`개 Scene을 함께 사용합니다. 현재 `sample_config.json` 기준값은 `2`이며, 대략 직전 40초~2분 수준의 문맥을 제공하기 위한 설정입니다.
 
 특정 모드만 선택할 경우:
 
 ```bash
-python generate_voice_hint.py --modes imgvlm_chunk2 video
-python judge_voice_hint.py --modes imgvlm_chunk2 video
+python generate_interactive_query.py --modes imgvlm_chunk2 video
+python judge_interactive_query.py --modes imgvlm_chunk2 video
 ```
 
 ### 통합 실행
@@ -367,21 +367,21 @@ python main.py
 
 모든 생성·평가 스크립트는 **재시작 안전(Restart-Safe)** 하게 설계되어 있습니다. 스크립트를 재실행하면 이미 완료된 항목은 건너뛰고 **누락분만 자동으로 재처리**합니다.
 
-또한 `judge_voice_hint.py`는 **Discovery Loop**를 내장하고 있어, 현재 입력 파일에 있는 항목을 모두 처리한 뒤 **20초 간격으로 입력 파일을 다시 폴링**하여 새로 추가된 항목이 있는지 확인합니다. **3회 연속** 새 항목이 없을 때 자동 종료됩니다. `generate_keyscene_summary.py`는 `--watch` 옵션을 주면 입력 파일에 새 KeyScene이 추가되는지 주기적으로 감지합니다.
+또한 `judge_interactive_query.py`는 **Discovery Loop**를 내장하고 있어, 현재 입력 파일에 있는 항목을 모두 처리한 뒤 **20초 간격으로 입력 파일을 다시 폴링**하여 새로 추가된 항목이 있는지 확인합니다. **3회 연속** 새 항목이 없을 때 자동 종료됩니다. `generate_keyscene_summary.py`는 `--watch` 옵션을 주면 입력 파일에 새 KeyScene이 추가되는지 주기적으로 감지합니다.
 
 ### 병렬 실행
 
 Discovery Loop 덕분에 파이프라인의 각 단계를 **별도 터미널에서 동시에 실행**할 수 있습니다. 앞 단계에서 생성된 데이터를 뒷 단계가 자동으로 감지하여 처리합니다.
 
 ```bash
-# Terminal 1 — Voice Hint 생성
-python generate_voice_hint.py
+# Terminal 1 — Interactive Query 생성
+python generate_interactive_query.py
 
-# Terminal 2 — VH가 생성되는 대로 평가 (Discovery Loop으로 새 VH 자동 감지)
-python judge_voice_hint.py
+# Terminal 2 — Interactive Query가 생성되는 대로 평가 (Discovery Loop으로 새 Interactive Query 자동 감지)
+python judge_interactive_query.py
 ```
 
-> **참고**: `generate_voice_hint.py`가 선행으로 최소 1개의 KSS 레코드를 생성한 뒤 나머지를 시작하세요. 입력 파일이 아예 존재하지 않으면 오류를 출력하고 종료됩니다.
+> **참고**: `generate_interactive_query.py`가 선행으로 최소 1개의 KSS 레코드를 생성한 뒤 나머지를 시작하세요. 입력 파일이 아예 존재하지 않으면 오류를 출력하고 종료됩니다.
 
 ### 진행 상황 추적 (ProgressTracker)
 
@@ -405,18 +405,18 @@ python clean_assets.py --modes imgvlm_chunk2 imgvlm_graph
 
 ### Deprecated B-Track
 
-VH Response 생성/평가 실험은 현재 활성 파이프라인에서 제외되었고, 관련 스크립트는 `archived/`에 보관되어 있습니다. 과거 결과 재현이 필요할 때만 아래처럼 직접 실행합니다.
+Interactive Query Response 생성/평가 실험은 현재 활성 파이프라인에서 제외되었고, 관련 스크립트는 `archived/`에 보관되어 있습니다. 과거 결과 재현이 필요할 때만 아래처럼 직접 실행합니다.
 
 ```bash
-python archived/generate_vh_response.py
-python archived/judge_vh_response.py
+python archived/generate_interactive_query_response.py
+python archived/judge_interactive_query_response.py
 ```
 
 ## 주요 산출 데이터 형식 (assets/)
 
-### `voice_hint_scores.jsonl` (A-Track 평가 결과)
+### `interactive_query_scores.jsonl` (A-Track 평가 결과)
 
-`judge_voice_hint.py`는 질문별로 1줄씩 점수 레코드를 저장합니다. `query_type`에 따라 `content_depth` 또는 `curiosity_hook`이 사용되며, `scene_relevance <= 2`이면 `gate_applied`가 `true`가 됩니다.
+`judge_interactive_query.py`는 질문별로 1줄씩 점수 레코드를 저장합니다. `query_type`에 따라 `content_depth` 또는 `curiosity_hook`이 사용되며, `scene_relevance <= 2`이면 `gate_applied`가 `true`가 됩니다.
 
 ```json
 {

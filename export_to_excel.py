@@ -40,16 +40,16 @@ def _metrics_with_values(metrics, by_video, overall):
             kept.append(met)
     return kept
 
-def aggregate_vh_scores(input_dir, output_dir):
-    """VH Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
-    scores_file = os.path.join(input_dir, "voice_hint_scores.jsonl")
-    output_file = os.path.join(output_dir, "voice_hint_scores_aggregated.json")
+def aggregate_interactive_query_scores(input_dir, output_dir):
+    """Interactive Query Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
+    scores_file = os.path.join(input_dir, "interactive_query_scores.jsonl")
+    output_file = os.path.join(output_dir, "interactive_query_scores_aggregated.json")
 
     if not os.path.exists(scores_file):
-        print(f"[Skip] {scores_file} 파일이 없어 VH Aggregation을 건너뜁니다.")
+        print(f"[Skip] {scores_file} 파일이 없어 Interactive Query Aggregation을 건너뜁니다.")
         return
 
-    print(f"Aggregating VH scores from {scores_file}...")
+    print(f"Aggregating Interactive Query scores from {scores_file}...")
     try:
         data = load_jsonl(scores_file)
     except Exception as e:
@@ -139,22 +139,22 @@ def aggregate_vh_scores(input_dir, output_dir):
 
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(final_output, f, indent=4, ensure_ascii=False)
-    print(f"[Done] VH Score Aggregation (by query_type): {output_file}")
+    print(f"[Done] Interactive Query Score Aggregation (by query_type): {output_file}")
 
-def export_vh_details(input_dir, output_dir):
-    """Voice Hint Judge 상세 결과를 Excel로 내보냅니다."""
-    vh_scores_path = os.path.join(input_dir, "voice_hint_scores.jsonl")
-    if not os.path.exists(vh_scores_path):
-        print(f"[Skip] {vh_scores_path} 파일이 없어 VH Details 내보내기를 건너뜁니다.")
+def export_interactive_query_details(input_dir, output_dir):
+    """Interactive Query Judge 상세 결과를 Excel로 내보냅니다."""
+    interactive_query_scores_path = os.path.join(input_dir, "interactive_query_scores.jsonl")
+    if not os.path.exists(interactive_query_scores_path):
+        print(f"[Skip] {interactive_query_scores_path} 파일이 없어 Interactive Query Details 내보내기를 건너뜁니다.")
         return
 
-    vh_data = load_jsonl(vh_scores_path)
+    interactive_query_data = load_jsonl(interactive_query_scores_path)
 
-    flat_vh = []
+    flat_interactive_query = []
     # 모든 가능한 메트릭 키
     all_metrics = ["scene_relevance", "content_depth", "curiosity_hook"]
 
-    for item in vh_data:
+    for item in interactive_query_data:
         cid = item.get("content_id", "")
         item_scene_idx = item.get("scene_idx")
 
@@ -175,26 +175,26 @@ def export_vh_details(input_dir, output_dir):
                 row[f"rationale_{met}"] = met_data.get("rationale", "") if isinstance(met_data, dict) else ""
                 row[met] = met_data.get("score", "") if isinstance(met_data, dict) else ""
             row["total_score"] = total
-            flat_vh.append(row)
+            flat_interactive_query.append(row)
 
-    if not flat_vh:
-        print("[Skip] Voice Hint Score 데이터가 비어 있습니다.")
+    if not flat_interactive_query:
+        print("[Skip] Interactive Query Score 데이터가 비어 있습니다.")
         return
 
     # content_id 순으로 정렬
-    flat_vh.sort(key=lambda x: (
+    flat_interactive_query.sort(key=lambda x: (
         x.get("content_id", ""),
         x.get("scene_idx", 0),
         x.get("mode", ""),
         x.get("query", ""),
     ))
 
-    df = pd.DataFrame(flat_vh)
-    out_path = os.path.join(output_dir, "vh_score_details.xlsx")
+    df = pd.DataFrame(flat_interactive_query)
+    out_path = os.path.join(output_dir, "interactive_query_score_details.xlsx")
 
     writer = pd.ExcelWriter(out_path, engine='openpyxl')
-    df.to_excel(writer, index=False, sheet_name='VH Score Details')
-    worksheet = writer.sheets['VH Score Details']
+    df.to_excel(writer, index=False, sheet_name='Interactive Query Score Details')
+    worksheet = writer.sheets['Interactive Query Score Details']
     
     col_widths = {
         "index": 10,
@@ -316,7 +316,7 @@ def _write_pivot_scores_xlsx(out_path, sheet_name, metrics, ordered_modes, all_c
 
 
 def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_config, all_cids, agg):
-    """B-Track (VH Response)용 3행 헤더 피벗 Excel을 openpyxl로 작성합니다.
+    """B-Track (Interactive Query Response)용 3행 헤더 피벗 Excel을 openpyxl로 작성합니다.
 
     헤더 구조 (3행):
       Row 1: content_id (merged v) | metric1 (merged h across 8 cols) | ...
@@ -453,11 +453,11 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
     print(f"Created: {out_path}")
 
 
-def export_vh_scores(input_dir, output_dir):
-    """Voice Hint Judge 집계 점수를 고맥락/저맥락별 엑셀 파일로 내보냅니다."""
-    agg_path = os.path.join(output_dir, "voice_hint_scores_aggregated.json")
+def export_interactive_query_scores(input_dir, output_dir):
+    """Interactive Query Judge 집계 점수를 고맥락/저맥락별 엑셀 파일로 내보냅니다."""
+    agg_path = os.path.join(output_dir, "interactive_query_scores_aggregated.json")
     if not os.path.exists(agg_path):
-        print(f"[Skip] {agg_path} 파일이 없어 VH Scores 내보내기를 건너뜁니다.")
+        print(f"[Skip] {agg_path} 파일이 없어 Interactive Query Scores 내보내기를 건너뜁니다.")
         return
 
     with open(agg_path, "r", encoding="utf-8") as f:
@@ -491,8 +491,8 @@ def export_vh_scores(input_dir, output_dir):
             continue
 
         suffix = "high_context" if q_type == "content_anchored" else "low_context"
-        out_path = os.path.join(output_dir, f"vh_scores_{suffix}.xlsx")
-        sheet_name = "VH High-Context" if q_type == "content_anchored" else "VH Low-Context"
+        out_path = os.path.join(output_dir, f"interactive_query_scores_{suffix}.xlsx")
+        sheet_name = "Interactive Query High-Context" if q_type == "content_anchored" else "Interactive Query Low-Context"
         _write_pivot_scores_xlsx(
             out_path, sheet_name, metrics, ordered_modes,
             all_cids, by_video, overall,
@@ -500,23 +500,23 @@ def export_vh_scores(input_dir, output_dir):
 
 
 
-# [DEPRECATED] B-Track (VH Response Generation) — archived/
-# def aggregate_vh_response_scores(input_dir, output_dir, query_source="kss"):
-#     """VH Response Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
-#     scores_file = os.path.join(input_dir, f"vh_response_scores_{query_source}.jsonl")
-#     output_file = os.path.join(output_dir, f"vh_response_scores_aggregated_{query_source}.json")
+# [DEPRECATED] B-Track (Interactive Query Response Generation) — archived/
+# def aggregate_interactive_query_response_scores(input_dir, output_dir, query_source="kss"):
+#     """Interactive Query Response Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
+#     scores_file = os.path.join(input_dir, f"interactive_query_response_scores_{query_source}.jsonl")
+#     output_file = os.path.join(output_dir, f"interactive_query_response_scores_aggregated_{query_source}.json")
 #
 #     if not os.path.exists(scores_file) and query_source == "kss":
-#         fallback_file = os.path.join(input_dir, "vh_response_scores.jsonl")
+#         fallback_file = os.path.join(input_dir, "interactive_query_response_scores.jsonl")
 #         if os.path.exists(fallback_file):
 #             scores_file = fallback_file
-#             output_file = os.path.join(output_dir, "vh_response_scores_aggregated.json")
+#             output_file = os.path.join(output_dir, "interactive_query_response_scores_aggregated.json")
 #
 #     if not os.path.exists(scores_file):
-#         print(f"[Skip] {scores_file} 파일이 없어 VH Response Score Aggregation을 건너맕니다.")
+#         print(f"[Skip] {scores_file} 파일이 없어 Interactive Query Response Score Aggregation을 건너맕니다.")
 #         return
 #
-#     print(f"Aggregating VH Response scores from {scores_file}...")
+#     print(f"Aggregating Interactive Query Response scores from {scores_file}...")
 #     try:
 #         data = load_jsonl(scores_file)
 #     except Exception as e:
@@ -596,25 +596,25 @@ def export_vh_scores(input_dir, output_dir):
 #
 #     with open(output_file, "w", encoding="utf-8") as f:
 #         json.dump(final_output, f, indent=4, ensure_ascii=False)
-#     print(f"[Done] VH Response Score Aggregation (by query_type): {output_file}")
+#     print(f"[Done] Interactive Query Response Score Aggregation (by query_type): {output_file}")
 
 
-# def export_vh_response_details(input_dir, output_dir, query_source="kss"):
-#     """VH Response Judge 상세 결과를 Excel로 내보냅니다."""
-#     scores_path = os.path.join(input_dir, f"vh_response_scores_{query_source}.jsonl")
-#     responses_path = os.path.join(input_dir, f"vh_responses_{query_source}.jsonl")
-#     out_path = os.path.join(output_dir, f"vh_response_score_details_{query_source}.xlsx")
+# def export_interactive_query_response_details(input_dir, output_dir, query_source="kss"):
+#     """Interactive Query Response Judge 상세 결과를 Excel로 내보냅니다."""
+#     scores_path = os.path.join(input_dir, f"interactive_query_response_scores_{query_source}.jsonl")
+#     responses_path = os.path.join(input_dir, f"interactive_query_responses_{query_source}.jsonl")
+#     out_path = os.path.join(output_dir, f"interactive_query_response_score_details_{query_source}.xlsx")
 #
 #     if not os.path.exists(scores_path) and query_source == "kss":
-#         fallback_scores = os.path.join(input_dir, "vh_response_scores.jsonl")
-#         fallback_responses = os.path.join(input_dir, "vh_responses.jsonl")
+#         fallback_scores = os.path.join(input_dir, "interactive_query_response_scores.jsonl")
+#         fallback_responses = os.path.join(input_dir, "interactive_query_responses.jsonl")
 #         if os.path.exists(fallback_scores):
 #             scores_path = fallback_scores
 #             responses_path = fallback_responses
-#             out_path = os.path.join(output_dir, "vh_response_score_details.xlsx")
+#             out_path = os.path.join(output_dir, "interactive_query_response_score_details.xlsx")
 #
 #     if not os.path.exists(scores_path):
-#         print(f"[Skip] {scores_path} 파일이 없어 VH Response Details 내보내기를 건너녕니다.")
+#         print(f"[Skip] {scores_path} 파일이 없어 Interactive Query Response Details 내보내기를 건너녕니다.")
 #         return
 #
 #     # (content_id, scene_idx, mode, query) → response 매핑
@@ -660,7 +660,7 @@ def export_vh_scores(input_dir, output_dir):
 #         flat_rows.append(row)
 #
 #     if not flat_rows:
-#         print("[Skip] VH Response Score 데이터가 비어 있습니다.")
+#         print("[Skip] Interactive Query Response Score 데이터가 비어 있습니다.")
 #         return
 #
 #     # content_id 순으로 정렬
@@ -674,8 +674,8 @@ def export_vh_scores(input_dir, output_dir):
 #     df = pd.DataFrame(flat_rows)
 #
 #     writer = pd.ExcelWriter(out_path, engine="openpyxl")
-#     df.to_excel(writer, index=False, sheet_name="VH Resp Score Details")
-#     worksheet = writer.sheets["VH Resp Score Details"]
+#     df.to_excel(writer, index=False, sheet_name="Interactive Query Resp Score Details")
+#     worksheet = writer.sheets["Interactive Query Resp Score Details"]
 #     col_widths = {
 #         "index": 10,
 #         "content_id": 22, "scene_idx": 10, "mode": 12, "query_type": 16, "query": 40, "response": 60,
@@ -692,21 +692,21 @@ def export_vh_scores(input_dir, output_dir):
 #     print(f"Created: {out_path}")
 
 
-# def export_vh_response_scores(input_dir, output_dir, query_source="kss"):
-#     """VH Response Judge 집계 점수를 단일 Excel 파일(vh_response_scores_{query_source}.xlsx)로 내보냅니다.
+# def export_interactive_query_response_scores(input_dir, output_dir, query_source="kss"):
+#     """Interactive Query Response Judge 집계 점수를 단일 Excel 파일(interactive_query_response_scores_{query_source}.xlsx)로 내보냅니다.
 #     'high-context'와 'low-context' subcolumn을 포함합니다.
 #     """
-#     agg_path = os.path.join(output_dir, f"vh_response_scores_aggregated_{query_source}.json")
-#     out_path = os.path.join(output_dir, f"vh_response_scores_{query_source}.xlsx")
+#     agg_path = os.path.join(output_dir, f"interactive_query_response_scores_aggregated_{query_source}.json")
+#     out_path = os.path.join(output_dir, f"interactive_query_response_scores_{query_source}.xlsx")
 #
 #     if not os.path.exists(agg_path) and query_source == "kss":
-#         fallback_agg = os.path.join(output_dir, "vh_response_scores_aggregated.json")
+#         fallback_agg = os.path.join(output_dir, "interactive_query_response_scores_aggregated.json")
 #         if os.path.exists(fallback_agg):
 #             agg_path = fallback_agg
-#             out_path = os.path.join(output_dir, "vh_response_scores.xlsx")
+#             out_path = os.path.join(output_dir, "interactive_query_response_scores.xlsx")
 #
 #     if not os.path.exists(agg_path):
-#         print(f"[Skip] {agg_path} 파일이 없어 VH Response Scores 내보내기를 건너녕니다.")
+#         print(f"[Skip] {agg_path} 파일이 없어 Interactive Query Response Scores 내보내기를 건너녕니다.")
 #         return
 #
 #     with open(agg_path, "r", encoding="utf-8") as f:
@@ -728,7 +728,7 @@ def export_vh_scores(input_dir, output_dir):
 #         track_config["high-context"] = [m for m in track_config["high-context"] if m != "blank"]
 #         track_config["low-context"] = [m for m in track_config["low-context"] if m != "blank"]
 #
-#     sheet_name = "VH Response Scores"
+#     sheet_name = "Interactive Query Response Scores"
 #
 #     _write_response_pivot_scores_xlsx(
 #         out_path, sheet_name, metrics, track_config,
@@ -736,17 +736,17 @@ def export_vh_scores(input_dir, output_dir):
 #     )
 
 
-def export_voice_hints(input_dir, output_dir):
-    """Voice Hint 질문을 content_id / scene_idx 기준으로 정리하여 Excel로 내보냅니다.
+def export_interactive_queries(input_dir, output_dir):
+    """Interactive Query 질문을 content_id / scene_idx 기준으로 정리하여 Excel로 내보냅니다.
 
     컬럼 구조:
     - content_id : 동일 content_id를 가진 첫 번째 행에만 표시, 나머지 행은 빈 칸
     - scene_idx  : 각 scene마다 표시
     - queries_{mode} : 각 mode별 "1. ~~~\n2. ~~~" 형태로 한 셀에 번호 붙여 기록
     """
-    vh_path = os.path.join(input_dir, "voice_hint.jsonl")
-    if not os.path.exists(vh_path):
-        print(f"[Skip] {vh_path} 파일이 없어 Voice Hint Export를 건너뜁니다.")
+    interactive_query_path = os.path.join(input_dir, "interactive_queries.jsonl")
+    if not os.path.exists(interactive_query_path):
+        print(f"[Skip] {interactive_query_path} 파일이 없어 Interactive Query Export를 건너뜁니다.")
         return
 
     from collections import defaultdict
@@ -756,7 +756,7 @@ def export_voice_hints(input_dir, output_dir):
     scenes_by_content = defaultdict(lambda: defaultdict(dict))
     found_modes = set()
 
-    for rec in load_jsonl(vh_path):
+    for rec in load_jsonl(interactive_query_path):
         c_id  = rec.get("content_id")
         s_idx = rec.get("scene_idx")
         mode  = rec.get("mode", "")
@@ -768,7 +768,7 @@ def export_voice_hints(input_dir, output_dir):
         found_modes.add(mode)
 
     if not scenes_by_content:
-        print("[Skip] Voice Hint 데이터가 비어 있습니다.")
+        print("[Skip] Interactive Query 데이터가 비어 있습니다.")
         return
 
     ordered_modes = _sort_modes(found_modes)
@@ -792,11 +792,11 @@ def export_voice_hints(input_dir, output_dir):
             first = False
 
     df = pd.DataFrame(flat_rows)
-    out_path = os.path.join(output_dir, "voice_hints.xlsx")
+    out_path = os.path.join(output_dir, "interactive_queries.xlsx")
 
     writer = pd.ExcelWriter(out_path, engine="openpyxl")
-    df.to_excel(writer, index=False, sheet_name="Voice Hints")
-    worksheet = writer.sheets["Voice Hints"]
+    df.to_excel(writer, index=False, sheet_name="Interactive Queries")
+    worksheet = writer.sheets["Interactive Queries"]
 
     col_widths = {"index": 10, "content_id": 28, "scene_idx": 10}
     for qc in query_columns:
@@ -833,10 +833,10 @@ if __name__ == "__main__":
     query_sources = set()
     if os.path.exists(assets_dir):
         for filename in os.listdir(assets_dir):
-            if filename.startswith("vh_response_scores_") and filename.endswith(".jsonl"):
-                qs = filename[len("vh_response_scores_"):-len(".jsonl")]
+            if filename.startswith("interactive_query_response_scores_") and filename.endswith(".jsonl"):
+                qs = filename[len("interactive_query_response_scores_"):-len(".jsonl")]
                 query_sources.add(qs)
-        if os.path.exists(os.path.join(assets_dir, "vh_response_scores.jsonl")):
+        if os.path.exists(os.path.join(assets_dir, "interactive_query_response_scores.jsonl")):
             query_sources.add("kss")
 
     if not query_sources:
@@ -845,20 +845,20 @@ if __name__ == "__main__":
     print("="*60)
     print("1. Data Aggregation Phase")
     print("="*60)
-    aggregate_vh_scores(assets_dir, results_dir)
+    aggregate_interactive_query_scores(assets_dir, results_dir)
     # [DEPRECATED] B-Track — archived/
     # for qs in sorted(query_sources):
-    #     aggregate_vh_response_scores(assets_dir, results_dir, query_source=qs)
+    #     aggregate_interactive_query_response_scores(assets_dir, results_dir, query_source=qs)
 
     print("\n" + "="*60)
     print("2. Excel Export Phase")
     print("="*60)
-    export_vh_details(assets_dir, results_dir)
-    export_vh_scores(assets_dir, results_dir)
+    export_interactive_query_details(assets_dir, results_dir)
+    export_interactive_query_scores(assets_dir, results_dir)
     # [DEPRECATED] B-Track — archived/
     # for qs in sorted(query_sources):
-    #     export_vh_response_details(assets_dir, results_dir, query_source=qs)
-    #     export_vh_response_scores(assets_dir, results_dir, query_source=qs)
-    export_voice_hints(assets_dir, results_dir)
+    #     export_interactive_query_response_details(assets_dir, results_dir, query_source=qs)
+    #     export_interactive_query_response_scores(assets_dir, results_dir, query_source=qs)
+    export_interactive_queries(assets_dir, results_dir)
 
     print("\nAll pipeline tasks completed.")
