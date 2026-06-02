@@ -153,8 +153,8 @@ def process_current_scene(client, model_name, config, past_summary_text, current
 
 def main():
     parser = get_common_argparser(description="Keypoint Scene 목록을 입력받아 KeyScene Summary를 생성합니다.")
-    parser.add_argument("--input_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
-    parser.add_argument("--keyscene_summary_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary 별도 저장 경로")
+    parser.add_argument("--input_file", default="output/keypoint_scenes.jsonl", help="Keypoint Scene 목록 JSONL 경로 (identify_keypoint.py 출력)")
+    parser.add_argument("--keyscene_summary_file", default="output/keyscene_summary.jsonl", help="KeyScene Summary 별도 저장 경로")
     parser.add_argument("--watch", action="store_true", help="입력 파일에 새로운 데이터가 추가되는지 주기적으로 감지하고 계속 처리합니다.")
     parser.add_argument("--parallel", type=int, default=4, help="동시에 병렬 처리할 비디오(Content) 수 (기본값: 4)")
 

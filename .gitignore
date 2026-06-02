@@ -1,8 +1,8 @@
 __pycache__/
 
 # Output Directories
-assets/
-results/
+archive/
+output/
 scratch/
 sample_data/
 

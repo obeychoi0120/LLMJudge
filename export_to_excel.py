@@ -823,13 +823,13 @@ def export_interactive_queries(input_dir, output_dir):
 
 
 if __name__ == "__main__":
-    assets_dir = "assets"
-    results_dir = "results"
+    assets_dir = "output"
+    results_dir = os.path.join("output", "results")
 
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
 
-    # assets 디렉토리 내 파일을 스캔하여 존재하는 query_source 모드 검색
+    # output 디렉토리 내 파일을 스캔하여 존재하는 query_source 모드 검색
     query_sources = set()
     if os.path.exists(assets_dir):
         for filename in os.listdir(assets_dir):

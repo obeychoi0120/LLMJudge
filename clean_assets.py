@@ -4,12 +4,12 @@ import argparse
 import tempfile
 import shutil
 
-# 4개의 기본 에셋 파일 경로
+# 4개의 기본 출력 파일 경로
 ASSET_FILES = [
-    "assets/interactive_queries.jsonl",
-    "assets/interactive_query_scores.jsonl",
-    "assets/interactive_query_responses.jsonl",
-    "assets/interactive_query_response_scores.jsonl"
+    "output/interactive_queries.jsonl",
+    "output/interactive_query_scores.jsonl",
+    "output/interactive_query_responses.jsonl",
+    "output/interactive_query_response_scores.jsonl"
 ]
 
 def clean_modes_from_file(file_path, target_modes):
@@ -49,9 +49,9 @@ def clean_modes_from_file(file_path, target_modes):
     print(f" -> [완료] 삭제됨: {deleted_count}개 | 유지됨: {kept_count}개")
 
 def main():
-    parser = argparse.ArgumentParser(description="특정 mode의 레코드를 4개의 asset 파일에서 일괄 삭제합니다.")
+    parser = argparse.ArgumentParser(description="특정 mode의 레코드를 4개의 output 파일에서 일괄 삭제합니다.")
     parser.add_argument("--modes", required=True, nargs="+", help="삭제할 대상 mode 이름들 (예: imgvlm_chunk2 video)")
-    parser.add_argument("--files", nargs="*", default=ASSET_FILES, help="처리할 JSONL 파일 목록 (기본값: 4개의 주요 asset 파일)")
+    parser.add_argument("--files", nargs="*", default=ASSET_FILES, help="처리할 JSONL 파일 목록 (기본값: 4개의 주요 output 파일)")
     
     args = parser.parse_args()
 

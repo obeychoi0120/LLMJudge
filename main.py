@@ -10,14 +10,14 @@ def main():
     parser.add_argument("--input_file", default="video_metadata.jsonl", help="최초 컨텐츠 목록 파일 경로 (video_metadata JSONL 또는 content_id JSON 리스트)")
 
     # Interactive Query 입출력 설정
-    parser.add_argument("--interactive_queries_file", default="assets/interactive_queries.jsonl", help="Interactive Query 생성된 질문 목록 경로")
+    parser.add_argument("--interactive_queries_file", default="output/interactive_queries.jsonl", help="Interactive Query 생성된 질문 목록 경로")
     parser.add_argument("--keyscene_summary_file", help="KeyScene Detailed Summary 별도 저장 경로")
-    parser.add_argument("--keypoints_file", default="assets/keypoint_scenes.jsonl", help="KeyScene 목록 저장 경로")
-    parser.add_argument("--interactive_query_scores_file", default="assets/interactive_query_scores.jsonl", help="Interactive Query 질문별 Judge 점수 파일 경로")
+    parser.add_argument("--keypoints_file", default="output/keypoint_scenes.jsonl", help="KeyScene 목록 저장 경로")
+    parser.add_argument("--interactive_query_scores_file", default="output/interactive_query_scores.jsonl", help="Interactive Query 질문별 Judge 점수 파일 경로")
         
     # Interactive Query Response 입출력 설정 (B-track)
-    parser.add_argument("--interactive_query_responses_file", default="assets/interactive_query_responses.jsonl", help="Interactive Query Response 저장 경로 (generate_interactive_query_response.py 출력)")
-    parser.add_argument("--interactive_query_response_scores_file", default="assets/interactive_query_response_scores.jsonl", help="Interactive Query Response Judge 점수 저장 경로")
+    parser.add_argument("--interactive_query_responses_file", default="output/interactive_query_responses.jsonl", help="Interactive Query Response 저장 경로 (generate_interactive_query_response.py 출력)")
+    parser.add_argument("--interactive_query_response_scores_file", default="output/interactive_query_response_scores.jsonl", help="Interactive Query Response Judge 점수 저장 경로")
     parser.add_argument("--query_source", choices=["kss", "sourcewise"], default="kss",
                         help="Response 생성에 사용할 Interactive Query 질문의 출처 (kss: KSS 기반 공통 질문, sourcewise: 각 모드별로 생성된 질문)")
 
@@ -32,7 +32,7 @@ def main():
 
     # 기본값 설정 로직 (config 적용 후)
     if args.keyscene_summary_file is None:
-        args.keyscene_summary_file = "assets/keyscene_summary.jsonl"
+        args.keyscene_summary_file = "output/keyscene_summary.jsonl"
 
     common_project_args = [
         "--gcp_project_id", args.gcp_project_id,
@@ -100,7 +100,7 @@ def main():
     cmd = [
         sys.executable, "judge_interactive_query.py",
         "--input_file", args.interactive_queries_file,
-        "--keyscene_summary_file", args.keyscene_summary_file,
+        "--kss_file", args.keyscene_summary_file,
         "--scores_file", args.interactive_query_scores_file,
         "--interactive_query_judge_model", args.interactive_query_judge_model,
         "--interactive_query_judge_thinking_level", str(args.interactive_query_judge_thinking_level),

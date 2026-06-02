@@ -306,9 +306,9 @@ def is_content_id_fully_evaluated_interactive_query(content_id, input_file, targ
 
 def main():
     parser = get_common_argparser(description="Interactive Query 질문을 KeyScene Summary 기반으로 품질 평가")
-    parser.add_argument("--input_file", default="assets/interactive_queries.jsonl", help="Interactive Query 질문 목록 JSONL 경로")
-    parser.add_argument("--kss_file", default="assets/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
-    parser.add_argument("--scores_file", default="assets/interactive_query_scores.jsonl", help="Interactive Query 질문별 Judge 점수 저장 경로")
+    parser.add_argument("--input_file", default="output/interactive_queries.jsonl", help="Interactive Query 질문 목록 JSONL 경로")
+    parser.add_argument("--kss_file", default="output/keyscene_summary.jsonl", help="KeyScene Summary JSONL 경로")
+    parser.add_argument("--scores_file", default="output/interactive_query_scores.jsonl", help="Interactive Query 질문별 Judge 점수 저장 경로")
     parser.add_argument("--modes", nargs="+", default=["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], 
     choices=["video", "kss", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_chunk2", "imgvlm_graph", "meta"], help="평가할 모드 직접 지정")
     

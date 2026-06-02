@@ -203,7 +203,7 @@ def resolve_keypoints(raw_list, ref_scenes):
 def main():
     parser = get_common_argparser(description="영상 콘텐츠에서 Keypoint Scene을 식별하고 저장합니다.")
     parser.add_argument("--input_file", default="video_metadata.jsonl", help="입력 파일 경로 (video_metadata JSONL 또는 content_id JSON 리스트)")
-    parser.add_argument("--output_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 저장 경로")
+    parser.add_argument("--output_file", default="output/keypoint_scenes.jsonl", help="Keypoint Scene 목록 저장 경로")
     
     args, client = init_pipeline(parser.parse_args())
     candidate_config = make_candidate_config(thinking_level=args.keypoint_thinking_level)

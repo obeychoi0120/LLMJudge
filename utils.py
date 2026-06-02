@@ -448,9 +448,12 @@ def check_gcs_files_exist(gs_bucket_name, content_id):
     if not missing:
         print(f"[OK] '{content_id}'에 필요한 미디어 및 메타데이터가 모두 GCS에 존재합니다.")
         return True
-    else:
-        print(f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}")
-        return False
+
+    message = f"[WARNING] '{content_id}'에 필요한 일부 파일이 GCS에 없습니다: {missing}"
+    print(message)
+    if os.getenv("FAIL_ON_MISSING_GCS") == "1":
+        raise FileNotFoundError(message)
+    return False
 
 
 _GCS_MODE_MAP = {

@@ -185,12 +185,12 @@ KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2�
   - `sample_content_list.json`: legacy content_id JSON 리스트 예시
   - `sample_data/`: 예시 JSONL (파이프라인 참고용)
   - `archived/`: Deprecated 스크립트 보관소 (`generate_interactive_query_response.py`, `judge_interactive_query_response.py` 등)
-  - `assets/`: 파이프라인 중간 산출 및 수동 원천 JSONL 데이터
+  - `output/`: 파이프라인 중간 산출 JSONL 데이터
     - `keypoint_scenes.jsonl`
     - `keyscene_summary.jsonl`
     - `interactive_queries.jsonl`
     - `interactive_query_scores.jsonl`
-  - `results/`: 최종 Excel 시각화 리포트 (export_to_excel.py 출력)
+  - `output/results/`: 최종 Excel 시각화 리포트 (export_to_excel.py 출력)
     - `interactive_query_scores_high_context.xlsx`: A-Track High-Context 점수 집계 (Soft Green 테마)
     - `interactive_query_scores_low_context.xlsx`: A-Track Low-Context 점수 집계 (Soft Yellow 테마)
     - `interactive_query_score_details.xlsx`: A-Track Rationale 포함 세부 점수
@@ -412,7 +412,7 @@ python archived/generate_interactive_query_response.py
 python archived/judge_interactive_query_response.py
 ```
 
-## 주요 산출 데이터 형식 (assets/)
+## 주요 산출 데이터 형식 (output/)
 
 ### `interactive_query_scores.jsonl` (A-Track 평가 결과)
 
