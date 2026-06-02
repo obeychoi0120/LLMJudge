@@ -31,6 +31,52 @@ The ultimate business objectives of these generated questions are to stimulate p
 
 You will be provided with a [Reference Scene Summary (Past summary and current scene description)], which gives the context of when the question was generated. Based on this text summary, evaluate the generated question on the following 2 criteria, scoring each from 1 to 5."""
 
+_SCENE_RELEVANCE_CRITERION = """1. Scene Relevance & Answerability (Platform Gate)
+Evaluate whether the candidate question is well-timed for the [Current Scene] and can be answered at this exact moment. This criterion is NOT about how interesting, deep, or clickable the question is. It is only about whether the question belongs here, now.
+
+A question should score high only when it is naturally triggered by the current viewing context and would feel misplaced if shown much earlier, much later, or in a generic part of the same video.
+
+[Source-Aware Evidence Rules]
+When identifying the current-scene trigger, distinguish evidence sources carefully:
+- Spoken narration/dialogue is strong evidence for narrative, explanatory, interview, lecture, or documentary questions.
+- On-screen captions, titles, labels, maps, menus, scoreboards, subtitles, product names, and visible UI text are valid triggers when they are salient in the scene.
+- Visual objects, places, outfits, food, tools, animals, gestures, player actions, game items, vehicles, diagrams, charts, or environmental details are valid triggers, especially for tangential questions.
+- Chat comments, scrolling comments, noisy OCR fragments, repeated viewer reactions, usernames, or incidental background text are weak evidence unless the current scene explicitly focuses on that text/comment.
+- If ASR/OCR/VLM evidence conflicts, prefer the evidence most central to the current scene: spoken explanation for talk/lecture scenes, visible action for action scenes, and prominent labels/captions for information graphics.
+
+[Talk / Explainer Content Rule]
+For talk, lecture, documentary, interview, news, or explainer content, the current-scene trigger does NOT need to be a unique visual action. A currently discussed concept, claim, comparison, named entity, statistic, example, chart, or argument can be a strong scene trigger.
+Do not penalize a question merely because it is triggered by spoken explanation rather than by a visual object.
+
+[Past Context Rule]
+Past context may be used when the [Current Scene] actively reintroduces, contrasts, applies, develops, or visually recalls that earlier information.
+Penalize the question only when it merely repeats a fact that was already fully resolved in the [Past Scene Summary] without any fresh reason in the [Current Scene].
+
+[Tangential Cue Distance Rule]
+For tangential questions, judge the distance between the current-scene cue and the external knowledge being asked:
+- Direct cue: visible/currently mentioned food -> origin, cooking science, ingredient, or local culture of that food.
+- Direct cue: visible/currently mentioned animal -> behavior, biology, habitat, or conservation issue.
+- Direct cue: visible/currently mentioned place/landmark -> geography, architecture, history, or local culture.
+- Direct cue: visible/currently mentioned prop/tool/clothing/UI/chart -> design, function, origin, technology, or convention.
+- Moderate cue: broad scene setting -> related background knowledge that still clearly helps understand the current scene.
+- Weak cue: generic studio, generic background, generic topic, or video title only -> broad trivia not tied to the moment.
+- Invalid cue: no identifiable current-scene cue, or only an inferred topic from metadata/title.
+
+To evaluate this accurately, analyze the following checks in your rationale:
+- Current Scene Trigger: Identify the concrete cue in the [Current Scene]. State whether it comes from speech, visible action, object, OCR text, caption, chart, place, person, or another source.
+- Scene Specificity: Would this question feel specifically timed to this scene, or could it be asked almost anywhere in the same video?
+- Immediate Answerability: Can the platform reasonably answer it now using available context or stable background knowledge, without needing future scenes?
+- Future/Spoiler Risk: Does the question ask what will happen next, reveal a future event, or require information from later scenes?
+- Past Redundancy: Was this already fully explained in the [Past Scene Summary]? If yes, does the [Current Scene] provide a fresh reason to ask it again?
+- Reference Clarity: Are the entities clear from the current context, or are references like "this person," "that thing," or "the event" ambiguous?
+
+Scoring Rubric:
+- 5: Perfectly timed and scene-specific. The question is triggered by a concrete and salient current-scene cue. It would feel misplaced in most other scenes. It is immediately answerable and has no future/spoiler or stale-past issue.
+- 4: Clearly relevant and answerable, but somewhat broader. The question is clearly connected to the current scene, but the trigger is a broader scene topic, recurring issue, or ongoing discussion rather than a highly unique detail. It would still feel reasonable here, though it might also work in a few nearby scenes.
+- 3: Moderately timed but generic. The question is answerable and has some current-scene connection, but it is mostly derivable from the video's general topic, title, or recurring theme. It does not feel wrong here, but it is not strongly tied to this exact moment.
+- 2: Poorly timed or weakly triggered. The current-scene trigger is missing, incidental, noisy, ambiguous, or too generic. The question could be asked almost anywhere in the video, depends heavily on stale past context, or relies on weak OCR/chat/background clues.
+- 1: Critical violation. The question requires future scenes, asks what will happen next, leaks spoilers, is not answerable at the current moment, directly repeats already-resolved past information with no fresh current-scene trigger, or is unrelated to the current viewing context."""
+
 # ── Content-Anchored 질문 전용 Judge ──
 _QUERY_JUDGE_PROMPT_CONTENT_ANCHORED = _QUERY_JUDGE_COMMON_INTRO + """
 
@@ -39,28 +85,15 @@ This question is a "Content-Anchored" question — it is EXPECTED to directly en
 
 [Evaluation Criteria]
 
-1. Temporal Immersion & Answerability (Platform Constraints)
-Evaluate whether the candidate question is perfectly timed with the [Current Scene] and can be answered immediately, without referencing future events (spoilers/predictions) or being redundant with past events.
+""" + _SCENE_RELEVANCE_CRITERION + """
 
-To evaluate this accurately, analyze the following three checks in your rationale:
-- Clue Trigger Check: Is there a clear visual, auditory, or narrative clue in the [Current Scene] that naturally sparks this question?
-- Future/Spoiler Check: Does the question or its answer require information from future scenes, or contain spoilers of what will happen next? (Critical violation if yes).
-- Past Redundancy Check: Is the question asking about something already fully resolved or explained in the [Past Scene Summary] (i.e., a "late" question) without any fresh relevance to the [Current Scene]?
-
-Scoring Rubric:
-- 5: Perfect Timing. Clear trigger clue in the [Current Scene]. Absolutely no future predictions or spoilers. The TV system/viewer can answer or explore this immediately.
-- 4: Highly relevant and timed well, but the trigger clue in the [Current Scene] is slightly weak, indirect, or subtle.
-- 3: Moderately timed. The question is answerable, but the connection to the [Current Scene] is weak (feels somewhat generic), OR it feels slightly "late" (referencing past facts with minimal current connection).
-- 2: Poorly timed. The trigger clue is completely absent in the [Current Scene] (feels out-of-nowhere), OR it heavily relies on past information that has already lost its freshness.
-- 1: Critical temporal violation. The question asks about future events ("What will happen?"), contains future spoilers, is completely unanswerable at the current moment, OR is a direct repetition of already answered facts from the [Past Scene Summary] with zero current context.
-
-2. Content Depth & Relevance (Core Topic Engagement)
-How deeply and precisely does the question engage with the CORE topic, event, or person of the current scene?
-- 5: Precisely targets the central event/topic of the current scene and pushes the viewer to think one level deeper — e.g., asking about the psychological motivation behind a character's action, the tactical significance of a play, or the policy implications of a news story. Goes beyond surface-level fact-checking.
-- 4: Clearly connected to the scene's core topic with meaningful depth, but the angle or specificity could be slightly sharper.
-- 3: Related to the scene but focuses on a secondary element rather than the core topic, or stays at a surface level without pushing for deeper insight.
-- 2: Only loosely tied to the current scene's main subject; could apply to many generic scenes.
-- 1: Completely disconnected from the scene's core narrative, or is a trivial factual question that anyone could answer without watching."""
+2. Content Depth (Analytical Depth)
+Evaluate the intellectual depth of the question, entirely independent of Criterion 1 (scene relevance). Assume the question IS relevant; how much deeper understanding would answering it provide to the viewer?
+- 5: Multi-layered analysis. The question probes underlying mechanisms, motivations, or implications that are NOT obvious from simply watching (e.g., "Why did the character choose THIS specific approach?" reveals psychological depth; "What tactical shift caused the momentum change?" demands expert-level analysis). Answering it would genuinely enrich the viewer's understanding.
+- 4: One level deeper than surface. The question pushes beyond what's directly shown or said, but the analytical angle is somewhat predictable for an informed viewer.
+- 3: Surface-level factual. The question asks "what/who/when" rather than "why/how." Answerable with a simple fact lookup without requiring deeper analysis or critical thinking.
+- 2: States the near-obvious. The question asks about something already largely apparent from watching, adding minimal new insight. A viewer would think "I can already see that."
+- 1: Trivially obvious or nonsensical. The answer is self-evident from the screen, or the question is too vague/broad to generate any meaningful information."""
 
 # ── Tangential 질문 전용 Judge ──
 _QUERY_JUDGE_PROMPT_TANGENTIAL = _QUERY_JUDGE_COMMON_INTRO + """
@@ -76,35 +109,22 @@ If a question successfully leverages such deep, tangential background knowledge 
 
 [Evaluation Criteria]
 
-1. Temporal Immersion & Answerability (Platform Constraints)
-Evaluate whether the candidate question is perfectly timed with the [Current Scene] and can be answered immediately, without referencing future events (spoilers/predictions) or being redundant with past events.
+""" + _SCENE_RELEVANCE_CRITERION + """
 
-To evaluate this accurately, analyze the following three checks in your rationale:
-- Clue Trigger Check: Is there a clear visual, auditory, or narrative clue in the [Current Scene] that naturally sparks this question?
-- Future/Spoiler Check: Does the question or its answer require information from future scenes, or contain spoilers of what will happen next? (Critical violation if yes).
-- Past Redundancy Check: Is the question asking about something already fully resolved or explained in the [Past Scene Summary] (i.e., a "late" question) without any fresh relevance to the [Current Scene]?
-
-Scoring Rubric:
-- 5: Perfect Timing. Clear trigger clue in the [Current Scene]. Absolutely no future predictions or spoilers. The TV system/viewer can answer or explore this immediately.
-- 4: Highly relevant and timed well, but the trigger clue in the [Current Scene] is slightly weak, indirect, or subtle.
-- 3: Moderately timed. The question is answerable, but the connection to the [Current Scene] is weak (feels somewhat generic), OR it feels slightly "late" (referencing past facts with minimal current connection).
-- 2: Poorly timed. The trigger clue is completely absent in the [Current Scene] (feels out-of-nowhere), OR it heavily relies on past information that has already lost its freshness.
-- 1: Critical temporal violation. The question asks about future events ("What will happen?"), contains future spoilers, is completely unanswerable at the current moment, OR is a direct repetition of already answered facts from the [Past Scene Summary] with zero current context.
-
-2. Curiosity & Hook (Intrinsic Intrigue & Tone)
-Evaluate the psychological hook, conversational tone, and naturalness of the question ITSELF, entirely independent of Criterion 1. Even if the question asks about the future or is poorly timed, how engaging is the wording?
-- 5: An incredibly engaging question that leverages deep Tangential World Knowledge (historical, cultural, sports stats, gaming meta, etc.) based on screen elements. Politely and elegantly stimulates curiosity like an expert critic. Concise and natural.
-- 4: Interesting enough to encourage interaction, but the wording is slightly generic, or the applied world knowledge is somewhat shallow.
-- 3: A reasonable question related to the video content, but lacks a strong motivational hook to actually force interaction.
-- 2: Has an informational purpose but is too stiff, unnatural, or requires the viewer to think too hard about the question's intent.
-- 1: A completely obvious question, or one that is phrased very mechanically, generating zero curiosity."""
+2. Curiosity Hook (Viewer Action Drive)
+Evaluate whether this question would make a viewer ACTUALLY PICK UP THE REMOTE and press a button to see the answer. This criterion is entirely independent of Criterion 1 (scene relevance). Focus purely on: does the question create an irresistible information gap?
+- 5: Irresistible urge to know. The question reveals a surprising premise or counter-intuitive framing (e.g., "you thought X, but actually...") that creates a large information gap. The viewer would feel genuine discomfort NOT knowing the answer. Natural, conversational tone like an expert friend sharing a fascinating insight.
+- 4: Genuinely interesting — the viewer would likely press the button, but "could also let it go." The premise is somewhat predictable, or the information gap is moderate rather than compelling.
+- 3: Reasonable but forgettable. The viewer thinks "huh, that's a fair question" but feels no urgency to interact. No strong pull toward action.
+- 2: The intent is visible but the question is too stiff, academic, or confusingly worded. The viewer has to spend effort just understanding what is being asked, killing any spontaneous curiosity.
+- 1: Completely obvious (answer is trivially known) or so mechanically phrased that it generates zero curiosity. No viewer would bother interacting."""
 
 _QUERY_JUDGE_FORMAT_PROMPT_CONTENT_ANCHORED = """[Output Format]
 Output ONLY the following JSON. Do NOT output any other text.
 Write the rationale first, followed by the score for each criterion.
 {
-    "temporal_immersion": {
-        "rationale": "Clue Check: <Identify the clue in the current scene or state if missing>. Future/Spoiler Check: <Explain if future knowledge/spoiler is leaked>. Past Redundancy Check: <Explain if it is a late question>. Final justification for the score.",
+    "scene_relevance": {
+        "rationale": "Current Scene Trigger: <Identify the cue and source: speech / visible action / object / OCR / caption / chart / place / etc.>. Scene Specificity: <Explain exact-scene vs general-topic fit>. Immediate Answerability: <Explain whether it can be answered now>. Future/Spoiler Risk: <Explain if future knowledge/spoiler is required or leaked>. Past Redundancy: <Explain if it repeats resolved past information or has a fresh current trigger>. Reference Clarity: <Explain any ambiguity>. Final Judgment: <Concise justification for the score>.",
         "score": <integer 1-5>
     },
     "content_depth": {
@@ -117,11 +137,11 @@ _QUERY_JUDGE_FORMAT_PROMPT_TANGENTIAL = """[Output Format]
 Output ONLY the following JSON. Do NOT output any other text.
 Write the rationale first, followed by the score for each criterion.
 {
-    "temporal_immersion": {
-        "rationale": "Clue Check: <Identify the clue in the current scene or state if missing>. Future/Spoiler Check: <Explain if future knowledge/spoiler is leaked>. Past Redundancy Check: <Explain if it is a late question>. Final justification for the score.",
+    "scene_relevance": {
+        "rationale": "Current Scene Trigger: <Identify the cue and source: speech / visible action / object / OCR / caption / chart / place / etc.>. Scene Specificity: <Explain exact-scene vs general-topic fit>. Immediate Answerability: <Explain whether it can be answered now>. Future/Spoiler Risk: <Explain if future knowledge/spoiler is required or leaked>. Past Redundancy: <Explain if it repeats resolved past information or has a fresh current trigger>. Reference Clarity: <Explain any ambiguity>. Final Judgment: <Concise justification for the score>.",
         "score": <integer 1-5>
     },
-    "curiosity_and_hook": {
+    "curiosity_hook": {
         "rationale": "<Concise evaluation reasoning in English, citing specific evidence>",
         "score": <integer 1-5>
     }
@@ -137,8 +157,8 @@ def make_query_judge_config(thinking_level=None):
 
 # query_type별 score key 매핑
 _SCORE_KEYS_BY_TYPE = {
-    "content_anchored": ["temporal_immersion", "content_depth"],
-    "tangential": ["temporal_immersion", "curiosity_and_hook"],
+    "content_anchored": ["scene_relevance", "content_depth"],
+    "tangential": ["scene_relevance", "curiosity_hook"],
 }
 
 def evaluate_query(client, model_name, judge_config, detailed_summary, query_text, query_type="tangential"):
@@ -180,11 +200,18 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
             label=f"VH Judge (Scene {scene_idx}, {mode}, {query_type})",
         )
 
-        score_keys = _SCORE_KEYS_BY_TYPE.get(query_type, ["temporal_immersion", "curiosity_and_hook"])
-        total = sum(
+        score_keys = _SCORE_KEYS_BY_TYPE.get(query_type, ["scene_relevance", "curiosity_hook"])
+        raw_total = sum(
             (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
             for k in score_keys
         ) if score_dict else 0
+        scene_relevance_score = (
+            score_dict.get("scene_relevance", {}).get("score", 0)
+            if score_dict and isinstance(score_dict.get("scene_relevance"), dict)
+            else 0
+        )
+        gate_applied = scene_relevance_score <= 2
+        total = scene_relevance_score if gate_applied else raw_total
 
         from collections import OrderedDict
         score_record = OrderedDict([
@@ -194,17 +221,18 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
             ("query_type", query_type),
             ("query", query_text),
             ("judge", score_dict),
+            ("gate_applied", gate_applied),
             ("total_score", total),
         ])
 
         _ITEM_LABELS_BY_TYPE = {
             "content_anchored": [
-                ("temporal_immersion", "시점 몰입도"),
+                ("scene_relevance", "씬 적절성"),
                 ("content_depth", "콘텐츠 핵심 깊이"),
             ],
             "tangential": [
-                ("temporal_immersion", "시점 몰입도"),
-                ("curiosity_and_hook", "호기심 유도력"),
+                ("scene_relevance", "씬 적절성"),
+                ("curiosity_hook", "호기심 유도력"),
             ],
         }
         item_labels = _ITEM_LABELS_BY_TYPE.get(query_type, _ITEM_LABELS_BY_TYPE["tangential"])
@@ -216,7 +244,8 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
                 for key, label in item_labels
             ])
             type_tag = "CA" if query_type == "content_anchored" else "TG"
-            out_str = f"[{type_tag}] Query: {query_text}\nScore: {total}/10 | {score_details}"
+            gate_note = " | Gate: scene_relevance<=2 -> secondary score ignored" if gate_applied else ""
+            out_str = f"[{type_tag}] Query: {query_text}\nScore: {total}/10 | {score_details}{gate_note}"
             
         append_jsonl(args.scores_file, score_record, lock=file_write_lock)
         return {"mode": mode, "query_type": query_type, "query": query_text, "success": True, "out_str": out_str, "total": total}
@@ -307,7 +336,7 @@ def main():
     target_mode_order = ["video", "raw", "raw_with_mmvlm", "imgvlm_sentence", "imgvlm_graph", "meta"]
     
     printed_content_ids = set()
-    _VH_SCORE_KEYS = ["temporal_immersion", "content_depth", "curiosity_and_hook"]
+    _VH_SCORE_KEYS = ["scene_relevance", "content_depth", "curiosity_hook"]
 
     def check_and_print_summaries():
         all_content_ids = set()

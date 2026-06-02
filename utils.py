@@ -264,7 +264,7 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
     Args:
         scores_file: 점수 JSONL 파일 경로
         content_id: 집계 대상 content_id
-        score_keys: 점수 키 목록 (예: ["temporal_immersion", "content_depth", "curiosity_and_hook"])
+        score_keys: 점수 키 목록 (예: ["scene_relevance", "content_depth", "curiosity_hook"])
         mode_order: 모드 정렬 순서 리스트
         max_score: 총점 만점 (None이면 표시 안 함)
     """
@@ -272,29 +272,32 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
     if not records:
         return
 
-    # query_type별 score key 매핑 (VH Judge 전용)
-    _VH_SCORE_KEYS = {"temporal_immersion", "content_depth", "curiosity_and_hook"}
-    _SCORE_KEYS_BY_TYPE = {
-        "content_anchored": ["temporal_immersion", "content_depth"],
-        "tangential": ["temporal_immersion", "curiosity_and_hook"],
-    }
+    # query_type별 score key를 데이터에서 동적으로 감지
+    # (score_keys 인자와 judge dict의 교집합으로 결정)
+    score_keys_set = set(score_keys)
 
-    # query_type 분리 집계: 레코드에 query_type이 있을 때
-    is_vh_metrics = bool(set(score_keys) & _VH_SCORE_KEYS)
+    # query_type별 분리 집계: 레코드에 query_type이 있을 때
     has_query_type = any(r.get("query_type") for r in records)
 
     if has_query_type:
         # query_type별 분리 집계
         # type_mode_scores[query_type][mode] = [scores_dicts...]
+        # type_keys[query_type] = [실제 사용된 키 목록]
         type_mode_scores = {}
+        type_keys = {}
         for rec in records:
             q_type = rec.get("query_type", "tangential")
             mode = rec.get("mode", "")
             judge = rec.get("judge", {})
-            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys) if is_vh_metrics else score_keys
+            # 이 레코드에 실제로 존재하는 키만 사용
+            keys_in_record = [k for k in score_keys if k in judge and isinstance(judge.get(k), dict)]
+            # query_type별 키 집합 누적 (union)
+            if q_type not in type_keys:
+                type_keys[q_type] = set()
+            type_keys[q_type].update(keys_in_record)
             scores = {}
-            for k in keys:
-                val = judge.get(k, {})
+            for k in keys_in_record:
+                val = judge[k]
                 scores[k] = val.get("score", 0) if isinstance(val, dict) else 0
             type_mode_scores.setdefault(q_type, {}).setdefault(mode, []).append(scores)
 
@@ -316,7 +319,7 @@ def print_scores_summary(scores_file, content_id, score_keys, mode_order, max_sc
             if not mode_scores:
                 continue
 
-            keys = _SCORE_KEYS_BY_TYPE.get(q_type, score_keys) if is_vh_metrics else score_keys
+            keys = sorted(type_keys.get(q_type, set()), key=lambda k: score_keys.index(k) if k in score_keys else 999)
             label = _TYPE_LABELS.get(q_type, q_type)
             print(f"\n  {label}")
 
@@ -528,7 +531,7 @@ def load_video_metadata(gs_bucket_name, content_id):
     파일을 찾을 수 없거나 매칭되는 content_id가 없으면 ValueError를 발생시킵니다.
 
     Returns:
-        dict (title, channel, upload_date, description 등)
+        dict (title, channel, description 등)
     """
     local_path = "video_metadata.jsonl"
     if not os.path.exists(local_path):
@@ -765,6 +768,20 @@ def format_vlm_structure_as_text(vlm_struct):
     elif vlm_struct.get("context"):
         ctx = vlm_struct["context"]
         lines.append(f"Context: {', '.join(ctx) if isinstance(ctx, list) else ctx}")
+
+    if vlm_struct.get("scene"):
+        if isinstance(vlm_struct["scene"], str):
+            lines.append(f"Scene: {vlm_struct['scene']}")
+        else:
+            cleaned = [_clean_fragment(f) for f in vlm_struct["scene"] if _clean_fragment(f)]
+            lines.append(f"Scene: {' | '.join(cleaned)}")
+
+    if vlm_struct.get("details"):
+        if isinstance(vlm_struct["details"], str):
+            lines.append(f"Details: {vlm_struct['details']}")
+        else:
+            cleaned = [_clean_fragment(f) for f in vlm_struct["details"] if _clean_fragment(f)]
+            lines.append(f"Details: {' | '.join(cleaned)}")
     return "\n".join(lines)
 
 
@@ -1183,6 +1200,45 @@ def load_keypoints_by_content(jsonl_path):
     return keypoints_by_content
 
 
+def load_content_ids(path="video_metadata.jsonl"):
+    """JSONL 메타데이터 또는 JSON 목록 파일에서 content_id 리스트를 반환합니다."""
+    if not os.path.exists(path):
+        return []
+
+    content_ids = []
+    seen = set()
+
+    def add_content_id(item):
+        cid = item if isinstance(item, str) else item.get("content_id") if isinstance(item, dict) else None
+        if cid and cid not in seen:
+            content_ids.append(cid)
+            seen.add(cid)
+
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read().strip()
+
+    if not text:
+        return content_ids
+
+    if text.startswith("["):
+        try:
+            for item in json.loads(text):
+                add_content_id(item)
+        except json.JSONDecodeError:
+            pass
+        return content_ids
+
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            add_content_id(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    return content_ids
+
+
 def load_summary_map(jsonl_path):
     """KeyScene Summary JSONL을 파싱하여 {(content_id, scene_idx): summary_text} 맵을 반환합니다."""
     summary_map = {}
@@ -1262,27 +1318,19 @@ class ContentIndexDict(dict):
 
 
 def load_content_indices():
-    """content_list.json을 참조하여 content_id -> index 매핑 딕셔너리(ContentIndexDict)를 반환합니다."""
+    """video_metadata.jsonl을 참조하여 content_id -> index 매핑 딕셔너리(ContentIndexDict)를 반환합니다."""
     indices = ContentIndexDict()
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # 1. content_list.json (인덱스 순서대로 정렬되어 있음)
-    content_list_path = os.path.join(base_dir, "content_list.json")
-    if os.path.exists(content_list_path):
-        try:
-            with open(content_list_path, "r", encoding="utf-8") as f:
-                cids = json.load(f)
-                if isinstance(cids, list):
-                    for idx, cid in enumerate(cids):
-                        indices[cid] = idx
-        except Exception:
-            pass
+
+    metadata_path = os.path.join(base_dir, "video_metadata.jsonl")
+    for idx, cid in enumerate(load_content_ids(metadata_path)):
+        indices[cid] = idx + 1
             
     return indices
 
 
 def sort_jsonl_file(filepath):
-    """JSONL 파일을 (content_list의 content_id 순서, scene_idx, mode, query) 순으로 정렬합니다."""
+    """JSONL 파일을 (video_metadata의 content_id 순서, scene_idx, mode, query) 순으로 정렬합니다."""
     if not os.path.exists(filepath):
         return
     records = []

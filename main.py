@@ -7,7 +7,7 @@ from utils import load_config, get_common_argparser
 
 def main():
     parser = get_common_argparser("End-to-End LLM Judge Pipeline Orchestrator (Voice Hint & VH Response)")
-    parser.add_argument("--input_file", default="content_list.json", help="최초 컨텐츠 목록(JSON) 파일 경로")
+    parser.add_argument("--input_file", default="video_metadata.jsonl", help="최초 컨텐츠 목록 파일 경로 (video_metadata JSONL 또는 content_id JSON 리스트)")
 
     # Voice Hint 입출력 설정
     parser.add_argument("--voice_hints_file", default="assets/voice_hint.jsonl", help="Voice Hint 생성된 질문 목록 경로")
@@ -109,47 +109,48 @@ def main():
     print(f"-> Voice Hint 평가 점수 저장 완료: {args.voice_hint_scores_file}")
 
     # ───────────────────────────────────────────────
+    # [DEPRECATED] B-Track (VH Response Generation) — archived/
+    # ───────────────────────────────────────────────
     # B-1: VH(KSS) Response 생성 (generate_vh_response.py)
     # ───────────────────────────────────────────────
-    print("\n" + "="*60)
-    print(">>> B-1. VH Response 생성 (generate_vh_response.py)")
-    print("="*60)
-    cmd = [
-        sys.executable, "generate_vh_response.py",
-        "--input_file",      args.voice_hints_file,
-        "--output_file",     args.vh_responses_file,
-        "--keypoints_file",  args.keypoints_file,
-        "--vh_response_model",           args.vh_response_model,
-        "--vh_response_thinking_level",  str(args.vh_response_thinking_level),
-        "--query_source",                args.query_source,
-    ] + common_project_args
-    subprocess.run(cmd, check=True)
-    print(f"-> VH Response 저장 완료: {args.vh_responses_file}")
+    # print("\n" + "="*60)
+    # print(">>> B-1. VH Response 생성 (generate_vh_response.py)")
+    # print("="*60)
+    # cmd = [
+    #     sys.executable, "generate_vh_response.py",
+    #     "--input_file",      args.voice_hints_file,
+    #     "--output_file",     args.vh_responses_file,
+    #     "--keypoints_file",  args.keypoints_file,
+    #     "--vh_response_model",           args.vh_response_model,
+    #     "--vh_response_thinking_level",  str(args.vh_response_thinking_level),
+    #     "--query_source",                args.query_source,
+    # ] + common_project_args
+    # subprocess.run(cmd, check=True)
+    # print(f"-> VH Response 저장 완료: {args.vh_responses_file}")
 
-    # ──────────────────────────────────────────────
     # B-2: VH Response Judge (judge_vh_response.py)
     # ──────────────────────────────────────────────
-    print("\n" + "="*60)
-    print(">>> B-2. VH Response Judge (judge_vh_response.py)")
-    print("="*60)
-    cmd = [
-        sys.executable, "judge_vh_response.py",
-        "--keyscene_summary_file", args.keyscene_summary_file,
-        "--output_file", args.vh_scores_file,
-        "--vh_response_judge_model", args.vh_response_judge_model,
-        "--vh_response_judge_thinking_level", str(args.vh_response_judge_thinking_level),
-        "--query_source", args.query_source,
-    ] + common_project_args
-    subprocess.run(cmd, check=True)
-    print(f"-> VH Response 점수 저장 완료: {args.vh_scores_file}")
+    # print("\n" + "="*60)
+    # print(">>> B-2. VH Response Judge (judge_vh_response.py)")
+    # print("="*60)
+    # cmd = [
+    #     sys.executable, "judge_vh_response.py",
+    #     "--keyscene_summary_file", args.keyscene_summary_file,
+    #     "--output_file", args.vh_scores_file,
+    #     "--vh_response_judge_model", args.vh_response_judge_model,
+    #     "--vh_response_judge_thinking_level", str(args.vh_response_judge_thinking_level),
+    #     "--query_source", args.query_source,
+    # ] + common_project_args
+    # subprocess.run(cmd, check=True)
+    # print(f"-> VH Response 점수 저장 완료: {args.vh_scores_file}")
 
     # ──────────────────────────────────────────────
     # B-3: 엑셀 리포트 내보내기
     # ──────────────────────────────────────────────
-    print("\n" + "="*60)
-    print(">>> B-3. 엑셀 리포트 내보내기")
-    print("="*60)
-    subprocess.run([sys.executable, "export_to_excel.py"])
+    # print("\n" + "="*60)
+    # print(">>> B-3. 엑셀 리포트 내보내기")
+    # print("="*60)
+    # subprocess.run([sys.executable, "export_to_excel.py"])
 
     print("\n\nEnd-to-End Pipeline Completed Successfully!")
 

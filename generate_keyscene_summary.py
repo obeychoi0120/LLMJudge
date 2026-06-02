@@ -299,6 +299,7 @@ def main():
                         client, args.kss_past_summary_model, past_summary_config,
                         accumulated_past, start_time
                     )
+                    past_summary_text = past_summary_text or ""
                     print(f"[{content_id}] -> [Session 1] 과거 요약 완료 ({len(past_summary_text)}자, {past_elapsed:.2f}초)")
 
                 # ── Phase 2: 현재 장면 묘사 (멀티모달) ──
@@ -310,6 +311,7 @@ def main():
                     client, args.kss_current_scene_model, current_scene_config,
                     past_summary_text, current_parts, end_time, use_ref=args.use_ref_for_keyscene_summary
                 )
+                current_scene_text = current_scene_text or ""
                 print(f"[{content_id}] -> [Session 2] 현재 장면 완료 ({len(current_scene_text)}자, {scene_elapsed:.2f}초)")
 
                 # ── 최종 조합 (extract_current_scene_desc 호환성 유지) ──

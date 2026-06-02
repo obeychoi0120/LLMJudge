@@ -2,7 +2,6 @@ import os
 import time
 import concurrent.futures
 import argparse
-import json
 from utils import (
     get_common_argparser,
     make_generate_config,
@@ -11,7 +10,7 @@ from utils import (
     _retry_api_call, load_scenes,
     ensure_output_dir, load_processed_content_ids,
     preload_content_metadata, init_pipeline, append_jsonl,
-    check_input_file, print_pipeline_banner, print_pipeline_done,
+    check_input_file, load_content_ids, print_pipeline_banner, print_pipeline_done,
 )
 
 # ============================================================
@@ -167,6 +166,14 @@ def resolve_keypoints(raw_list, ref_scenes):
                     merged_map[s_idx]["rationale"] = existing_rationale + " / " + new_rationale
                 else:
                     merged_map[s_idx]["rationale"] = new_rationale
+            # 중복 씬에 대해 더 높은 impact 점수로 갱신
+            try:
+                e_imp = merged_map[s_idx].get("impact")
+                n_imp = rk.get("impact")
+                if n_imp is not None and (e_imp is None or float(n_imp) > float(e_imp)):
+                    merged_map[s_idx]["impact"] = n_imp
+            except (ValueError, TypeError):
+                pass
         else:
             merged_map[s_idx] = rk.copy()
             
@@ -195,7 +202,7 @@ def resolve_keypoints(raw_list, ref_scenes):
 
 def main():
     parser = get_common_argparser(description="영상 콘텐츠에서 Keypoint Scene을 식별하고 저장합니다.")
-    parser.add_argument("--input_file", default="content_list.json", help="입력 JSON 파일 경로 (content_id 리스트)")
+    parser.add_argument("--input_file", default="video_metadata.jsonl", help="입력 파일 경로 (video_metadata JSONL 또는 content_id JSON 리스트)")
     parser.add_argument("--output_file", default="assets/keypoint_scenes.jsonl", help="Keypoint Scene 목록 저장 경로")
     
     args, client = init_pipeline(parser.parse_args())
@@ -204,14 +211,7 @@ def main():
     if not check_input_file(args.input_file):
         return
 
-    with open(args.input_file, "r", encoding="utf-8") as f:
-        input_list = json.load(f)
-
-    content_indices = {}
-    for idx, item in enumerate(input_list):
-        cid = item if isinstance(item, str) else item.get("content_id")
-        if cid:
-            content_indices[cid] = idx
+    input_list = load_content_ids(args.input_file)
 
     # 출력 디렉토리 확인
     ensure_output_dir(args.output_file)
@@ -226,8 +226,7 @@ def main():
     # ---- 사전 스캔: content_id별 Scene 수 출력 ----
     print("\n[Pre-scan] content_id별 Scene 수 조회 중...")
     pending_items = []
-    for item in input_list:
-        content_id = item if isinstance(item, str) else item.get("content_id")
+    for content_id in input_list:
         if not content_id or content_id in processed_ids:
             continue
         pending_items.append(content_id)
@@ -241,16 +240,10 @@ def main():
                 preload_content_metadata(args.gs_bucket_name, cid)
                 scenes = load_scenes(args.gs_bucket_name, cid, mode="ref")
                 n = len(scenes)
-                if n <= 8:
-                    route = "전체 사용"
-                elif n < _SPLIT_THRESHOLD_2SEG:
-                    route = "분할없이 8개"
-                elif n < _SPLIT_THRESHOLD_3SEG:
-                    route = "2등분 (4×2=8)"
-                elif n < _SPLIT_THRESHOLD_4SEG:
-                    route = "3등분 (4×3=12)"
+                if n <= 16:
+                    route = "전체 사용 (16개 이하)"
                 else:
-                    route = "4등분 (4×4=16)"
+                    route = "4등분 (최대 16개 선출)"
                 print(f"  {cid:<35} {n:>6}  {route}")
             except Exception as e:
                 print(f"  {cid:<35}  {'ERROR':>6}  {e}")
@@ -260,8 +253,7 @@ def main():
         print("  처리할 콘텐츠가 없습니다.\n")
 
     try:
-        for item in input_list:
-            content_id = item if isinstance(item, str) else item.get("content_id")
+        for content_id in input_list:
             if not content_id:
                 continue
             if content_id in processed_ids:
@@ -284,10 +276,10 @@ def main():
             print(f"\n[Info] 전체 Scene 수: {total_scenes}")
 
             # ======================================================
-            # 경로 A: Scene ≤ 8 → LLM 건너뛰고 전체 사용
+            # 경로 A: Scene ≤ 16 → LLM 건너뛰고 전체 사용
             # ======================================================
-            if total_scenes <= 8:
-                print(f"  -> Scene 수가 8개 이하이므로 전체 Scene을 Keypoint로 자동 사용합니다.")
+            if total_scenes <= 16:
+                print(f"  -> Scene 수가 16개 이하이므로 전체 Scene을 Keypoint로 자동 사용합니다.")
                 keypoints = []
                 for s in ref_scenes:
                     if s.get("scene_idx") is None:
@@ -303,40 +295,12 @@ def main():
                     })
 
             # ======================================================
-            # 경로 B: 9~15 Scene → 분할 없이 전체에서 8개 판별
-            # ======================================================
-            elif total_scenes < _SPLIT_THRESHOLD_2SEG:
-                num_pick = 8
-                print(f"  -> Scene 수가 9~{_SPLIT_THRESHOLD_2SEG-1}개이므로 분할 없이 {num_pick}개의 Keypoint를 판별합니다.")
-
-                video_part = process_gcs_file(args.gs_bucket_name, content_id, "video")
-                ref_part = process_gcs_file(args.gs_bucket_name, content_id, "ref")
-
-                print(f"\n[Candidate 생성] 전체 영상에서 {num_pick}개 추출 중... ({args.keypoint_model})")
-                cand_text = generate_candidates_for_segment(
-                    client, args.keypoint_model, candidate_config,
-                    video_part, ref_part,
-                    full_scene_list_text, "전체", num_pick=num_pick
-                )
-                raw_keypoints = parse_json_response(cand_text)[:num_pick]
-                keypoints = resolve_keypoints(raw_keypoints, ref_scenes)
-
-            # ======================================================
-            # 경로 C: 16+ Scene → 세그먼트 분할 후 각 4개씩 판별
+            # 경로 B: Scene 17+ → 4등분 분할 후 각 최대 6개씩 후보군 추출 및 중요도 상위 16개 선출
             # ======================================================
             else:
-                picks_per_seg = 4
-                if total_scenes < _SPLIT_THRESHOLD_3SEG:
-                    num_segments = 2
-                    print(f"  -> Scene 수가 {_SPLIT_THRESHOLD_2SEG}~{_SPLIT_THRESHOLD_3SEG-1}개이므로 {num_segments}등분하여 각각 {picks_per_seg}개의 후보를 추출, 총 {num_segments*picks_per_seg}개의 Keypoint를 결합합니다.")
-                elif total_scenes < _SPLIT_THRESHOLD_4SEG:
-                    num_segments = 3
-                    print(f"  -> Scene 수가 {_SPLIT_THRESHOLD_3SEG}~{_SPLIT_THRESHOLD_4SEG-1}개이므로 {num_segments}등분하여 각각 {picks_per_seg}개의 후보를 추출, 총 {num_segments*picks_per_seg}개의 Keypoint를 결합합니다.")
-                else:
-                    num_segments = 4
-                    print(f"  -> Scene 수가 {_SPLIT_THRESHOLD_4SEG}개 이상이므로 {num_segments}등분하여 각각 {picks_per_seg}개의 후보를 추출, 총 {num_segments*picks_per_seg}개의 Keypoint를 결합합니다.")
-
-                max_keypoints = num_segments * picks_per_seg
+                num_segments = 4
+                picks_per_seg = 6
+                print(f"  -> Scene 수가 {total_scenes}개이므로 4등분하여 각각 최대 {picks_per_seg}개의 후보를 추출하고, 중요도 기준 상위 16개를 선출합니다.")
 
                 segments = split_scenes_into_segments(ref_scenes, num_segments)
                 for si, seg in enumerate(segments):
@@ -414,9 +378,29 @@ def main():
 
                 print(f"  -> 총 {len(all_candidates)}개 Candidate 수집 완료")
 
-                # 단순 결합: 세그먼트별 추출 결과를 최대 max_keypoints개까지 병합
-                raw_keypoints = all_candidates[:max_keypoints]
-                keypoints = resolve_keypoints(raw_keypoints, ref_scenes)
+                # 중복 제거 및 시간/설명 매핑
+                resolved_keypoints = resolve_keypoints(all_candidates, ref_scenes)
+
+                if len(resolved_keypoints) > 16:
+                    # impact 점수 기준으로 내림차순 정렬 (높은 점수 우선)
+                    def get_impact_score(kp):
+                        try:
+                            return float(kp.get("impact") or 0)
+                        except (ValueError, TypeError):
+                            return 0.0
+
+                    sorted_by_impact = sorted(resolved_keypoints, key=lambda x: -get_impact_score(x))
+                    
+                    # 상위 16개 선택
+                    top_16_keypoints = sorted_by_impact[:16]
+                    
+                    # 시간 흐름 순(scene_idx)으로 재정렬
+                    top_16_keypoints.sort(key=lambda x: x["scene_idx"])
+                    keypoints = top_16_keypoints
+                    print(f"  -> {len(resolved_keypoints)}개 중 중요도 상위 16개 최종 선출 완료")
+                else:
+                    keypoints = resolved_keypoints
+                    print(f"  -> 전체 {len(resolved_keypoints)}개 키포인트 유지 (16개 이하)")
 
             # ---- 결과 출력 ----
             print(f"\n총 {len(keypoints)}개의 Keypoint가 식별되었습니다:")

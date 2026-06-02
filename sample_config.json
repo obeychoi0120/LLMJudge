@@ -11,7 +11,7 @@
     "use_ref_for_keyscene_summary": true,
     "vh_gen_model": "gemini-3.1-flash-lite",
     "vh_gen_past_scenes_size": 2,
-    "vh_thinking_level": "minimal",
+    "vh_thinking_level": "low",
     "vh_response_model": "gemini-3.1-flash-lite",
     "vh_response_past_scenes_size": 4,
     "vh_response_thinking_level": "medium",
