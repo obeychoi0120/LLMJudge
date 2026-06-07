@@ -1,6 +1,7 @@
 import pandas as pd
 import json
 import os
+import argparse
 from openpyxl.utils import get_column_letter
 from utils import load_jsonl, load_content_indices
 
@@ -12,6 +13,10 @@ _METRIC_ALIASES = {
     "curiosity_hook": ["curiosity_hook", "curiosity_and_hook"],
 }
 _METRIC_ORDER = ["scene_relevance", "content_depth", "curiosity_hook", "total_score"]
+_SCORE_KEYS_BY_TYPE = {
+    "content_anchored": ["scene_relevance", "content_depth"],
+    "tangential": ["scene_relevance", "curiosity_hook"],
+}
 
 def _sort_modes(modes):
     """MODE_ORDER 순서대로 정렬, 목록에 없는 모드는 뒤에 알파벳순."""
@@ -24,6 +29,25 @@ def _get_metric_data(judge_data, metric):
         if key in judge_data:
             return judge_data[key]
     return {}
+
+def _get_metric_score(judge_data, metric):
+    met_data = _get_metric_data(judge_data, metric)
+    val = met_data.get("score") if isinstance(met_data, dict) else None
+    return val if isinstance(val, (int, float)) else None
+
+def _get_total_score(record, apply_gating=False):
+    judge_data = record.get("judge", {})
+    q_type = record.get("query_type", "tangential")
+    score_keys = _SCORE_KEYS_BY_TYPE.get(q_type, _SCORE_KEYS_BY_TYPE["tangential"])
+
+    metric_scores = [_get_metric_score(judge_data, key) for key in score_keys]
+    if all(score is not None for score in metric_scores):
+        scene_relevance = metric_scores[0]
+        if apply_gating and scene_relevance <= 2:
+            return scene_relevance
+        return sum(metric_scores)
+
+    return record.get("total_score")
 
 def _metrics_with_values(metrics, by_video, overall):
     kept = []
@@ -40,10 +64,11 @@ def _metrics_with_values(metrics, by_video, overall):
             kept.append(met)
     return kept
 
-def aggregate_interactive_query_scores(input_dir, output_dir):
+def aggregate_interactive_query_scores(input_dir, output_dir, apply_gating=False):
     """Interactive Query Score를 query_type별로 따로 집계하여 JSON으로 저장합니다."""
     scores_file = os.path.join(input_dir, "interactive_query_scores.jsonl")
-    output_file = os.path.join(output_dir, "interactive_query_scores_aggregated.json")
+    suffix = "_gated" if apply_gating else ""
+    output_file = os.path.join(output_dir, f"interactive_query_scores_aggregated{suffix}.json")
 
     if not os.path.exists(scores_file):
         print(f"[Skip] {scores_file} 파일이 없어 Interactive Query Aggregation을 건너뜁니다.")
@@ -75,7 +100,7 @@ def aggregate_interactive_query_scores(input_dir, output_dir):
         m = record.get("mode", "unknown")
         q_type = record.get("query_type", "tangential")
         judge_data = record.get("judge", {})
-        ts = record.get("total_score")
+        ts = _get_total_score(record, apply_gating=apply_gating)
 
         metrics = _METRICS_BY_TYPE.get(q_type, _METRICS_BY_TYPE["tangential"])
 
@@ -141,7 +166,7 @@ def aggregate_interactive_query_scores(input_dir, output_dir):
         json.dump(final_output, f, indent=4, ensure_ascii=False)
     print(f"[Done] Interactive Query Score Aggregation (by query_type): {output_file}")
 
-def export_interactive_query_details(input_dir, output_dir):
+def export_interactive_query_details(input_dir, output_dir, apply_gating=False):
     """Interactive Query Judge 상세 결과를 Excel로 내보냅니다."""
     interactive_query_scores_path = os.path.join(input_dir, "interactive_query_scores.jsonl")
     if not os.path.exists(interactive_query_scores_path):
@@ -160,7 +185,7 @@ def export_interactive_query_details(input_dir, output_dir):
 
         if "query" in item and "judge" in item:
             judge = item.get("judge", {})
-            total = item.get("total_score", "")
+            total = _get_total_score(item, apply_gating=apply_gating)
             q_type = item.get("query_type", "")
             row = {
                 "index": content_indices.get(cid, 999),
@@ -190,7 +215,8 @@ def export_interactive_query_details(input_dir, output_dir):
     ))
 
     df = pd.DataFrame(flat_interactive_query)
-    out_path = os.path.join(output_dir, "interactive_query_score_details.xlsx")
+    suffix = "_gated" if apply_gating else ""
+    out_path = os.path.join(output_dir, f"interactive_query_score_details{suffix}.xlsx")
 
     writer = pd.ExcelWriter(out_path, engine='openpyxl')
     df.to_excel(writer, index=False, sheet_name='Interactive Query Score Details')
@@ -453,9 +479,10 @@ def _write_response_pivot_scores_xlsx(out_path, sheet_name, metrics, track_confi
     print(f"Created: {out_path}")
 
 
-def export_interactive_query_scores(input_dir, output_dir):
+def export_interactive_query_scores(input_dir, output_dir, apply_gating=False):
     """Interactive Query Judge 집계 점수를 고맥락/저맥락별 엑셀 파일로 내보냅니다."""
-    agg_path = os.path.join(output_dir, "interactive_query_scores_aggregated.json")
+    suffix = "_gated" if apply_gating else ""
+    agg_path = os.path.join(output_dir, f"interactive_query_scores_aggregated{suffix}.json")
     if not os.path.exists(agg_path):
         print(f"[Skip] {agg_path} 파일이 없어 Interactive Query Scores 내보내기를 건너뜁니다.")
         return
@@ -491,7 +518,8 @@ def export_interactive_query_scores(input_dir, output_dir):
             continue
 
         suffix = "high_context" if q_type == "content_anchored" else "low_context"
-        out_path = os.path.join(output_dir, f"interactive_query_scores_{suffix}.xlsx")
+        gated_suffix = "_gated" if apply_gating else ""
+        out_path = os.path.join(output_dir, f"interactive_query_scores_{suffix}{gated_suffix}.xlsx")
         sheet_name = "Interactive Query High-Context" if q_type == "content_anchored" else "Interactive Query Low-Context"
         _write_pivot_scores_xlsx(
             out_path, sheet_name, metrics, ordered_modes,
@@ -736,7 +764,7 @@ def export_interactive_query_scores(input_dir, output_dir):
 #     )
 
 
-def export_interactive_queries(input_dir, output_dir):
+def export_interactive_queries(input_dir, output_dir, apply_gating=False):
     """Interactive Query 질문을 content_id / scene_idx 기준으로 정리하여 Excel로 내보냅니다.
 
     컬럼 구조:
@@ -792,7 +820,8 @@ def export_interactive_queries(input_dir, output_dir):
             first = False
 
     df = pd.DataFrame(flat_rows)
-    out_path = os.path.join(output_dir, "interactive_queries.xlsx")
+    suffix = "_gated" if apply_gating else ""
+    out_path = os.path.join(output_dir, f"interactive_queries{suffix}.xlsx")
 
     writer = pd.ExcelWriter(out_path, engine="openpyxl")
     df.to_excel(writer, index=False, sheet_name="Interactive Queries")
@@ -823,6 +852,14 @@ def export_interactive_queries(input_dir, output_dir):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Export pipeline outputs to Excel.")
+    parser.add_argument(
+        "--apply_gating",
+        action="store_true",
+        help="Apply scene_relevance<=2 gating to Interactive Query total_score during export.",
+    )
+    args = parser.parse_args()
+
     assets_dir = "output"
     results_dir = os.path.join("output", "results")
 
@@ -845,7 +882,7 @@ if __name__ == "__main__":
     print("="*60)
     print("1. Data Aggregation Phase")
     print("="*60)
-    aggregate_interactive_query_scores(assets_dir, results_dir)
+    aggregate_interactive_query_scores(assets_dir, results_dir, apply_gating=args.apply_gating)
     # [DEPRECATED] B-Track — archived/
     # for qs in sorted(query_sources):
     #     aggregate_interactive_query_response_scores(assets_dir, results_dir, query_source=qs)
@@ -853,12 +890,12 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("2. Excel Export Phase")
     print("="*60)
-    export_interactive_query_details(assets_dir, results_dir)
-    export_interactive_query_scores(assets_dir, results_dir)
+    export_interactive_query_details(assets_dir, results_dir, apply_gating=args.apply_gating)
+    export_interactive_query_scores(assets_dir, results_dir, apply_gating=args.apply_gating)
     # [DEPRECATED] B-Track — archived/
     # for qs in sorted(query_sources):
     #     export_interactive_query_response_details(assets_dir, results_dir, query_source=qs)
     #     export_interactive_query_response_scores(assets_dir, results_dir, query_source=qs)
-    export_interactive_queries(assets_dir, results_dir)
+    export_interactive_queries(assets_dir, results_dir, apply_gating=args.apply_gating)
 
     print("\nAll pipeline tasks completed.")

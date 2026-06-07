@@ -201,17 +201,10 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
         )
 
         score_keys = _SCORE_KEYS_BY_TYPE.get(query_type, ["scene_relevance", "curiosity_hook"])
-        raw_total = sum(
+        total = sum(
             (score_dict.get(k, {}).get("score", 0) if isinstance(score_dict.get(k), dict) else 0)
             for k in score_keys
         ) if score_dict else 0
-        scene_relevance_score = (
-            score_dict.get("scene_relevance", {}).get("score", 0)
-            if score_dict and isinstance(score_dict.get("scene_relevance"), dict)
-            else 0
-        )
-        gate_applied = scene_relevance_score <= 2
-        total = scene_relevance_score if gate_applied else raw_total
 
         from collections import OrderedDict
         score_record = OrderedDict([
@@ -221,7 +214,6 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
             ("query_type", query_type),
             ("query", query_text),
             ("judge", score_dict),
-            ("gate_applied", gate_applied),
             ("total_score", total),
         ])
 
@@ -244,8 +236,7 @@ def judge_one(q_item, content_id, scene_idx, detailed_summary,
                 for key, label in item_labels
             ])
             type_tag = "CA" if query_type == "content_anchored" else "TG"
-            gate_note = " | Gate: scene_relevance<=2 -> secondary score ignored" if gate_applied else ""
-            out_str = f"[{type_tag}] Query: {query_text}\nScore: {total}/10 | {score_details}{gate_note}"
+            out_str = f"[{type_tag}] Query: {query_text}\nScore: {total}/10 | {score_details}"
             
         append_jsonl(args.scores_file, score_record, lock=file_write_lock)
         return {"mode": mode, "query_type": query_type, "query": query_text, "success": True, "out_str": out_str, "total": total}

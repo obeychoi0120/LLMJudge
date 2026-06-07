@@ -155,7 +155,7 @@ KSS(KeyScene Summary)와 대조해 평가하되, query_type에 따라 다른 2�
 | **Scene Relevance** (씬 적절성)  | 질문이 현재 씬의**고유한 디테일**에 의해 트리거되었는가? 영상 전체 주제 수준의 연결은 감점. 미래 예측·과거 뒷북은 치명적 감점                                                |
 | **Curiosity Hook** (행동 유발력) | 시청자가**실제로 리모컨을 들어 버튼을 누를 정도의 정보 격차**를 만드는가? 놀라운 전제나 반직관적 프레이밍을 통한 강한 심리적 당김을 고평가. Scene Relevance와 독립적으로 평가 |
 
-`judge_interactive_query.py`는 `scene_relevance <= 2`인 질문에 게이트를 적용합니다. 이 경우 보조 지표(`content_depth` 또는 `curiosity_hook`) 점수는 총점에 반영하지 않고, `total_score`는 `scene_relevance` 점수만 사용합니다.
+`judge_interactive_query.py`는 게이트를 적용하지 않고 보조 지표(`content_depth` 또는 `curiosity_hook`)까지 합산한 원점수 `total_score`를 저장합니다. `export_to_excel.py --apply_gating`을 사용하면 Excel Export 단계에서 `scene_relevance <= 2`인 질문의 보조 지표를 제외하고, `_gated` suffix가 붙은 결과 파일을 생성합니다.
 
 #### ~~C-Track: Description Judge~~ (Deprecated)
 
@@ -416,7 +416,7 @@ python archived/judge_interactive_query_response.py
 
 ### `interactive_query_scores.jsonl` (A-Track 평가 결과)
 
-`judge_interactive_query.py`는 질문별로 1줄씩 점수 레코드를 저장합니다. `query_type`에 따라 `content_depth` 또는 `curiosity_hook`이 사용되며, `scene_relevance <= 2`이면 `gate_applied`가 `true`가 됩니다.
+`judge_interactive_query.py`는 질문별로 1줄씩 점수 레코드를 저장합니다. `query_type`에 따라 `content_depth` 또는 `curiosity_hook`이 사용되며, `total_score`는 게이팅 없는 원점수 합산입니다.
 
 ```json
 {
@@ -435,7 +435,6 @@ python archived/judge_interactive_query_response.py
       "score": 5
     }
   },
-  "gate_applied": false,
   "total_score": 10
 }
 ```
